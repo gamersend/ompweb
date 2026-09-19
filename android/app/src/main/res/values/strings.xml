@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">omp web</string>
+    <string name="title_activity_main">omp web</string>
+    <string name="package_name">com.gamersend.ompweb</string>
+    <string name="custom_url_scheme">com.gamersend.ompweb</string>
+</resources>
