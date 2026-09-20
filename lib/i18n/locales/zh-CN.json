@@ -2162,5 +2162,11 @@
   "handoffs.state.pending": "待完成",
   "handoffs.state.completed": "已完成",
   "handoffs.state.failed": "失败",
-  "handoffs.state.superseded": "已取代"
+  "handoffs.state.superseded": "已取代",
+  "insights.activityTitle": "活动",
+  "insights.activityKind.run_started": "运行开始",
+  "insights.activityKind.run_finished": "运行结束",
+  "insights.activityKind.failed": "失败",
+  "insights.activityKind.notice": "通知",
+  "insights.activityKind.model_changed": "模型已切换"
 }

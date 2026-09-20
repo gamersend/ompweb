@@ -17,6 +17,7 @@ import { PRESET_FULL } from "./tool-presets";
 import { comparableProjectPath } from "./comparable-path";
 import { isReservedLaunchArg, loadProjectRegistry } from "./project-registry";
 import { notifyAgentEnd, notifyApprovalNeeded, notifyRpcError, type NotifyEmitContext } from "./notify/emit";
+import { recordSessionActivity } from "./session-activity";
 import type {
   BashResultInfo,
   OmpModel,
@@ -63,6 +64,37 @@ const PROMPT_ACK_TIMEOUT_MS = 30_000;
 const NON_TERMINAL_CONTINUATION_GRACE_MS = 2_000;
 const AWAITING_AGENT_START_TIMEOUT_MS = 10_000;
 const RESTARTING_MESSAGE = "This session is restarting — retry in a moment.";
+
+/** Session-activity tap (wave 3 P7 / R3-06): map the lifecycle frames the
+ *  wrapper already forwards into the bounded, redacted activity ring. Only
+ *  the five known kinds are recorded — unknown frame types stay out rather
+ *  than being guessed into semantics. `sessionId` may be null while the
+ *  wrapper is unnamed; those frames belong to no durable session yet.
+ *  (Deliberately if/else, not switch — source-contract tests grep the
+ *  wrapper's own `case "agent_start":` block, which must stay unique.) */
+function recordSessionActivityTap(sessionId: string | null, event: { type: string } & Record<string, unknown>): void {
+  if (!sessionId) return;
+  const type = event.type;
+  if (type === "agent_start") {
+    recordSessionActivity(sessionId, "run_started");
+  } else if (type === "agent_end") {
+    if ((event as { isTerminal?: unknown }).isTerminal === false) return;
+    recordSessionActivity(sessionId, "run_finished");
+  } else if (type === "prompt_error") {
+    const detail = (event as { error?: unknown; message?: unknown }).error
+      ?? (event as { message?: unknown }).message;
+    recordSessionActivity(sessionId, "failed", typeof detail === "string" ? detail : undefined);
+  } else if (type === "notice") {
+    const notice = (event as { message?: unknown }).message ?? (event as { text?: unknown }).text;
+    recordSessionActivity(sessionId, "notice", typeof notice === "string" ? notice : undefined);
+  } else if (type === "config_update") {
+    const model = (event as { model?: { provider?: unknown; id?: unknown } | undefined }).model;
+    const label = model && typeof model === "object"
+      ? `${String(model.provider ?? "")}/${String(model.id ?? "")}`.replace(/\/$/, "")
+      : (event as { thinkingLevel?: unknown }).thinkingLevel;
+    recordSessionActivity(sessionId, "model_changed", typeof label === "string" ? label : undefined);
+  }
+}
 const BASH_EXCLUDE_MESSAGE =
   "omp cannot run a shell command with its output excluded from the model context (`!!`): the RPC bash command has no exclusion option, so the output would silently enter the context anyway. Run it with a single `!` to share the output with the model, or use a terminal outside omp web.";
 
@@ -777,6 +809,14 @@ export class AgentSessionWrapper {
     // `web` belongs to this wrapper, never to native/extension-supplied frames.
     // Strip it before caching tool snapshots as well as before wire emission.
     delete event.web;
+    // Session activity recorder (wave 3 P7): a bounded, redacted lifecycle
+    // ring per session — the SAME frames the UI already receives, tapped at
+    // this single choke point. Wrapped: recording must never break forwarding.
+    try {
+      recordSessionActivityTap(this._sessionId, event);
+    } catch {
+      // ignore recorder failures
+    }
     switch (event.type) {
       case "agent_start":
         this.responseObserved = false;

@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 89 API routes, 84 components, 22 hooks, 123 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 90 API routes, 84 components, 22 hooks, 125 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -282,6 +282,8 @@ lib/
   store-diagnostics.ts    read-only health census over the ompweb-owned stores (W3-P5)
   origin.ts               ONE session-origin resolver (direct/scheduled/delegated) behind every badge (W3-P5)
   delegation-ledger.ts    durable web-delegations.json record of delivered delegations (W3-P5)
+  handoffs.ts             durable web-handoffs.json cross-session handoff manifest (W3-P6)
+  session-activity.ts     bounded redacted per-session lifecycle ring (W3-P7)
   browser-notifications.ts  completion notifications with permission handling
   notify/feed.ts          server-side notify feed: 500-row ring + atomic tail at ~/.omp/agent/web-notify.json
   notify/webhook.ts       webhook delivery (ntfy/discord/telegram/generic), fire-and-forget + 1 retry
@@ -1578,6 +1580,45 @@ palette (`components/CommandPalette.tsx`, ⌘K/Ctrl+K) is built on `cmdk`.
   (supported / missing_command / unknown_command / malformed_response /
   transport_disconnected); the fixture suite loads every file and greps for
   credential-shaped strings. Compatibility tiers: docs/agent-notes-w3-P1.md.
+
+### Cross-session handoff manifest (W3-P6)
+- Every successful `/api/delegate` delivery now also writes a durable handoff
+  record to `~/.omp/agent/web-handoffs.json` (lib/handoffs.ts, version 1,
+  cap 100, atomic + quarantine like every store): `{id: "del-<to>-<tsMs>",
+  fromSession, toSession, tsMs, mode, state, settledMs}`.
+- State machine (pure `canTransitionHandoff`): `pending → completed | failed |
+  superseded` — only `pending` settles, settled records are frozen, so
+  replayed events can never rewrite history. A NEWER delivery to the same
+  target supersedes the unsettled one (the P4 ledger's "superseded" semantics).
+- Settlement rides the EXISTING notify emitters: `notifyAgentEnd` completes the
+  target's newest pending handoff; `notifyRpcError` fails it. Both wrapped —
+  settlement can never break the notify or delegation paths.
+- Surfaces: `GET /api/handoffs` (read-only, newest 50 + pending count),
+  a compact Handoffs strip at the bottom of the runs board (hidden at zero),
+  and the weekly digest's delegation section gains a settle-state line.
+- The store holds session ids + mode + time only — no prompt or transcript
+  text ever enters the manifest.
+
+### Honest session activity timeline (W3-P7)
+- `lib/session-activity.ts`: a bounded, redacted per-session lifecycle ring
+  recorded from rpc-manager's SINGLE `emit()` tap (the same frames the UI
+  already receives — nothing invents semantics). Recorded kinds:
+  `run_started` (agent_start), `run_finished` (terminal agent_end only),
+  `failed` (prompt_error), `notice` (notice message), `model_changed`
+  (config_update model/thinking level). Unknown frame types stay OUT rather
+  than being guessed into meaning.
+- Store `web-session-activity.json` (version 1, atomic + quarantine): 30
+  events per session, 60 sessions LRU by newest event. Text crosses
+  `lib/search/redact.ts` + a 160-char hard cap BEFORE storage — the timeline
+  is operator metadata, never a transcript. The recorder is best-effort by
+  contract: it can never throw into frame forwarding, and a failed write
+  leaves the in-memory ring authoritative.
+- Surfaces: the insights route attaches the newest 12 events
+  (`SessionActivityRecord[]`, same route-level pattern as restores) and
+  SessionInsightsDialog renders the Activity rail (time + kind + redacted
+  text; failures tinted, never color-alone).
+- The tap is deliberately if/else, NOT a `switch` — source-contract tests grep
+  the wrapper's own `case "agent_start":` block, which must stay unique.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
-import type { InsightsToolRow, InsightsTimelinePoint, SessionInsights, SessionRestoreRecord } from "@/lib/insights/session-insights";
+import type { InsightsToolRow, InsightsTimelinePoint, SessionActivityRecord, SessionInsights, SessionRestoreRecord } from "@/lib/insights/session-insights";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "./ui/primitives";
 
 type InsightsPayload = SessionInsights & { tookMs?: number };
@@ -47,6 +47,11 @@ function normalizeInsights(value: unknown): InsightsPayload | null {
     restores: Array.isArray(raw.restores)
       ? raw.restores.filter((row): row is SessionRestoreRecord =>
         !!row && typeof row === "object" && typeof (row as { seq?: unknown }).seq === "number")
+      : [],
+    activity: Array.isArray(raw.activity)
+      ? raw.activity.filter((row): row is SessionActivityRecord =>
+        !!row && typeof row === "object" && typeof (row as { ts?: unknown }).ts === "number"
+        && typeof (row as { kind?: unknown }).kind === "string")
       : [],
     tookMs: typeof raw.tookMs === "number" ? raw.tookMs : undefined,
   } as InsightsPayload;
@@ -339,6 +344,7 @@ export function SessionInsightsDialog({ sessionId, open, onClose }: {
   const timeline = insights?.timeline ?? [];
   const tools = insights?.tools ?? [];
   const restores = insights?.restores ?? [];
+  const activity = insights?.activity ?? [];
   const native = insights?.native;
   const tiles: Array<{ label: string; value: string }> = totals
     ? [
@@ -489,6 +495,33 @@ export function SessionInsightsDialog({ sessionId, open, onClose }: {
                           {new Date(entry.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         </span>
                         {entry.error && <span style={{ width: "100%", fontSize: 11, color: "var(--text-muted)" }} title={entry.error}>{entry.error}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {/* Activity rail (wave 3 P7): the honest lifecycle timeline —
+                  the frames this session actually produced, redacted. */}
+              {activity.length > 0 && (
+                <section style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-card)", background: "var(--bg-panel)", padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--text-dim)", textTransform: "uppercase", marginBottom: 6 }}>
+                    {t("insights.activityTitle")}
+                  </div>
+                  <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                    {activity.map((event, index) => (
+                      <li key={`${event.ts}-${index}`} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12, flexWrap: "wrap" }}>
+                        <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>
+                          {new Date(event.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                        </span>
+                        <span style={{ flexShrink: 0, color: event.kind === "failed" ? "var(--danger, #b91c1c)" : event.kind === "run_finished" ? "var(--accent)" : "var(--text)" }}>
+                          {t(`insights.activityKind.${event.kind}`)}
+                        </span>
+                        {event.text && (
+                          <span style={{ color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }} title={event.text}>
+                            {event.text}
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>

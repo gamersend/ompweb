@@ -3,6 +3,7 @@ import { apiErrorResponse, resolveSessionPathOr404 } from "@/lib/api-utils";
 import { getSessionInsights } from "@/lib/insights/session-insights";
 import type { SessionInsights } from "@/lib/insights/session-insights";
 import { ledgerEntriesForSession } from "@/lib/checkpoints/ledger";
+import { readSessionActivity } from "@/lib/session-activity";
 import { readSessionHeader } from "@/lib/session-reader";
 
 export const runtime = "nodejs";
@@ -108,6 +109,16 @@ export async function GET(
       return [];
     }
   })();
-  const payload = { ...data, restores, tookMs: Date.now() - startedAt };
+  // Wave 3 P7 (R3-06): the activity ring rides along too (newest first,
+  // capped at 12) — the honest lifecycle timeline for the dialog rail.
+  const activity = (() => {
+    try {
+      const sessionId = readSessionHeader(filePath)?.id ?? id;
+      return readSessionActivity(sessionId).slice(0, 12);
+    } catch {
+      return [];
+    }
+  })();
+  const payload = { ...data, restores, activity, tookMs: Date.now() - startedAt };
   return NextResponse.json({ success: true, data: payload }, { headers: { "Cache-Control": "no-store" } });
 }

@@ -2162,5 +2162,11 @@
   "handoffs.state.pending": "保留",
   "handoffs.state.completed": "完了",
   "handoffs.state.failed": "失敗",
-  "handoffs.state.superseded": "置き換え済み"
+  "handoffs.state.superseded": "置き換え済み",
+  "insights.activityTitle": "アクティビティ",
+  "insights.activityKind.run_started": "実行開始",
+  "insights.activityKind.run_finished": "実行終了",
+  "insights.activityKind.failed": "失敗",
+  "insights.activityKind.notice": "通知",
+  "insights.activityKind.model_changed": "モデル変更"
 }

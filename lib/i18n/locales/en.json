@@ -2162,5 +2162,11 @@
   "handoffs.state.pending": "pending",
   "handoffs.state.completed": "completed",
   "handoffs.state.failed": "failed",
-  "handoffs.state.superseded": "superseded"
+  "handoffs.state.superseded": "superseded",
+  "insights.activityTitle": "Activity",
+  "insights.activityKind.run_started": "Run started",
+  "insights.activityKind.run_finished": "Run finished",
+  "insights.activityKind.failed": "Failed",
+  "insights.activityKind.notice": "Notice",
+  "insights.activityKind.model_changed": "Model changed"
 }

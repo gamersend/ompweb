@@ -86,6 +86,14 @@ export interface SessionRestoreRecord {
   branch?: string;
 }
 
+/** One recorded lifecycle frame (wave 3 P7 activity ring). Attached at the
+ *  route level — never produced by the pure merge core. */
+export interface SessionActivityRecord {
+  ts: number;
+  kind: "run_started" | "run_finished" | "failed" | "notice" | "model_changed";
+  text?: string;
+}
+
 export interface SessionInsights {
   sessionPath: string;
   native: { available: boolean; partial: boolean; facts: number };
@@ -97,6 +105,8 @@ export interface SessionInsights {
   tools: InsightsToolRow[];
   /** Newest restore-ledger records first, capped by the route. */
   restores?: SessionRestoreRecord[];
+  /** Newest activity-ring records first, capped by the route (wave 3 P7). */
+  activity?: SessionActivityRecord[];
 }
 
 /** Payload the pure core consumes: the already-normalized UI context plus the

@@ -1,4 +1,4 @@
-# Wave 3 — P2–P5 implementation notes
+# Wave 3 — P2–P7 implementation notes
 
 Per-phase knowledge lives in the W3 sections of AGENTS.md (authoritative).
 This file is the delivery record: what shipped, what was verified, and what
@@ -71,13 +71,28 @@ was deliberately left alone.
   system panel (health dots, counts, backup evidence, copy-safe summary, no
   repair buttons).
 
-## Gates at P5 checkpoint (2026-09-21)
+## P6 — Cross-session handoff manifest (R3-17) — committed b5f23de
 
-- `tsc --noEmit` clean · `eslint .` 0 errors / 0 warnings
-- `npm test`: 1682 tests, 1680 pass, 0 fail, 2 pre-existing justified skips
-- `npm run check:i18n`: 2158 keys × 3 locales exact parity
-- `npm run check:envelopes`: 89 route files, 0 new violations (80 ratcheted)
-- `npm run file-map:check`: green (89 routes / 84 components / 22 hooks /
-  123 lib)
-- Browser render proof: `docs/verify-w3/` (see the delivery report for the
-  surfaces + widths captured)
+- `web-handoffs.json` (cap 100): one record per delegation delivery, states
+  pending → completed | failed | superseded, illegal transitions are no-ops.
+  Recorded by /api/delegate; settled by the target's agent_end (completed) or
+  error (failed) through the existing notify emitters. Read-only
+  /api/handoffs + a runs-board strip + a digest settle-state line.
+
+## P7 — Honest session activity timeline (R3-06)
+
+- `web-session-activity.json` (30 events/session, 60-session LRU) recorded
+  from rpc-manager's single emit() tap: run_started / run_finished (terminal
+  only) / failed / notice / model_changed. Text is redacted + 160-capped
+  before storage. Surfaced via the insights payload (newest 12) and an
+  Activity rail in SessionInsightsDialog.
+- Deliberate scope cuts vs the roadmap text: retries/fallback narration rides
+  the notice kind (omp does not expose dedicated retry frames to this layer);
+  persistence is ompweb-owned (P7.2's "extend an existing store" clause) —
+  no client-reducer changes were needed.
+
+## Gates at the P7 checkpoint (2026-09-21)
+
+- tsc 0 · eslint 0/0 · npm test 1697 tests / 1695 pass / 0 fail / 2 skips
+- check:parity green (2170 keys × 3; envelope ratchet 0 new / 90 routes)
+- file-map green (90 routes / 84 components / 22 hooks / 125 lib)
