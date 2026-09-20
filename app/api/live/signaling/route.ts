@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { parseJsonWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
-import { MAX_LIVE_SIGNAL_BODY_BYTES } from "@/lib/live/protocol";
+import { LIVE_MAX_INSTRUCTIONS_CHARS, MAX_LIVE_SIGNAL_BODY_BYTES } from "@/lib/live/protocol";
 import { getLiveGate } from "@/lib/live/gate";
 import { LiveSignalingError, startLiveCall } from "@/lib/live/signaling";
 import { LiveTokenError } from "@/lib/live/token";
@@ -74,8 +74,14 @@ export async function POST(request: Request) {
   try {
     const answer = await startLiveCall({
       sdp: body.sdp,
+      // ④ Panel passthrough: the voice is normalized against the native set
+      // at body-build time; custom persona instructions are accepted as the
+      // default's REPLACEMENT, hard-capped here to match the client bound.
       voice: typeof body.voice === "string" ? body.voice : null,
-      instructions: typeof body.instructions === "string" ? body.instructions : null,
+      instructions:
+        typeof body.instructions === "string"
+          ? body.instructions.slice(0, LIVE_MAX_INSTRUCTIONS_CHARS)
+          : null,
     });
     return NextResponse.json({
       success: true,

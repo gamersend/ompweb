@@ -16,6 +16,12 @@
  *    the engine knows lives in this tab's memory and dies with it.
  *  - Transcript parsing is delegated to the pure lib/live/events.ts machine;
  *    this file is the browser plumbing around it.
+ *  - Reconnect resilience (⑧): an unexpected peer/data-channel drop while
+ *    the call is up auto-resignals up to LIVE_RECONNECT_ATTEMPTS times with
+ *    exponential backoff (pure ladder in lib/live/reconnect.ts). The
+ *    transcript is never touched, and the panel re-sends the session context
+ *    through `onReconnected` so the voice resumes knowing the session. A
+ *    USER stop never reconnects.
  *
  * One engine per tab: a module-level registry guarantees a second start
  * cannot stack peer connections (the "one live session at a time" rule).
@@ -24,17 +30,22 @@
 import {
   OAI_EVENTS_CHANNEL,
   buildDelegationContextAppend,
+  buildSessionContextAppend,
   chunkLiveContext,
+  LIVE_MAX_USER_TEXT_CHARS,
   type LiveContextChannel,
 } from "./protocol";
 import {
   applyOaiEvent,
+  appendLocalUserLine,
   emptyTranscript,
   pushDebugEvent,
   type LiveDebugEvent,
   type LiveDelegationCreated,
   type LiveTranscriptLine,
 } from "./events";
+import { buildUserTextInputContext } from "./session-context";
+import { reconnectDelayMs } from "./reconnect";
 import { initialLiveState, reduceLiveEvent, type LivePhase, type LiveState } from "./call-state";
 
 export type { LivePhase, LiveState, LiveTranscriptLine, LiveDebugEvent, LiveDelegationCreated };
@@ -50,12 +61,20 @@ export interface LiveEngineCallbacks {
    * (`delegation.created`) — the panel bridges it into the chat session.
    */
   onDelegation?: (delegation: LiveDelegationCreated) => void;
+  /**
+   * Fired after a successful auto-reconnect (reconnecting → live): the panel
+   * re-sends the ① session context so the call resumes current.
+   */
+  onReconnected?: () => void;
 }
 
 /** The engine keeps no audio constraints beyond the proven echo set. */
 const MIC_CONSTRAINTS: MediaStreamConstraints = {
   audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
 };
+
+/** How long a reconnect attempt may sit unconnected before it is retried. */
+const RECONNECT_STALL_MS = 10_000;
 
 export class LiveVoiceEngine {
   private pc: RTCPeerConnection | null = null;
@@ -69,6 +88,13 @@ export class LiveVoiceEngine {
   private nextDebugId = 0;
   private cb: LiveEngineCallbacks;
   private visibilityHandler: (() => void) | null = null;
+  // Reconnect (⑧) bookkeeping. userStopped makes every drop handler inert:
+  // a user hang-up must never auto-resignal.
+  private userStopped = false;
+  private reconnectAttempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastStartOpts: { voice?: string; instructions?: string } = {};
 
   constructor(cb: LiveEngineCallbacks) {
     this.cb = cb;
@@ -89,7 +115,12 @@ export class LiveVoiceEngine {
   }
 
   private dispatch(event: Parameters<typeof reduceLiveEvent>[1]): void {
+    const before = this.state.phase;
     this.setState(reduceLiveEvent(this.state, event));
+    if (event.kind === "peer_connected" && before === "reconnecting" && this.state.phase === "live") {
+      this.resetReconnect();
+      this.cb.onReconnected?.();
+    }
   }
 
   private pushDebug(type: string, data: unknown): void {
@@ -104,10 +135,19 @@ export class LiveVoiceEngine {
   /**
    * Open mic, negotiate, go live. Throws only when the failure happened
    * before the peer could half-open (getUserMedia / signaling); later peer
-   * failures transition through `peer_lost` instead.
+   * failures transition through the reconnect machine instead.
    */
   async start(opts: { voice?: string; instructions?: string } = {}): Promise<void> {
-    if (this.state.phase === "connecting" || this.state.phase === "live") return;
+    if (
+      this.state.phase === "connecting" ||
+      this.state.phase === "live" ||
+      this.state.phase === "reconnecting"
+    ) {
+      return;
+    }
+    this.userStopped = false;
+    this.resetReconnect();
+    this.lastStartOpts = { ...opts };
     this.dispatch({ kind: "start" });
     this.lines = [];
     this.nextLineId = 0;
@@ -118,62 +158,80 @@ export class LiveVoiceEngine {
 
     try {
       this.mic = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
-      // No iceServers: the accepted path connects on the SDP's own candidates.
-      const pc = new RTCPeerConnection();
-      this.pc = pc;
-      // The data channel must exist before the offer so it is negotiated in
-      // it — same order as the accepted implementation.
-      const dc = pc.createDataChannel(OAI_EVENTS_CHANNEL);
-      this.dc = dc;
-      dc.onmessage = (ev) => this.handleChannelFrame(String(ev.data));
-      dc.onopen = () => this.pushDebug("dc.open", {});
-      for (const track of this.mic.getTracks()) pc.addTrack(track, this.mic);
-
-      pc.ontrack = (ev) => {
-        this.attachRemoteAudio(ev.streams[0]);
-      };
-      pc.onconnectionstatechange = () => {
-        const connectionState = pc.connectionState;
-        if (connectionState === "connected") {
-          this.dispatch({ kind: "peer_connected" });
-        } else if (connectionState === "failed" || connectionState === "disconnected" || connectionState === "closed") {
-          if (this.state.phase === "live" || this.state.phase === "connecting") {
-            this.dispatch({ kind: "peer_lost", detail: `peer ${connectionState}` });
-            this.teardownMedia();
-          }
-        }
-      };
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      const offerSdp = pc.localDescription?.sdp;
-      if (!offerSdp) throw new Error("peer connection produced no local SDP offer");
-
-      const res = await fetch("/api/live/signaling", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sdp: offerSdp,
-          ...(opts.voice ? { voice: opts.voice } : {}),
-          ...(opts.instructions ? { instructions: opts.instructions } : {}),
-        }),
-      });
-      const payload = (await res.json().catch(() => null)) as
-        | { success?: boolean; data?: { answerSdp?: unknown; callId?: unknown }; error?: unknown; code?: unknown }
-        | null;
-      if (!res.ok || !payload?.success || typeof payload.data?.answerSdp !== "string") {
-        const code = typeof payload?.code === "string" ? payload.code : `HTTP ${res.status}`;
-        throw new Error(typeof payload?.error === "string" && payload.error ? `${payload.error} (${code})` : `signaling failed (${code})`);
-      }
-      this.dispatch({ kind: "signaling_ok", callId: typeof payload.data.callId === "string" ? payload.data.callId : "" });
-      await pc.setRemoteDescription({ type: "answer", sdp: payload.data.answerSdp });
-      // `live` arrives from onconnectionstatechange; nothing to await here.
+      await this.negotiate();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.dispatch({ kind: "error", detail: message });
       this.teardownMedia();
       throw err;
     }
+  }
+
+  /**
+   * One full negotiation round: fresh peer connection + data channel (the
+   * channel is created before the offer so it is negotiated in it — same
+   * order as the accepted implementation), offer, signaling POST, answer.
+   * Shared by the initial start and every reconnect attempt; the mic stream
+   * is reused so a reconnect never re-prompts for the microphone.
+   */
+  private async negotiate(): Promise<void> {
+    const mic = this.mic;
+    if (!mic || mic.getTracks().every((track) => track.readyState !== "live")) {
+      throw new Error("microphone is no longer available");
+    }
+    // A prior round's peer/channel must never leak into this one (peer-only
+    // close: the mic and the transcript survive).
+    this.dc?.close();
+    this.dc = null;
+    this.pc?.close();
+    this.pc = null;
+
+    // No iceServers: the accepted path connects on the SDP's own candidates.
+    const pc = new RTCPeerConnection();
+    this.pc = pc;
+    const dc = pc.createDataChannel(OAI_EVENTS_CHANNEL);
+    this.dc = dc;
+    dc.onmessage = (ev) => this.handleChannelFrame(String(ev.data));
+    dc.onopen = () => this.pushDebug("dc.open", {});
+    dc.onclose = () => this.handleChannelClosed();
+    for (const track of mic.getTracks()) pc.addTrack(track, mic);
+
+    pc.ontrack = (ev) => {
+      this.attachRemoteAudio(ev.streams[0]);
+    };
+    pc.onconnectionstatechange = () => {
+      const connectionState = pc.connectionState;
+      if (connectionState === "connected") {
+        this.dispatch({ kind: "peer_connected" });
+      } else if (connectionState === "failed" || connectionState === "disconnected" || connectionState === "closed") {
+        this.handlePeerLost(connectionState);
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const offerSdp = pc.localDescription?.sdp;
+    if (!offerSdp) throw new Error("peer connection produced no local SDP offer");
+
+    const res = await fetch("/api/live/signaling", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sdp: offerSdp,
+        ...(this.lastStartOpts.voice ? { voice: this.lastStartOpts.voice } : {}),
+        ...(this.lastStartOpts.instructions ? { instructions: this.lastStartOpts.instructions } : {}),
+      }),
+    });
+    const payload = (await res.json().catch(() => null)) as
+      | { success?: boolean; data?: { answerSdp?: unknown; callId?: unknown }; error?: unknown; code?: unknown }
+      | null;
+    if (!res.ok || !payload?.success || typeof payload.data?.answerSdp !== "string") {
+      const code = typeof payload?.code === "string" ? payload.code : `HTTP ${res.status}`;
+      throw new Error(typeof payload?.error === "string" && payload.error ? `${payload.error} (${code})` : `signaling failed (${code})`);
+    }
+    this.dispatch({ kind: "signaling_ok", callId: typeof payload.data.callId === "string" ? payload.data.callId : "" });
+    await pc.setRemoteDescription({ type: "answer", sdp: payload.data.answerSdp });
+    // `live` arrives from onconnectionstatechange; nothing to await here.
   }
 
   /**
@@ -223,6 +281,86 @@ export class LiveVoiceEngine {
     }
   }
 
+  // ─── Reconnect (⑧) ─────────────────────────────────────────────────────────
+
+  /** Unexpected peer loss while live → reconnect; while connecting → failed. */
+  private handlePeerLost(connectionState: string): void {
+    if (this.userStopped) return;
+    if (this.state.phase === "live") {
+      this.scheduleReconnect(`peer ${connectionState}`);
+      // The dead peer is torn down by the next negotiation round; the mic and
+      // the transcript survive.
+      return;
+    }
+    if (this.state.phase === "connecting") {
+      this.dispatch({ kind: "peer_lost", detail: `peer ${connectionState}` });
+      this.teardownMedia();
+    }
+  }
+
+  /** Unexpected data-channel close — same routing as peer loss. */
+  private handleChannelClosed(): void {
+    if (this.userStopped) return;
+    if (this.state.phase === "live") this.scheduleReconnect("data channel closed");
+  }
+
+  private scheduleReconnect(detail: string): void {
+    if (this.userStopped) return;
+    if (this.reconnectTimer) return; // one schedule at a time
+    const delay = reconnectDelayMs(this.reconnectAttempt);
+    if (delay === null) {
+      // Attempts exhausted: surface the failure through the existing error
+      // state instead of leaving the call half-dead.
+      this.dispatch({
+        kind: "reconnect_exhausted",
+        detail: `connection lost, ${this.reconnectAttempt} reconnect attempt${this.reconnectAttempt === 1 ? "" : "s"} failed (${detail})`,
+      });
+      this.teardownMedia();
+      return;
+    }
+    this.dispatch({ kind: "reconnect_start" });
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.attemptReconnect(detail);
+    }, delay);
+    this.reconnectAttempt += 1;
+  }
+
+  private async attemptReconnect(originalDetail: string): Promise<void> {
+    if (this.userStopped) return;
+    if (this.state.phase !== "reconnecting") return;
+    // A negotiated-but-never-connected answer must not strand the call in
+    // `reconnecting` forever: arm a stall guard, cleared on success.
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = null;
+      if (this.userStopped || this.state.phase !== "reconnecting") return;
+      this.scheduleReconnect(originalDetail || "reconnect timed out");
+    }, RECONNECT_STALL_MS);
+    try {
+      await this.negotiate();
+      // `live` arrives via peer_connected (which clears these timers).
+    } catch (err) {
+      if (this.userStopped || this.state.phase !== "reconnecting") return;
+      const message = err instanceof Error ? err.message : String(err);
+      this.pushDebug("reconnect.failed", { slice: message.slice(0, 120) });
+      this.scheduleReconnect(originalDetail);
+    }
+  }
+
+  private resetReconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.stallTimer) {
+      clearTimeout(this.stallTimer);
+      this.stallTimer = null;
+    }
+    this.reconnectAttempt = 0;
+  }
+
+  // ─── Client→live frames ────────────────────────────────────────────────────
+
   /**
    * Feed the delegated run's result back into the call: chunked
    * `delegation.context.append` frames on the `oai-events` channel (the
@@ -250,13 +388,64 @@ export class LiveVoiceEngine {
     return sent;
   }
 
+  /**
+   * Append call-wide context (① session context, ③ progress commentary's
+   * sibling channel choices live with the panel): chunked
+   * `session.context.append` frames. `commentary` is the default — context
+   * is for answering from, not for reading aloud. Returns frames sent; 0
+   * when the channel is not open or the text is empty.
+   */
+  sendSessionContext(text: string, channel: LiveContextChannel = "commentary"): number {
+    const dc = this.dc;
+    if (!dc || dc.readyState !== "open") return 0;
+    if (!text.trim()) return 0;
+    let sent = 0;
+    for (const chunk of chunkLiveContext(text)) {
+      try {
+        dc.send(JSON.stringify(buildSessionContextAppend(chunk, channel)));
+        sent += 1;
+      } catch {
+        break;
+      }
+    }
+    return sent;
+  }
+
+  /**
+   * Push typed text into the live call (⑥): chunked `session.context.append`
+   * commentary frames framed `User said: …` — the same path omp's terminal
+   * extension uses for text-only input (the route has no dedicated
+   * user-text turn message) — plus a closed user line in the local
+   * transcript, redacted like every rendered frame. Returns 0 when the
+   * channel was closed (nothing was sent, nothing displayed).
+   */
+  injectUserText(text: string, maxChars: number = LIVE_MAX_USER_TEXT_CHARS): number {
+    const bounded = text.length > maxChars ? text.slice(0, maxChars) : text;
+    if (!bounded.trim()) return 0;
+    const sent = this.sendSessionContext(buildUserTextInputContext(bounded), "commentary");
+    if (sent === 0) return 0;
+    const mutation = appendLocalUserLine(this.lines, bounded, this.nextLineId);
+    if (mutation.changedId >= 0) {
+      this.lines = mutation.lines;
+      this.nextLineId += 1;
+      this.publishLines();
+    }
+    return sent;
+  }
+
   setMuted(muted: boolean): void {
     for (const track of this.mic?.getAudioTracks() ?? []) track.enabled = !muted;
   }
 
-  /** Hang up. Safe from any phase, and again after that. */
+  /** Hang up. Safe from any phase, and again after that. Never reconnects. */
   end(): void {
-    if (this.state.phase === "connecting" || this.state.phase === "live") {
+    this.userStopped = true;
+    this.resetReconnect();
+    if (
+      this.state.phase === "connecting" ||
+      this.state.phase === "live" ||
+      this.state.phase === "reconnecting"
+    ) {
       this.dispatch({ kind: "stop" });
     } else {
       this.setState({ ...this.state, phase: "ended", detail: null });
@@ -272,10 +461,10 @@ export class LiveVoiceEngine {
   private teardownMedia(): void {
     this.dc?.close();
     this.dc = null;
-    for (const track of this.mic?.getTracks() ?? []) track.stop();
-    this.mic = null;
     this.pc?.close();
     this.pc = null;
+    for (const track of this.mic?.getTracks() ?? []) track.stop();
+    this.mic = null;
     if (this.visibilityHandler) {
       document.removeEventListener("visibilitychange", this.visibilityHandler);
       this.visibilityHandler = null;

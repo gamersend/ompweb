@@ -34,6 +34,7 @@ import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { getSubmitDuringRunBehavior } from "@/lib/composer-prefs";
 import type { LiveDelegationBridge } from "@/lib/live/delegation";
+import type { UserMessage } from "@/lib/types";
 import {
   captureScrollDistance,
   getNextVisibleCount,
@@ -693,6 +694,23 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
   liveSessionRef.current = session;
   const liveMessagesRef = useRef(messages);
   liveMessagesRef.current = messages;
+  // Live voice ① session context + ③ progress commentary: the same rendered
+  // state the composer already has, served to the VoicePanel through refs so
+  // the bridge object's identity stays stable.
+  const liveToolResultsRef = useRef(liveToolResults);
+  liveToolResultsRef.current = liveToolResults;
+  const liveActivityNotifiersRef = useRef<Set<() => void>>(new Set());
+  // Stream activity (live-tool map changes / run state flips) notifies the
+  // panel's ③ progress reducer — the panel coalesces, this only pings.
+  useEffect(() => {
+    for (const notify of liveActivityNotifiersRef.current) {
+      try {
+        notify();
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [liveToolResults, agentRunning, bashRunning]);
   const liveDelegationBridge = useMemo<LiveDelegationBridge>(() => ({
     send: async (requestText: string) => {
       const text = requestText.trim();
@@ -732,6 +750,59 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
       liveAgentEndNotifiersRef.current.add(fn);
       return () => {
         liveAgentEndNotifiersRef.current.delete(fn);
+      };
+    },
+    // ① Session context: a bounded plain-text summary source — title, cwd,
+    // and the last user/assistant PROSE messages (tool chatter excluded),
+    // oldest first. The builder in lib/live/session-context.ts does the
+    // bounding, markdown stripping and redaction.
+    sessionSnapshot: () => {
+      const info = liveSessionRef.current;
+      const chat: Array<{ role: "user" | "assistant"; text: string }> = [];
+      for (let i = liveMessagesRef.current.length - 1; i >= 0 && chat.length < 12; i--) {
+        const msg = liveMessagesRef.current[i];
+        if (!msg) continue;
+        if (msg.role === "user") {
+          const content = (msg as UserMessage).content;
+          const text = (
+            typeof content === "string"
+              ? content
+              : content
+                  .map((block) => (block.type === "text" ? block.text : ""))
+                  .filter(Boolean)
+                  .join("\n")
+          ).trim();
+          if (text) chat.unshift({ role: "user", text });
+        } else if (msg.role === "assistant") {
+          const text = (msg as AssistantMessage).content
+            .map((block) => (block.type === "text" ? block.text : ""))
+            .filter(Boolean)
+            .join("\n")
+            .trim();
+          if (text) chat.unshift({ role: "assistant", text });
+        }
+      }
+      return {
+        active: Boolean(info),
+        // SessionInfo carries the display name (fallback: first message).
+        title: info?.name ?? info?.firstMessage ?? null,
+        cwd: info?.cwd ?? null,
+        messages: chat,
+      };
+    },
+    // ③ Progress commentary source: the newest in-flight live tool's name.
+    currentToolName: () => {
+      const entries = Array.from(liveToolResultsRef.current.values());
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const name = entries[i]?.toolName;
+        if (name) return name;
+      }
+      return null;
+    },
+    onActivity: (fn: () => void) => {
+      liveActivityNotifiersRef.current.add(fn);
+      return () => {
+        liveActivityNotifiersRef.current.delete(fn);
       };
     },
   }), []);

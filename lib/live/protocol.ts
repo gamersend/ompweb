@@ -56,6 +56,16 @@ export const LIVE_SIGNAL_TIMEOUT_MS = 20_000;
 /** A body cap for the signaling POST: a browser SDP offer is a few KB. */
 export const MAX_LIVE_SIGNAL_BODY_BYTES = 64 * 1024;
 
+/**
+ * Custom persona instructions from the panel replace the default ones in the
+ * session payload, so they get the same treatment: bounded. The same cap is
+ * enforced again in the signaling route (client and server agree).
+ */
+export const LIVE_MAX_INSTRUCTIONS_CHARS = 2000;
+
+/** Typed text pushed into the call is bounded the same way. */
+export const LIVE_MAX_USER_TEXT_CHARS = 2000;
+
 /** The data channel name pinned by the route — created before the offer. */
 export const OAI_EVENTS_CHANNEL = "oai-events";
 

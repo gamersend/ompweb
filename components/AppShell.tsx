@@ -81,6 +81,7 @@ import {
 import { ArchiveBrowser } from "./ArchiveBrowser";
 import { NotificationsBell } from "./NotificationsBell";
 import { RunsBoard } from "./RunsBoard";
+import { LiveCallChip } from "./LiveCallChip";
 import { publishSessionsChanged } from "@/lib/session-change-bus";
 // The settings shell is part of the app bundle so opening it does not fetch or compile a modal chunk. The right panel (viewer included) remains on demand.
 const RightPanel = dynamic(() => import("./RightPanel").then((m) => m.RightPanel), {
@@ -2144,8 +2145,11 @@ export function AppShell() {
           {/* Notifications bell: always visible (never folded into the
               overflow menu) so background run completions stay reachable.
               Runs board button: same treatment (P3) — a live badge from the
-              sidebar's running-events subscription. */}
+              sidebar's running-events subscription. LiveCallChip (⑦): the
+              pulsing mic shown while a /live call is hot, via the
+              lib/live/live-indicator.ts window bus. */}
           <div style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+            <LiveCallChip />
             <NotificationsBell
               onOpenSession={handleOpenSessionFromBell}
               onOpenSettings={handleOpenNotifySettings}

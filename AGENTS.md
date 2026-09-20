@@ -1017,6 +1017,44 @@ gesture — the autoplay-unlock discipline from `useAudio`.
   (auto-delegate like the terminal) and resets on close; with it off, each
   item waits for its Send button.
 
+### Live voice round 2 (session context, progress, queue, text, indicator, reconnect)
+- **Session-aware voice (①):** when a call goes live (and again after each
+  delegated run's agent_end and after every reconnect) the panel appends a
+  bounded plain-text summary of the ACTIVE chat session — title, project,
+  last 12 user/assistant prose messages — via chunked `session.context.append`
+  frames on the `commentary` channel. Built by `lib/live/session-context.ts`
+  from the rendered messages ChatWindow already has: markdown stripped, every
+  field redacted through `lib/search/redact.ts`, capped ~4k chars, 500
+  UTF-8-byte surrogate-safe chunks. No active session → a minimal
+  "no active session" context. The voice can answer "what was that error
+  about?" without the summary ever being spoken.
+- **Progress commentary (③):** while a delegated run is active, the chat
+  surface's coalesced live-tool state (never raw frames) feeds the pure
+  reducer in `lib/live/progress.ts`; updates (`still working — running
+  <tool>`) fire on current-tool change or ≥30 s, capped at 10 per
+  delegation, and ride `delegation.context.append` on the `commentary`
+  channel — context only, the final spoken result is unchanged.
+- **Voice picker + instructions (④):** the panel's native-voice picker
+  persists in `localStorage["omp-web-live-voice"]`; optional custom persona
+  instructions persist in `omp-web-live-instructions` (2k cap client and
+  route) and REPLACE the default persona in the signaling payload.
+- **Queued delegations (⑤):** requests arriving while one run is in flight
+  queue (cap 3, FIFO, `queued` chip) and dispatch after the previous run's
+  agent_end result has been fed back; a full queue marks the item failed
+  (manual Send retries). One RUN at a time still.
+- **Text-into-voice (⑥):** the panel's input row pushes typed text into the
+  call as `User said: …` `session.context.append` commentary frames (the
+  extension's inject path — the route has no user-text turn message) plus a
+  closed redacted user line in the transcript; 2k bound, live-only.
+- **Live indicator (⑦):** while a call is live, `components/LiveCallChip.tsx`
+  (fed by the `lib/live/live-indicator.ts` window bus — no prop drilling)
+  shows a pulsing mic chip by the notifications bell and prefixes
+  `🎤 ` to `document.title`, restored on close; reduced-motion gated in CSS.
+- **Reconnect (⑧):** an unexpected peer/data-channel drop auto-resignals up
+  to 3 attempts (1s/2s/4s, `lib/live/reconnect.ts` + a `reconnecting` call
+  phase), keeping mic and transcript; the panel re-sends ① context on
+  success; exhaustion lands in the existing `failed` state. User stops never
+  reconnect. Still no relay, no API key, never "Realtime".
 ## omp Session File Format (v3)
 
 Location: `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`

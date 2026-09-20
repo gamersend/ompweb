@@ -1983,6 +1983,21 @@ span.token.table {
 @media (prefers-reduced-motion: reduce) {
   .omp-live-pulse { animation: none; }
 }
+
+/* Live-call indicator chip (components/LiveCallChip, AppShell topbar):
+   continuous soft pulse while a /live call is hot. Reduced motion: static
+   mic glyph, like the panel dot above. */
+@keyframes omp-live-indicator-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-success) 45%, transparent); }
+  70%  { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.omp-live-indicator-pulse {
+  animation: omp-live-indicator-pulse 1.8s var(--ease-out-warm) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .omp-live-indicator-pulse { animation: none; }
+}
 .dropdown-surface {
   background: var(--bg-panel);
   border: 1px solid var(--border);

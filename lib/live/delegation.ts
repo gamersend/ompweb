@@ -5,19 +5,23 @@
  * When the live model emits `delegation.created`, the request text is
  * injected into ompweb's chat session (the browser-local bridge) and the
  * item walks the same lifecycle omp's terminal /live extension drives with
- * its single `pendingDelegationId`:
- *
+ * its single `pendingDelegationId` — plus a QUEUE: requests that arrive
+ * while one run is in flight wait their turn instead of being dropped, each
+ * dispatched when the previous run's agent_end result has been fed back
+ * (the one-RUN-at-a-time serialization is kept):
+
  *   pending    — auto-delegate is off; waiting for the Send button
+ *   queued     — auto-delegate on, another run in flight, waiting for it
  *   delegating — the send into the chat session is in flight
  *   running    — dispatched; waiting for the delegated run's agent_end
  *   done       — result fed back into the call via `delegation.context.append`
- *   failed     — the chat session refused it (retry via Send is allowed)
+ *   failed     — delivery refused (queue full, or the chat session said no);
+ *                retry via Send is allowed
  *
- * One delegation is in flight at a time (the terminal serializes the same
- * way). Items live in tab memory only — nothing here is ever persisted.
+ * Items live in tab memory only — nothing here is ever persisted.
  */
 
-export type LiveDelegationState = "pending" | "delegating" | "running" | "done" | "failed";
+export type LiveDelegationState = "pending" | "queued" | "delegating" | "running" | "done" | "failed";
 
 export interface LiveDelegationItem {
   id: string;
@@ -29,6 +33,12 @@ export interface LiveDelegationItem {
 
 /** A long call must not grow the delegation list without bound. */
 export const LIVE_MAX_DELEGATIONS = 20;
+
+/** Requests waiting while another run is in flight. */
+export const LIVE_MAX_QUEUED_DELEGATIONS = 3;
+
+/** States that count as "one is in flight" (the serialization window). */
+export const LIVE_IN_FLIGHT_STATES: readonly LiveDelegationState[] = ["delegating", "running"];
 
 /** The bridge the VoicePanel needs from the chat surface (ChatWindow). */
 export interface LiveDelegationBridge {
@@ -42,6 +52,32 @@ export interface LiveDelegationBridge {
   lastAssistantText(): Promise<string>;
   /** Subscribe to the chat session's terminal agent_end; returns unsubscribe. */
   onAgentEnd(fn: () => void): () => void;
+  /**
+   * Bounded snapshot of the ACTIVE chat session for the voice's session
+   * context (①): title, cwd/project and the last user/assistant prose
+   * messages (oldest first). `active: false` when no session exists.
+   */
+  sessionSnapshot(): LiveChatSnapshotBridge;
+  /** The chat surface's current running tool name, or null while idle. */
+  currentToolName(): string | null;
+  /**
+   * Subscribe to the chat surface's stream activity (coalesced live-tool
+   * state changes — NOT raw protocol frames); fires the ③ progress
+   * commentary reducer. Returns unsubscribe.
+   */
+  onActivity(fn: () => void): () => void;
+}
+
+/**
+ * The snapshot shape handed across the bridge. Structurally the same as
+ * `LiveChatSnapshot` in session-context.ts but declared here so the pure
+ * delegation module stays import-light (session-context pulls the redactor).
+ */
+export interface LiveChatSnapshotBridge {
+  active: boolean;
+  title?: string | null;
+  cwd?: string | null;
+  messages?: Array<{ role: "user" | "assistant"; text: string }>;
 }
 
 /**
@@ -80,4 +116,34 @@ export function newestDelegationInState(
     if (entry && entry.state === state) return entry;
   }
   return undefined;
+}
+
+/** The OLDEST item in a state — the queue drains first-in-first-out. */
+export function oldestDelegationInState(
+  list: readonly LiveDelegationItem[],
+  state: LiveDelegationState,
+): LiveDelegationItem | undefined {
+  return list.find((entry) => entry.state === state);
+}
+
+/** How many items sit in any of the given states. */
+export function delegationCountInStates(
+  list: readonly LiveDelegationItem[],
+  states: readonly LiveDelegationState[],
+): number {
+  return list.filter((entry) => states.includes(entry.state)).length;
+}
+
+export type DelegationQueueDecision = "dispatch" | "queue" | "reject";
+
+/**
+ * Where a fresh auto-delegated request goes: straight to dispatch when
+ * nothing is in flight; into the pending queue while a run is active (until
+ * LIVE_MAX_QUEUED_DELEGATIONS); rejected once the queue is full (the panel
+ * marks it `failed` so the user can still Send it manually).
+ */
+export function decideDelegationRouting(list: readonly LiveDelegationItem[]): DelegationQueueDecision {
+  if (delegationCountInStates(list, LIVE_IN_FLIGHT_STATES) === 0) return "dispatch";
+  const queued = delegationCountInStates(list, ["queued"]);
+  return queued < LIVE_MAX_QUEUED_DELEGATIONS ? "queue" : "reject";
 }

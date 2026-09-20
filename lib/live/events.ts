@@ -203,6 +203,22 @@ export function closeTranscriptLines(
 }
 
 /**
+ * Append a locally-injected user line (typed text pushed into the call) as
+ * an already-CLOSED user turn. Same redaction + clamping as every wire
+ * frame, so the panel renders exactly one kind of text.
+ */
+export function appendLocalUserLine(
+  lines: readonly LiveTranscriptLine[],
+  text: string,
+  nextId: number,
+): TranscriptMutation {
+  const clean = clamp(redactTranscriptText(text.trim()));
+  if (!clean) return { lines: [...lines], changedId: -1 };
+  const line: LiveTranscriptLine = { id: nextId, role: "user", text: clean, done: true };
+  return { lines: [...lines, line].slice(-LIVE_MAX_LINES), changedId: nextId };
+}
+
+/**
  * Which side a transcript event belongs to. Input/user-shaped event types
  * carry the caller's speech; everything else is the assistant.
  */
