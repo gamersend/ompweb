@@ -12,14 +12,37 @@
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, CircleStop, Folder, Layers, Play, Timer, Wrench, X } from "lucide-react";
+import {
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  CircleStop,
+  Folder,
+  Layers,
+  Play,
+  Send,
+  SquareKanban,
+  Timer,
+  Wrench,
+  X,
+} from "lucide-react";
 import { ConfirmDialog } from "./ui/field";
+import { Dialog, DialogContent, DialogTitle } from "./ui/primitives";
 import { toast } from "./ui/toast";
+import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { useI18n } from "@/lib/i18n";
+import { formatApiError } from "@/lib/i18n/api-error";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { formatCompactNumber } from "@/lib/format";
 import { comparableProjectPath } from "@/lib/comparable-path";
 import { sortManagedProjects } from "@/lib/project-ordering";
+import {
+  groupKanbanCards,
+  KANBAN_COLUMNS,
+  type KanbanColumn,
+} from "@/lib/board-kanban";
+import { formatCost as formatSubCost, formatDuration, formatTokens as formatSubTokens } from "@/lib/subagent-format";
+import type { SubagentInfo } from "@/lib/subagent-types";
 import {
   filterBoardRuns,
   formatBoardElapsed,
@@ -27,7 +50,7 @@ import {
 } from "@/hooks/useRunsBoard";
 import type { BoardRun } from "@/lib/runs-board";
 import { projectLabel } from "./AppShell-layout";
-import type { ManagedProject } from "@/lib/types";
+import type { ManagedProject, SessionInfo } from "@/lib/types";
 
 interface RunsBoardProps {
   onClose: () => void;
@@ -53,6 +76,12 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
   const [interruptBusy, setInterruptBusy] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const gridRef = useRef<HTMLDivElement>(null);
+  // Swarm kanban (wave 2 P6): "Tasks" view — sessions WITH subagents render
+  // as queued/running/done columns fed by the board snapshot's cards.
+  const [tasksMode, setTasksMode] = useState(false);
+  const [transcriptTarget, setTranscriptTarget] = useState<{ sessionId: string; subagent: SubagentInfo } | null>(null);
+  // Session→session delegation (wave 2 P5): "Send output" target picker.
+  const [delegateSource, setDelegateSource] = useState<BoardRun | null>(null);
 
   // Elapsed timers tick every second while the board is open.
   useEffect(() => {
@@ -76,6 +105,12 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
   const filtered = useMemo(
     () => filterBoardRuns(runs, projectFilter),
     [runs, projectFilter],
+  );
+
+  // Tasks view: only sessions carrying (or reporting) subagents render.
+  const swarmSections = useMemo(
+    () => filtered.filter((run) => (run.subagents?.length ?? 0) > 0 || run.subagentCount > 0),
+    [filtered],
   );
 
   const activeCount = runs.filter(isActiveState).length;
@@ -213,6 +248,25 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
         </label>
         <button
           type="button"
+          onClick={() => { setTasksMode((mode) => !mode); setFocusedIndex(0); }}
+          aria-pressed={tasksMode}
+          className="ui-focus-ring"
+          aria-label={t("board.tasksAria")}
+          title={t("board.tasksAria")}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 5, height: 28,
+            padding: "0 10px", flexShrink: 0,
+            border: `1px solid ${tasksMode ? "var(--accent)" : "var(--border)"}`,
+            borderRadius: "var(--radius-control)",
+            background: tasksMode ? "var(--bg-selected)" : "transparent",
+            color: tasksMode ? "var(--text)" : "var(--text-muted)", cursor: "pointer", fontSize: 12,
+          }}
+        >
+          <SquareKanban size={14} strokeWidth={1.8} aria-hidden="true" />
+          {t("board.tasks")}
+        </button>
+        <button
+          type="button"
           onClick={() => void refresh()}
           className="ui-focus-ring"
           aria-label={t("runsBoard.refresh")}
@@ -247,7 +301,7 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
         </div>
       )}
 
-      {/* Card grid */}
+      {/* Tasks view (swarm kanban) or the runs card grid */}
       {filtered.length === 0 ? (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24 }}>
           <Layers size={28} strokeWidth={1.4} aria-hidden="true" style={{ color: "var(--text-dim)" }} />
@@ -269,6 +323,26 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
             </button>
           )}
         </div>
+      ) : tasksMode ? (
+        swarmSections.length === 0 ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24 }}>
+            <SquareKanban size={28} strokeWidth={1.4} aria-hidden="true" style={{ color: "var(--text-dim)" }} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{t("board.empty")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", maxWidth: 420 }}>{t("board.emptyHint")}</div>
+          </div>
+        ) : (
+          <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+            {swarmSections.map((run) => (
+              <SwarmSection
+                key={run.sessionId}
+                run={run}
+                nowMs={nowMs}
+                onOpen={() => onOpenSession(run.sessionId)}
+                onOpenTranscript={(subagent) => setTranscriptTarget({ sessionId: run.sessionId, subagent })}
+              />
+            ))}
+          </div>
+        )
       ) : (
         <div
           ref={gridRef}
@@ -292,6 +366,7 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
               nowMs={nowMs}
               onOpen={() => onOpenSession(run.sessionId)}
               onInterrupt={() => setInterruptTarget(run)}
+              onDelegate={() => setDelegateSource(run)}
               formatTokens={formatTokens}
               formatCost={formatCost}
             />
@@ -310,6 +385,15 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
         busy={interruptBusy}
         onConfirm={() => { if (interruptTarget) void handleInterrupt(interruptTarget); }}
       />
+
+      <DelegateDialog run={delegateSource} onClose={() => setDelegateSource(null)} />
+
+      <SubagentTranscriptDialog
+        subagent={transcriptTarget?.subagent ?? null}
+        sessionId={transcriptTarget?.sessionId ?? null}
+        transcriptVersion={0}
+        onClose={() => setTranscriptTarget(null)}
+      />
     </div>
   );
 }
@@ -323,7 +407,7 @@ const STATUS_DOT: Record<BoardRun["state"], { background: string; pulsing: boole
   finished: { background: "var(--text-dim)", pulsing: false },
 };
 
-function RunCard({ run, index, focused, onFocusCard, nowMs, onOpen, onInterrupt, formatTokens, formatCost }: {
+function RunCard({ run, index, focused, onFocusCard, nowMs, onOpen, onInterrupt, onDelegate, formatTokens, formatCost }: {
   run: BoardRun;
   index: number;
   focused: boolean;
@@ -331,6 +415,7 @@ function RunCard({ run, index, focused, onFocusCard, nowMs, onOpen, onInterrupt,
   nowMs: number;
   onOpen: () => void;
   onInterrupt: () => void;
+  onDelegate: () => void;
   formatTokens: (run: BoardRun) => string | null;
   formatCost: (run: BoardRun) => string | null;
 }) {
@@ -443,6 +528,21 @@ function RunCard({ run, index, focused, onFocusCard, nowMs, onOpen, onInterrupt,
             <Play size={12} strokeWidth={2} aria-hidden="true" />
             {t("runsBoard.open")}
           </button>
+          <button
+            type="button"
+            onClick={onDelegate}
+            className="ui-focus-ring"
+            aria-label={t("delegate.menu")}
+            title={t("delegate.menu")}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px",
+              border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+              background: "transparent", color: "var(--text-muted)", fontSize: 12, cursor: "pointer",
+            }}
+          >
+            <Send size={12} strokeWidth={2} aria-hidden="true" />
+            {t("delegate.menuShort")}
+          </button>
           {active && (
             <button
               type="button"
@@ -463,3 +563,371 @@ function RunCard({ run, index, focused, onFocusCard, nowMs, onOpen, onInterrupt,
     </div>
   );
 }
+
+// ─── Swarm kanban (wave 2 Phase 6) ───────────────────────────────────────────
+
+const COLUMN_DOT: Record<KanbanColumn, { background: string; pulsing: boolean }> = {
+  running: { background: "var(--accent)", pulsing: true },
+  queued: { background: "var(--text-dim)", pulsing: false },
+  done: { background: "var(--text-dim)", pulsing: false },
+};
+
+/** Card status glyph — shape + label, never color alone (board a11y rule). */
+function cardStatusIcon(status: SubagentInfo["status"], column: KanbanColumn) {
+  if (status === "failed") return { Icon: AlertCircle, color: "var(--accent-strong)" };
+  if (status === "completed") return { Icon: CheckCircle2, color: "var(--text-muted)" };
+  if (status === "aborted") return { Icon: CircleStop, color: "var(--text-muted)" };
+  // Started: the column decides whether it reads as running or queued.
+  return column === "running"
+    ? { Icon: Bot, color: "var(--accent)" }
+    : { Icon: Bot, color: "var(--text-dim)" };
+}
+
+function SwarmSection({ run, nowMs, onOpen, onOpenTranscript }: {
+  run: BoardRun;
+  nowMs: number;
+  onOpen: () => void;
+  onOpenTranscript: (subagent: SubagentInfo) => void;
+}) {
+  const { t } = useI18n();
+  const active = isActiveState(run);
+  const dot = STATUS_DOT[run.state];
+  const cards = run.subagents ?? [];
+  const grouped = groupKanbanCards(cards);
+
+  return (
+    <section
+      aria-label={t("board.sectionAria", { title: run.sessionTitle })}
+      style={{
+        borderRadius: "var(--radius-card)", border: "1px solid var(--border)",
+        background: "var(--bg-panel)", padding: "12px 14px",
+      }}
+    >
+      <header style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, marginBottom: 10 }}>
+        <span
+          aria-hidden="true"
+          className={dot.pulsing ? "runs-board-dot-waiting" : undefined}
+          style={{ width: 8, height: 8, borderRadius: 999, background: dot.background, flexShrink: 0 }}
+        />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>
+          {run.sessionTitle}
+        </span>
+        <span title={run.projectRoot} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
+          <Folder size={11} strokeWidth={1.8} aria-hidden="true" />
+          {projectLabel(run.projectRoot)}
+        </span>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: active ? "var(--text)" : "var(--text-muted)" }}>
+          {formatBoardElapsed(active ? run.startedAt : (run.finishedAt ?? run.startedAt), nowMs)}
+        </span>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="ui-focus-ring"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", flexShrink: 0,
+            border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+            background: "transparent", color: "var(--text)", fontSize: 12, cursor: "pointer",
+          }}
+        >
+          <Play size={11} strokeWidth={2} aria-hidden="true" />
+          {t("runsBoard.open")}
+        </button>
+      </header>
+
+      {cards.length === 0 ? (
+        <div style={{ fontSize: 11, color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Bot size={12} strokeWidth={1.8} aria-hidden="true" />
+          {t("board.noCards", { count: String(run.subagentCount) })}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+          {KANBAN_COLUMNS.map((column) => {
+            const columnCards = grouped[column];
+            return (
+              <div key={column} role="list" aria-label={t(`board.col.${column}`)} style={{ minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>
+                  <span
+                    aria-hidden="true"
+                    className={COLUMN_DOT[column].pulsing ? "runs-board-dot-waiting" : undefined}
+                    style={{ width: 6, height: 6, borderRadius: 999, background: COLUMN_DOT[column].background }}
+                  />
+                  {t(`board.col.${column}`)}
+                  <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>{columnCards.length}</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {columnCards.map((card) => (
+                    <KanbanCard key={card.id} card={card} column={column} onOpen={() => onOpenTranscript(card)} />
+                  ))}
+                  {columnCards.length === 0 && (
+                    <div aria-hidden="true" style={{ border: "1px dashed var(--border)", borderRadius: "var(--radius-control)", fontSize: 11, color: "var(--text-dim)", padding: "8px 10px", textAlign: "center" }}>
+                      —
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function KanbanCard({ card, column, onOpen }: { card: SubagentInfo; column: KanbanColumn; onOpen: () => void }) {
+  const { t } = useI18n();
+  const { Icon, color } = cardStatusIcon(card.status, column);
+  const retrying = card.progress?.retryState;
+  const tokens = formatSubTokens(card.progress?.tokens);
+  const cost = formatSubCost(card.progress?.cost);
+  const duration = formatDuration(card.progress?.durationMs);
+  const statusLabel = retrying
+    ? t("board.retrying", { attempt: String(retrying.attempt), max: String(retrying.maxAttempts) })
+    : t(`board.status.${card.status}`);
+  const taskText = card.task || card.description || card.assignment || "";
+
+  return (
+    <button
+      type="button"
+      role="listitem"
+      onClick={onOpen}
+      className="ui-focus-ring"
+      aria-label={t("board.cardAria", { agent: card.agent, status: statusLabel })}
+      title={taskText}
+      style={{
+        display: "flex", flexDirection: "column", gap: 4, textAlign: "left", width: "100%",
+        padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+        background: "var(--bg)", cursor: "pointer",
+      }}
+    >
+      <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, width: "100%" }}>
+        <Icon size={12} strokeWidth={2} aria-hidden="true" style={{ color, flexShrink: 0 }} />
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>
+          {card.agent}
+        </span>
+        <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>{statusLabel}</span>
+      </span>
+      {taskText && (
+        <span style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
+          {taskText}
+        </span>
+      )}
+      <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "var(--text-dim)", width: "100%", minWidth: 0 }}>
+        {card.progress?.currentTool && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "var(--font-mono)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+            <Wrench size={10} strokeWidth={1.8} aria-hidden="true" />
+            {card.progress.currentTool}
+          </span>
+        )}
+        <span style={{ marginLeft: "auto", flexShrink: 0, display: "inline-flex", gap: 6 }}>
+          {tokens && <span>{tokens}</span>}
+          {cost && <span>{cost}</span>}
+          {duration && <span>{duration}</span>}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+// ─── Delegate target picker (wave 2 Phase 5) ─────────────────────────────────
+
+interface DelegateTarget {
+  id: string;
+  title: string;
+  project: string;
+  running: boolean;
+  modified: string;
+}
+
+function DelegateDialog({ run, onClose }: { run: BoardRun | null; onClose: () => void }) {
+  const { t } = useI18n();
+  const [targets, setTargets] = useState<DelegateTarget[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Target list = sessions the user can open (the same /api/sessions registry
+  // the sidebar uses), minus the source, with running dots from the live set.
+  useEffect(() => {
+    if (!run) return;
+    let alive = true;
+    setLoading(true);
+    setSelected(null);
+    setQuery("");
+    setTargets([]);
+    void (async () => {
+      try {
+        const res = await fetch("/api/sessions", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { sessions?: SessionInfo[]; runningSessionIds?: string[] };
+        if (!alive) return;
+        const runningIds = new Set(data.runningSessionIds ?? []);
+        const options = (data.sessions ?? [])
+          .filter((session) => session.id !== run.sessionId)
+          .map<DelegateTarget>((session) => ({
+            id: session.id,
+            title: session.name || projectLabel(session.cwd),
+            project: session.cwd,
+            running: runningIds.has(session.id),
+            modified: session.modified,
+          }));
+        // Running first, then most recently touched — the likely targets lead.
+        options.sort((a, b) => Number(b.running) - Number(a.running) || b.modified.localeCompare(a.modified));
+        setTargets(options);
+      } catch {
+        if (alive) setTargets([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [run]);
+
+  const filteredTargets = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return targets;
+    return targets.filter((target) => target.title.toLowerCase().includes(needle) || target.project.toLowerCase().includes(needle));
+  }, [targets, query]);
+
+  const selectedTarget = targets.find((target) => target.id === selected) ?? null;
+
+  const handleSend = useCallback(async () => {
+    if (!run || !selected) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/delegate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fromSession: run.sessionId, toSession: selected }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; code?: string; retryAfterSec?: number };
+      if (!res.ok || body.error) {
+        // Stable route codes get dedicated copy; everything else falls back to
+        // the server text via the shared API-error formatter.
+        if (body.code === "target_busy") {
+          toast.error(t("delegate.targetBusy", { seconds: String(body.retryAfterSec ?? 300) }));
+        } else if (body.code === "delegate_loop") {
+          toast.error(t("delegate.errorLoop"));
+        } else if (body.code === "delegate_no_output") {
+          toast.error(t("delegate.errorNoOutput"));
+        } else if (body.code === "delegate_self" || body.code === "delegate_sessions_required") {
+          toast.error(t("delegate.errorSelf"));
+        } else {
+          toast.error(t("delegate.failed", { detail: formatApiError(body, "delegate.failed") }));
+        }
+        return;
+      }
+      toast.success(t("delegate.sent", { title: selectedTarget?.title ?? "" }));
+      onClose();
+    } catch (error) {
+      toast.error(t("delegate.failed", { detail: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setBusy(false);
+    }
+  }, [run, selected, selectedTarget, t, onClose]);
+
+  return (
+    <Dialog open={run !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      {run && (
+        <DialogContent
+          ariaLabel={t("delegate.title")}
+          style={{ width: "min(94vw, 520px)", maxWidth: "min(94vw, 520px)" }}
+        >
+          <DialogTitle style={{ fontSize: 16, marginBottom: 4 }}>{t("delegate.title")}</DialogTitle>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+            {t("delegate.desc", { title: run.sessionTitle })}
+          </div>
+
+          <input
+            type="text"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("delegate.search")}
+            aria-label={t("delegate.search")}
+            className="ui-focus-ring"
+            style={{
+              width: "100%", padding: "7px 10px", marginBottom: 8,
+              border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+              background: "var(--bg)", color: "var(--text)", fontSize: 13,
+            }}
+          />
+
+          <div role="listbox" aria-label={t("delegate.targetList")} style={{ maxHeight: 320, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+            {loading && <div style={{ fontSize: 12, color: "var(--text-muted)", padding: "8px 4px" }}>{t("delegate.loading")}</div>}
+            {!loading && filteredTargets.length === 0 && (
+              <div style={{ fontSize: 12, color: "var(--text-muted)", padding: "8px 4px" }}>{t("delegate.empty")}</div>
+            )}
+            {filteredTargets.map((target) => {
+              const isSelected = target.id === selected;
+              return (
+                <button
+                  key={target.id}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => setSelected(target.id)}
+                  className="ui-focus-ring"
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
+                    padding: "7px 10px", borderRadius: "var(--radius-control)", fontSize: 12,
+                    border: `1px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
+                    background: isSelected ? "var(--bg-selected)" : "var(--bg)",
+                    color: "var(--text)", cursor: "pointer",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 7, height: 7, borderRadius: 999, flexShrink: 0,
+                      background: target.running ? "var(--accent)" : "var(--text-dim)",
+                    }}
+                  />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>
+                    {target.title}
+                  </span>
+                  <span title={target.project} style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
+                    {projectLabel(target.project)}
+                  </span>
+                  <span style={{ fontSize: 10, color: target.running ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
+                    {target.running ? t("delegate.runningDot") : t("delegate.idleDot")}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button
+              type="button"
+              onClick={onClose}
+              className="ui-focus-ring"
+              style={{
+                padding: "6px 14px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+                background: "transparent", color: "var(--text)", fontSize: 12, cursor: "pointer",
+              }}
+            >
+              {t("delegate.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSend()}
+              disabled={!selected || busy}
+              className="ui-focus-ring"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px",
+                border: "none", borderRadius: "var(--radius-control)",
+                background: selected && !busy ? "var(--accent)" : "var(--bg-subtle)",
+                color: selected && !busy ? "var(--on-accent)" : "var(--text-dim)",
+                fontSize: 12, fontWeight: 600, cursor: selected && !busy ? "pointer" : "not-allowed",
+              }}
+            >
+              <Send size={12} strokeWidth={2} aria-hidden="true" />
+              {busy ? t("delegate.sending") : t("delegate.confirm")}
+            </button>
+          </div>
+        </DialogContent>
+      )}
+    </Dialog>
+  );
+}
+

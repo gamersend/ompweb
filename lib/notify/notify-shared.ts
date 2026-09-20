@@ -11,9 +11,9 @@
 //   and webhooks still fire (documented in the settings copy).
 // ============================================================================
 
-export type NotifyKind = "agent_end" | "approval" | "error" | "guardrail" | "scheduler";
+export type NotifyKind = "agent_end" | "approval" | "error" | "guardrail" | "scheduler" | "delegation";
 
-export const NOTIFY_KINDS: readonly NotifyKind[] = ["agent_end", "approval", "error", "guardrail", "scheduler"];
+export const NOTIFY_KINDS: readonly NotifyKind[] = ["agent_end", "approval", "error", "guardrail", "scheduler", "delegation"];
 
 export interface NotifyRow {
   /** Dedup identity: `kind + sessionId + runId-or-frameId` (see dedupKeyFor).

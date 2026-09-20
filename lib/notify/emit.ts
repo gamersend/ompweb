@@ -97,6 +97,29 @@ export function notifySchedulerEvent(
   return row;
 }
 
+/** Session→session delegation (wave 2 Phase 5): one row per successful
+ *  delegation. `ctx` points at the TARGET session (where the work lands —
+ *  the bell row navigates there). The preview MUST already be redacted +
+ *  capped by the caller (lib/delegate.ts `delegatePreview`) — this emitter
+ *  never re-flattens raw transcript text by itself; it only truncates. */
+export function notifyDelegation(
+  ctx: NotifyEmitContext,
+  token: string | number,
+  detail: { fromTitle: string; preview: string; mode: string },
+): NotifyRow | null {
+  const row = pushNotifyRow({
+    id: dedupKeyFor("delegation", ctx.sessionId, token),
+    kind: "delegation",
+    sessionId: ctx.sessionId,
+    sessionTitle: ctx.sessionTitle,
+    projectRoot: ctx.projectRoot,
+    title: `${detail.fromTitle} → ${ctx.sessionTitle}`,
+    body: detail.preview.trim() ? truncate(detail.preview.trim(), 200) : "Output was delegated to this session.",
+  });
+  if (row) dispatchWebhookForRow(row);
+  return row;
+}
+
 function truncate(text: string, max: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;

@@ -33,6 +33,9 @@ import {
 } from "./rpc-manager";
 import { parseSessionUsage } from "./usage-service";
 import { resolveProject } from "./worktree";
+import { parseSubagentSnapshot, type SubagentInfo } from "./subagent-types";
+import { extractSubagentHistory } from "./subagent-history";
+import { historyEntryToCard } from "./board-kanban";
 import type { WebSessionState } from "./pi-types";
 
 /** Contract per BUILD-PLAN Phase 3 — served verbatim by /api/runs. */
@@ -54,7 +57,16 @@ export interface BoardRun {
   finishedAt?: string;
   /** Present on error rows: why the run failed (prompt failure / crash). */
   errorDetail?: string;
+  /** Swarm kanban (wave 2 P6): the subagent roster as kanban-ready cards —
+   * live get_subagents snapshots while the run is active; on-disk history
+   * recovery for terminal rows whose last snapshot came up empty. Absent or
+   * empty when the run has no (recovered) subagents. Bounded per run. */
+  subagents?: SubagentInfo[];
 }
+
+/** Hard cap on kanban cards carried per run — the SSE payload must stay
+ * bounded even for a swarm that spawned dozens of agents. */
+export const BOARD_MAX_SUBAGENT_CARDS = 24;
 
 export const BOARD_POLL_MS = 2_000;
 export const BOARD_LINGER_MS = 15 * 60 * 1000;
@@ -70,6 +82,10 @@ interface BoardRow {
   failureDetail: string | null;
   /** Wall-clock ms when the lingering terminal row must be pruned. */
   pruneAt: number | null;
+  /** The child's session file, captured while the wrapper is reachable —
+   * terminal rows need it for the one-time history recovery (the wrapper
+   * may be gone from the registry by then). */
+  sessionFile: string | null;
 }
 
 interface RunsBoardState {
@@ -156,6 +172,7 @@ function createRow(sessionId: string, cwd: string): BoardRow {
     signature: "",
     failureDetail: null,
     pruneAt: null,
+    sessionFile: wrapper?.sessionFile || null,
   };
   row.signature = rowSignature(row.run);
   return row;
@@ -186,6 +203,20 @@ function applyRunningSet(): string[] {
         currentTool: null,
         ...(failed ? { errorDetail: row.failureDetail! } : {}),
       };
+      // History recovery (wave 2 P6): a terminal row whose LAST live snapshot
+      // never carried cards (roster landed between polls, older build, …)
+      // recovers them once from the on-disk task toolResults — the same
+      // source the composer panel uses. One attempt, never throws.
+      if (!row.run.subagents?.length && row.sessionFile) {
+        try {
+          const recovered = extractSubagentHistory(row.sessionFile)
+            .slice(0, BOARD_MAX_SUBAGENT_CARDS)
+            .map(historyEntryToCard);
+          if (recovered.length > 0) row.run.subagents = recovered;
+        } catch {
+          // Absent history just means the kanban shows the count only.
+        }
+      }
       row.signature = rowSignature(row.run);
       row.pruneAt = now + BOARD_LINGER_MS;
       changed.push(id);
@@ -262,6 +293,24 @@ function subagentCountFrom(result: unknown): number {
   return 0;
 }
 
+/** Kanban cards (wave 2 P6): parse the same get_subagents result the counter
+ * uses into bounded SubagentInfo cards. Empty when the payload carries no
+ * parseable roster (older builds) — the count then still stands alone. */
+export function parseSubagentCards(result: unknown): SubagentInfo[] {
+  const entries = Array.isArray(result)
+    ? result
+    : result && typeof result === "object" && Array.isArray((result as { subagents?: unknown }).subagents)
+      ? (result as { subagents: unknown[] }).subagents
+      : [];
+  const cards: SubagentInfo[] = [];
+  for (const entry of entries) {
+    const card = parseSubagentSnapshot(entry);
+    if (card) cards.push(card);
+    if (cards.length >= BOARD_MAX_SUBAGENT_CARDS) break;
+  }
+  return cards;
+}
+
 /** Refresh one row from its live wrapper. Never throws: a wedged/dead child
  * degrades that row only (get_state timeout → the wrapper recycles itself and
  * leaves the running set; the row then finalizes on the next tick). */
@@ -278,10 +327,19 @@ async function refreshRowFromWrapper(id: string, row: BoardRow): Promise<void> {
   }
 
   let subagentCount = row.run.subagentCount;
+  let subagentCards = row.run.subagents;
   try {
-    subagentCount = subagentCountFrom(await wrapper.send({ type: "get_subagents" }));
+    const result = await wrapper.send({ type: "get_subagents" });
+    const cards = parseSubagentCards(result);
+    if (cards.length > 0) {
+      subagentCount = cards.length;
+      subagentCards = cards;
+    } else {
+      // Older omp builds may not carry a parseable roster — keep the count.
+      subagentCount = subagentCountFrom(result);
+    }
   } catch {
-    // Older omp builds may not know the command — keep the previous count.
+    // Older omp builds may not know the command — keep the previous values.
   }
 
   // Worktree cwds resolve back to their main repo (sidebar grouping parity).
@@ -313,9 +371,12 @@ async function refreshRowFromWrapper(id: string, row: BoardRow): Promise<void> {
     currentTool: currentToolOf(wrapper),
     queuedCount: typeof state.queuedMessageCount === "number" ? state.queuedMessageCount : 0,
     subagentCount,
+    subagents: subagentCards,
     tokens: usage.tokens,
     costUsd: usage.costUsd,
   };
+  // Keep the finalize-time history recovery fed: the wrapper is reachable now.
+  row.sessionFile = wrapper.sessionFile || row.sessionFile;
   // A run that failed but is still going (auto-retry) recovered — a fresh
   // state read means the failure stamp belongs to a finished attempt, not
   // this one. Only clear while the run is demonstrably alive.

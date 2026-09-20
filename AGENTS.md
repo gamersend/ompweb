@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 79 API routes, 80 components, 22 hooks, 113 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 81 API routes, 80 components, 22 hooks, 115 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -1258,6 +1258,104 @@ gesture — the autoplay-unlock discipline from `useAudio`.
   (code-point-safe), copied via the clipboard lib and inserted into the
   composer draft through the existing bus — it can never send on the user's
   behalf.
+
+### Checkpoint → PR wizard (`lib/checkpoints/pr.ts`, checkpoints route `pr-draft`/`pr`, RestoreDialog PR mode) (W2-P7)
+- PRs are built from a checkpoint in a FRESH `ompweb-pr/<sid>-<seq>` worktree
+  (`<repo>-worktrees/ompweb-pr-<sid>-<seq>`); the user's current checkout,
+  branch, and index are never touched (asserted by tests), and deletion still
+  runs only through the explicit containment-checked file list — never
+  `git clean` / `git reset --hard`.
+- The curated commit is assembled with a throwaway `GIT_INDEX_FILE` +
+  `commit-tree` + `update-ref`; authorship is the user's git config (never
+  `-c` overrides). The requested file list is intersected with git's own diff
+  before use — request paths can never smuggle paths into argv or the fs.
+- Commit messages are drafted by one-shotting the user's `omp`
+  (`-p --no-session --no-tools`, diff via temp file, 30 s budget) with a
+  deterministic fallback on any failure; `gh pr create` uses fixed argv with
+  the body in a temp file, and gh presence/auth failures return 503-style
+  envelopes carrying the exact fix command (`gh auth login`, install hint).
+- A success notify row reuses the existing `agent_end` kind — the
+  `NotifyKind` union gained nothing.
+- If push/gh fails after the commit succeeded, the worktree + branch remain
+  (deliberately not auto-removed); the error envelope names the branch and the
+  exact manual command (`git push origin <branch>`), and a retry of pr mode on
+  an existing worktree fails with addWorktree's "Directory already exists" —
+  remove the worktree first (session cwd never changes either way).
+
+### Model report card (`lib/insights/model-report.ts`, `/api/model-report`, UsageConfig) (W2-P9)
+- `GET /api/model-report?range=7d|30d|90d` (`{success,data}` envelope,
+  nodejs): per-model rows (sessions, completion %, median TTFT, tokens,
+  cost, $/completed-session, est. failure share) unioning stats.db
+  `messages`/`tool_calls` via the read-only reader's `modelFacts()` with
+  ompweb's own usage rollups. 60 s shape cache on globalThis
+  (`__ompModelReportCache`); `?refresh=1` bypasses; `partial: true` when
+  the 500 ms budget overruns or a source degrades; stats.db absent →
+  ompweb-est-only rows + source badges, never an empty page.
+- Outcome = last recorded stop_reason per session (`stop`/`error`/
+  `aborted`/other). Union is native-wins per (provider, model) — ompweb
+  usage never double-counts; est. cost fills only missing native cost.
+- Origins are badged, never excluded: scheduled sessions via the scheduler
+  store's history sessionIds (path-substring match); delegated labeling is
+  reserved (`labeled.delegated`, wired, filled by the W2 delegation ledger
+  as those sessions accumulate).
+- `lib/omp-stats-db.ts` gained `modelFacts(sinceMs, untilMs)` (per-part
+  no-such-table degrade; availability per query). UsageConfig's
+  "Model report card" section renders the sortable table + sparkbars +
+  badges + notices; i18n under `report.*` (×3 locales).
+
+### Session→session delegation (`lib/delegate.ts`, `/api/delegate`, RunsBoard "Send output") (W2-P5)
+- `POST /api/delegate {fromSession, toSession}` (nodejs, 64 KB bounded body via
+  `parseJsonWithinLimit`). Both ids resolve through the SAME
+  `resolveSessionPathOr404` family as `/api/sessions/[id]` — 404-safe, no new
+  allow-root grants; a spawn hands the target's recorded cwd to
+  `lib/spawn-session.ts` (`spawnNewSession`), which applies `allowFileRoot` +
+  sidebar invalidation exactly like `/api/agent/new`. Never spawn any other way.
+- Source text: live wrapper → RPC `get_last_assistant_text` (server-side path:
+  `wrapper.send({type:"get_last_assistant_text"})`); no wrapper or failure →
+  rendered-history fallback over the parsed `.jsonl` (last assistant prose via
+  `readEntryText`). No reply at all → 400 `delegate_no_output`.
+- Prompt shape: `<!-- ompweb-delegate:<fromSessionId>:<tsMs> -->\nDelegated from
+  <title>:\n\n<text>`; text capped at 100k chars with an explicit
+  `[truncated]` note (`DELEGATE_MAX_TEXT_CHARS`).
+- Delivery: target running → `prompt` (omp queues follow-ups natively, mode
+  `"queued"`); target idle with live child → `prompt` (mode `"prompt"`); no
+  child → `spawnNewSession` with the prompt as the FIRST message (mode
+  `"spawned"`, response carries `newSessionId`).
+- ANTI-LOOP: the route refuses to delegate FROM a session whose latest turn is
+  itself a delegation inside the 5-min window (`DELEGATE_WINDOW_MS`) → 409
+  `delegate_loop`. Detection parses the marker from the source's last assistant
+  text AND its most recent user message — the injected prompt is persisted as
+  the target's user message, so that is where a chain (A→B→B') is detectable.
+- ONE delegation per target at a time: delivered delegations are recorded in a
+  `globalThis.__ompWebDelegationLedger` (hot-reload safe). Fresh ledger entry +
+  still-running target + fresh marker on the target (or unreadable transcript,
+  where the ledger is the evidence) → 409 `target_busy` with `retryAfterSec`.
+- REDACTION: the ONLY form of the delegated text that leaves the server (notify
+  rows, API response `preview`) crosses `lib/search/redact.ts` via
+  `delegatePreview()` — redacted, whitespace-flattened, capped 200 chars. The
+  full text goes only to the target session's own RPC prompt.
+- Notify: `kind:"delegation"` added to the `NotifyKind` union + `NOTIFY_KINDS`
+  + the settings events list; `notifyDelegation()` in `lib/notify/emit.ts` —
+  one row per successful delegation, `sessionId` = TARGET (the bell navigates
+  where the work lands), title `from → to`. Emission is wrapped; never breaks
+  the delegation path.
+
+### Swarm kanban (runs-board "Tasks" mode) (W2-P6)
+- `BoardRun.subagents?: SubagentInfo[]` (bounded, `BOARD_MAX_SUBAGENT_CARDS`
+  = 24): the board's EXISTING refcounted `get_subagents` poll now parses the
+  roster into cards via `parseSubagentCards()` (runs-board.ts) on top of
+  `parseSubagentSnapshot()`. NO new polling anywhere — the `?watch=1`
+  refcount discipline is untouched; the board only gained data on frames it
+  already received. `subagentCount` still stands alone for older builds whose
+  payloads do not parse into cards.
+- History recovery: when a run finalizes (leaves the running set) with an
+  empty card list, the aggregator recovers ONCE from the on-disk task
+  toolResults (`lib/subagent-history.ts` `extractSubagentHistory`, mapped by
+  `historyEntryToCard()`), same source as the composer panel. Best-effort,
+  never throws. RunsBoard's Tasks toggle renders the queued/running/done
+  columns from the live snapshot, cards open the existing
+  `SubagentTranscriptDialog`, and each run card carries a "Send output…"
+  target picker fed by `/api/sessions`.
 
 ## omp Session File Format (v3)
 

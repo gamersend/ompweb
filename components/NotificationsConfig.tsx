@@ -25,7 +25,7 @@ import {
 // - Feed preview + delivery counters.
 // ============================================================================
 
-const ALL_EVENTS: NotifyKind[] = ["agent_end", "approval", "error", "guardrail", "scheduler"];
+const ALL_EVENTS: NotifyKind[] = ["agent_end", "approval", "error", "guardrail", "scheduler", "delegation"];
 const PROVIDERS = ["ntfy", "discord", "telegram", "generic"] as const;
 
 const selectStyle = {
