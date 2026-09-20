@@ -372,17 +372,39 @@ P10 S–M · P11 M–L · P12 M · P13 S → **serial ≈ 12–15 weeks; lanes A
 
 ### Tracker
 
-- [ ] P0 debt sweep
-- [ ] P1 client-state sync
-- [ ] P2 web push
-- [ ] P3 quick-launch toolbar
-- [ ] P4 voice round 3 (hands-free + EL results)
-- [ ] P5 session→session delegation
-- [ ] P6 swarm kanban
-- [ ] P7 checkpoint → PR wizard
-- [ ] P8 mem0 memory browser
-- [ ] P9 model report card
-- [ ] P10 weekly digest
-- [ ] P11 terminal round 2 (PTY + select-insert)
-- [ ] P12 device-local lock (optional, default OFF)
-- [ ] P13 final integration + devices
+- [x] P0 debt sweep
+- [x] P1 client-state sync
+- [x] P2 web push
+- [x] P3 quick-launch toolbar
+- [x] P4 voice round 3 (hands-free + EL results)
+- [x] P5 session→session delegation
+- [x] P6 swarm kanban
+- [x] P7 checkpoint → PR wizard
+- [x] P8 mem0 memory browser
+- [x] P9 model report card
+- [x] P10 weekly digest
+- [x] P11 terminal round 2 (PTY + select-insert)
+- [x] P12 device-local lock (optional, default OFF)
+- [x] P13 final integration + devices
+
+### Completion notes (2026-09-20)
+
+Executed end-to-end via background subagent lanes in one session. Final
+verified state: tsc 0 errors · eslint 0 errors / 0 warnings · **1636 tests
+pass / 0 fail** (2 justified skips) · i18n parity exact (**2088 keys ×
+en/zh-CN/ja**) · file-map counts generated + current (87 API routes,
+82 components, 22 hooks, 119 lib modules). Live-browser acceptance sweep
+(19 screenshots, `docs/verify-w2/`): 7/10 surfaces full pass, zero code
+blockers; the 3 gaps were data/environment (mem0 + public fabric
+unreachable during a beast Tailscale outage — same root cause; kanban and
+PR-dialog need a live run / checkpoints to exercise). Production rolled to
+the local origin at every batch boundary and verified via the new routes
+(client-state, push status, memory health, model-report, device-lock,
+digest). No device-shell files changed (`android/`, `ios/`, `www/`
+untouched), and the Capacitor shells are remote-URL wrappers, so **no
+phone/tablet reinstalls were required** — devices pick the wave up from
+the served URL. Public fabric verification pending only on the beast
+Tailscale re-login (origin itself verified 200 + route probes locally).
+Bonus fix landed with P10: `PUT /api/notify` had never persisted the
+config since the P2 commit (missing `saveNotifyConfig()`); regression
+test pins it.
