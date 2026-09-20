@@ -24,11 +24,21 @@ import { FileViewer } from "./FileViewer";
 import { useI18n } from "@/lib/i18n";
 import { getFileName } from "@/lib/file-paths";
 
-export type RightPanelView = "explorer" | "git" | "file" | "terminal";
+export type RightPanelView = "explorer" | "git" | "file" | "terminal" | "memory";
 
 // Phase 13: xterm.js is the heaviest dep in the tree — lazy-mount the whole
 // terminal tab so it never touches the initial bundle (BUILD-PLAN risk #4).
 const TerminalTab = dynamic(() => import("./TerminalTab"), {
+  ssr: false,
+  loading: () => (
+    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
+      …
+    </div>
+  ),
+});
+
+// P8: memory browser lazily mounts the same way (markdown pipeline is heavy).
+const MemoryPanel = dynamic(() => import("./MemoryPanel").then((m) => m.MemoryPanel), {
   ssr: false,
   loading: () => (
     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
@@ -53,6 +63,8 @@ interface Props {
   onRevealDone: () => void;
   explorerCwd: string | null;
   activeCwd: string | null;
+  /** Draft key of the ACTIVE session composer — targets "insert into composer" (P8). */
+  composerDraftKey: string | null;
   explorerRefreshKey: number;
   fileSearchOpen: boolean;
   onToggleFileSearch: () => void;
@@ -105,6 +117,7 @@ export const RightPanel = memo(function RightPanel({
   onRevealDone,
   explorerCwd,
   activeCwd,
+  composerDraftKey,
   explorerRefreshKey,
   fileSearchOpen,
   onToggleFileSearch,
@@ -208,6 +221,8 @@ export const RightPanel = memo(function RightPanel({
               gitBadge={gitBadge}
               terminalSelected={rightView === "terminal"}
               onSelectTerminal={() => onSelectView("terminal")}
+              memorySelected={rightView === "memory"}
+              onSelectMemory={() => onSelectView("memory")}
             />
           </div>
           {rightView === "explorer" ? (
@@ -467,6 +482,11 @@ export const RightPanel = memo(function RightPanel({
               <div style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.6, maxWidth: 260 }}>{t("terminal.noCwd")}</div>
             </div>
           )}
+        </div>
+        {/* Memory tab view (P8) — lazily mounted like the terminal; searches
+            the shared mem0 service through the /api/memory proxy. */}
+        <div style={{ display: rightView === "memory" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
+          <MemoryPanel active={rightView === "memory" && rightPanelOpen} composerDraftKey={composerDraftKey} />
         </div>
       </div>
     </>

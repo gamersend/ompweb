@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -29,6 +29,7 @@ import { copyText } from "@/lib/clipboard";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import { getInitialNavigation, type InitialAnchor } from "@/lib/initial-navigation";
+import { launchCommandFields } from "@/lib/launch-profile";
 import { comparableProjectPath } from "@/lib/comparable-path";
 import { clearDraft } from "@/lib/draft-store";
 import { initClientStateSync } from "@/lib/client-state-sync";
@@ -1348,6 +1349,42 @@ export function AppShell() {
     router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
   }, [router, hydrateSelectedSession]);
 
+  // Phase 3 quick-launch: spawn a session from a project's launch profile and
+  // adopt it as the active chat. Goes through POST /api/agent/new (the thin
+  // adapter over lib/spawn-session — never raw RPC), with the profile mapped
+  // onto the existing wire fields (message/provider/modelId/thinkingLevel/
+  // toolNames) by launchCommandFields. An empty/absent profile prompt spawns
+  // without a first message (ensure_session). The profile prompt is NOT a
+  // snippet — it is sent verbatim, no placeholder expansion. Failures toast;
+  // the promise still resolves so the sidebar chip's busy state clears.
+  const handleLaunchProject = useCallback(async (project: ManagedProject) => {
+    const config = project.launchConfig;
+    if (!config) return;
+    const fields = launchCommandFields(config);
+    const label = project.alias ?? projectLabel(project.path);
+    try {
+      const response = await fetch("/api/agent/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: project.path, ...fields }),
+      });
+      const payload = await response.json().catch(() => null) as { sessionId?: string; error?: string; code?: string } | null;
+      if (!response.ok || !payload?.sessionId) throw new Error(formatApiError(payload));
+      handleSessionCreated({
+        id: payload.sessionId,
+        path: "",
+        cwd: project.path,
+        name: undefined,
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+        messageCount: 0,
+        firstMessage: fields.message ?? translate("agentSession.noMessages"),
+      });
+    } catch {
+      toast.error(translate("launch.failed", { project: label }));
+    }
+  }, [handleSessionCreated]);
+
   const handleAgentEnd = useCallback(() => {
     setRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
@@ -1623,6 +1660,13 @@ export function AppShell() {
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
+  // P8: draft key of the ACTIVE session composer — the same formula ChatWindow
+  // uses for ChatInput's draftKey — so right-panel "insert into composer"
+  // targets exactly the active draft, never a split pane's other session.
+  const composerDraftKey = useMemo(
+    () => selectedSession?.id ?? (effectiveNewSessionCwd ? `new:${effectiveNewSessionCwd}` : null),
+    [selectedSession?.id, effectiveNewSessionCwd],
+  );
   const newSessionProject = (workspaceOptions.cwd === effectiveNewSessionCwd ? workspaceOptions.selectedProject : null) ?? effectiveNewSessionCwd ?? "";
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
   const currentRate = generationSpeed?.current;
@@ -1735,6 +1779,7 @@ export function AppShell() {
       updateAvailable={Boolean(appUpdate?.updateAvailable) || ompUpdateAvailable}
       onRunningIdsChange={handleRunningIdsChange}
       onSplitSession={splitEnabled ? handleSplitSession : undefined}
+      onLaunchProject={handleLaunchProject}
     />
   );
 
@@ -1823,6 +1868,8 @@ export function AppShell() {
       <CommandPalette
         onSelectSession={handleSelectSession}
         onOpenSearchResult={handleOpenSearchResult}
+        launchProjects={workspaceOptions.projects}
+        onLaunchProject={handleLaunchProject}
         onNewSession={() => {
           // An empty cwd is truthy, so showChat would render the shell while
           // useAgentSession refuses to start — every send a silent no-op.
@@ -2496,6 +2543,7 @@ export function AppShell() {
         onRevealDone={handleRevealDone}
         explorerCwd={explorerCwd}
         activeCwd={activeCwd}
+        composerDraftKey={composerDraftKey}
         explorerRefreshKey={explorerRefreshKey}
         fileSearchOpen={fileSearchOpen}
         onToggleFileSearch={handleToggleFileSearch}

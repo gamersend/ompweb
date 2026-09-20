@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Folder, GitBranch, SquareTerminal, X } from "lucide-react";
+import { Brain, Folder, GitBranch, SquareTerminal, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { getFileIcon } from "./FileIcons";
 import { ConfirmDialog } from "./ui/field";
@@ -34,9 +34,12 @@ interface Props {
    * callback is absent — feature-flag entry-point guard. */
   terminalSelected?: boolean;
   onSelectTerminal?: () => void;
+  /** Pinned Shared-memory tab rendered after Terminal (P8). */
+  memorySelected?: boolean;
+  onSelectMemory?: () => void;
 }
 
-export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSelected = false, onSelectExplorer, explorerBadge = 0, gitSelected = false, onSelectGit, gitBadge = 0, terminalSelected = false, onSelectTerminal }: Props) {
+export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSelected = false, onSelectExplorer, explorerBadge = 0, gitSelected = false, onSelectGit, gitBadge = 0, terminalSelected = false, onSelectTerminal, memorySelected = false, onSelectMemory }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
   const [pendingDirtyClose, setPendingDirtyClose] = useState<Tab | null>(null);
@@ -288,6 +291,61 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSel
           </span>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", fontWeight: terminalSelected ? 500 : 400 }}>
             {t("terminal.tab")}
+          </span>
+        </div>
+      )}
+      {onSelectMemory && (
+        <div
+          data-tab-id="memory"
+          className="tabbar-tab ui-focus-ring"
+          onClick={onSelectMemory}
+          role="tab"
+          tabIndex={memorySelected ? 0 : -1}
+          aria-selected={memorySelected}
+          aria-label={t("memory.tab")}
+          title={t("memory.tab")}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectMemory(); }
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            height: 36,
+            paddingLeft: 12,
+            paddingRight: 10,
+            borderRight: "1px solid var(--border)",
+            background: memorySelected ? "var(--bg)" : "var(--bg-panel)",
+            cursor: "pointer",
+            fontSize: 12,
+            color: memorySelected ? "var(--text)" : "var(--text-muted)",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            userSelect: "none",
+            position: "relative",
+            transition: `background var(--dur-fast) var(--ease-out-warm), color var(--dur-fast) var(--ease-out-warm)`,
+          }}
+        >
+          {memorySelected && (
+            <span
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 2,
+                background: "var(--accent)",
+                borderTopLeftRadius: "var(--radius-control)",
+                borderTopRightRadius: "var(--radius-control)",
+              }}
+            />
+          )}
+          <span style={{ flexShrink: 0, opacity: memorySelected ? 1 : 0.7, display: "flex", alignItems: "center", color: memorySelected ? "var(--accent)" : undefined }}>
+            <Brain size={13} strokeWidth={2} aria-hidden="true" />
+          </span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", fontWeight: memorySelected ? 500 : 400 }}>
+            {t("memory.tab")}
           </span>
         </div>
       )}

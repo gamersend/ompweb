@@ -13,6 +13,7 @@ import type { GenerationSpeedInfo, SessionStatsInfo } from "@/lib/pi-types";
 import { formatCompactNumber, formatPercent } from "@/lib/format";
 import { ContextDetailPanel } from "./ComposerPanels";
 import { clearDraft, getDraft, setDraft } from "@/lib/draft-store";
+import { onComposerInsert } from "@/lib/composer-insert";
 import { expandWebSlashCommand } from "@/lib/web-slash-commands";
 import type { AttachedImage, AttachedTextFile } from "./ChatInput-draft-attachments";
 import {
@@ -663,6 +664,28 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
     });
     setAttachedTextFiles(draftFilesToAttachedFiles(draft?.files));
   }, [draftKey]);
+
+  // P8 composer-insert seam (lib/composer-insert.ts): deep surfaces (memory
+  // browser, later phases) push a context block into the ACTIVE draft. Only
+  // the composer bound to the targeted draftKey answers; the append flows
+  // through `setValue`, which the existing draft-persistence effect saves.
+  // Never sends — this only fills the input and focuses it.
+  useEffect(() => {
+    return onComposerInsert(({ text, draftKey: targetKey }) => {
+      if (targetKey !== undefined && targetKey !== draftKeyRef.current) return;
+      setValue((current) => (current.trim() ? `${current}\n\n${text}` : current + text));
+      setAtQuery(null);
+      setHistoryMenuOpen(false);
+      const ta = textareaRef.current;
+      if (ta) {
+        requestAnimationFrame(() => {
+          ta.focus();
+          const pos = ta.value.length;
+          ta.setSelectionRange(pos, pos);
+        });
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const ta = textareaRef.current;
