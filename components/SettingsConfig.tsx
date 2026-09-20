@@ -35,6 +35,7 @@ const AgentsConfig = dynamic(() => import("./AgentsConfig").then((module) => mod
 const UsageConfig = dynamic(() => import("./UsageConfig").then((module) => module.UsageConfig), { loading: SettingsTabLoading, ssr: false });
 const NotificationsConfig = dynamic(() => import("./NotificationsConfig").then((module) => module.NotificationsConfig), { loading: SettingsTabLoading, ssr: false });
 const SchedulesConfig = dynamic(() => import("./SchedulesConfig").then((module) => module.SchedulesConfig), { loading: SettingsTabLoading, ssr: false });
+const DeviceLockConfig = dynamic(() => import("./DeviceLockConfig").then((module) => module.DeviceLockConfig), { loading: SettingsTabLoading, ssr: false });
 
 type UpdateState = AppUpdateInfo;
 type WindowsServiceStatus = {
@@ -1013,6 +1014,9 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
                     </select>
                   </NativeSetting>
                 </div>
+                {/* Device-local passkey lock (BUILD-PLAN-2 P12) — renders nothing
+                    unless GET /api/device-lock/status says OMP_WEB_DEVICE_LOCK=1. */}
+                <DeviceLockConfig />
               </div>
             )}
 
