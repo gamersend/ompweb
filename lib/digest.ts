@@ -7,6 +7,7 @@ import { dispatchWebhookForRow } from "./notify/webhook";
 import { getModelReport, type ModelReport } from "./insights/model-report";
 import { listAllSessions } from "./session-reader";
 import { loadCheckpointLedger, type RestoreLedgerEntry } from "./checkpoints/ledger";
+import { loadHandoffs } from "./handoffs";
 import { formatCompactNumber } from "./format";
 
 // ============================================================================
@@ -342,6 +343,8 @@ export interface DigestSourceDeps {
   notifyRows?: () => NotifyRow[];
   /** Durable restore-ledger entries (wave 3 P4); sync + best-effort. */
   restoreLedger?: () => RestoreLedgerEntry[];
+  /** Durable handoff manifest (wave 3 P6); sync + best-effort. */
+  handoffs?: () => ReturnType<typeof loadHandoffs>;
   sourceTimeoutMs?: number;
 }
 
@@ -473,7 +476,8 @@ export async function composeDigest(opts: { nowMs?: number; deps?: DigestSourceD
     partial = true;
   }
 
-  // ── delegations + failures (notify feed — the durable record) ──
+  // Delegations + handoffs: the notify feed rows are the delivery record;
+  // the durable handoff manifest (wave 3 P6) adds the settle state.
   const rows = (deps.notifyRows ?? allNotifyRows)();
   const delegations = rows.filter((row) => row.kind === "delegation" && inWindow(Date.parse(row.ts), sinceMs, nowMs));
   const delegationLines: string[] = [];
@@ -483,6 +487,19 @@ export async function composeDigest(opts: { nowMs?: number; deps?: DigestSourceD
       delegationLines.push(`  · ${row.title}`);
     }
     if (delegations.length > 3) delegationLines.push(`  · …and ${delegations.length - 3} more`);
+    try {
+      const handoffs = (deps.handoffs ?? loadHandoffs)().handoffs.filter(
+        (record) => inWindow(record.tsMs, sinceMs, nowMs),
+      );
+      const completed = handoffs.filter((record) => record.state === "completed").length;
+      const failed = handoffs.filter((record) => record.state === "failed").length;
+      const pending = handoffs.filter((record) => record.state === "pending").length;
+      if (handoffs.length > 0) {
+        delegationLines.push(`  · handoffs: ${completed} completed${failed ? `, ${failed} failed` : ""}${pending ? `, ${pending} pending` : ""}`);
+      }
+    } catch {
+      // handoff state is best-effort garnish on the delegation count
+    }
   }
 
   const failureRows = rows.filter((row) => (row.kind === "error" || isWebhookFailureRow(row)) && inWindow(Date.parse(row.ts), sinceMs, nowMs));

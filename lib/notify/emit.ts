@@ -1,6 +1,7 @@
 import { dedupKeyFor, type NotifyRow } from "./notify-shared";
 import { pushNotifyRow } from "./feed";
 import { dispatchWebhookForRow } from "./webhook";
+import { settleHandoffForTarget } from "../handoffs";
 
 // ============================================================================
 // Central notification emits called from lib/rpc-manager.ts's frame handling.
@@ -20,6 +21,13 @@ export interface NotifyEmitContext {
 
 /** Monotonic per-run token so one agent_end per run maps to one row. */
 export function notifyAgentEnd(ctx: NotifyEmitContext, runToken: string | number, lastMessage?: string): NotifyRow | null {
+  // Handoff settlement (wave 3 P6): a terminal run on the TARGET session
+  // completes its pending handoff. Best-effort — never affects the feed row.
+  try {
+    settleHandoffForTarget(ctx.sessionId, "completed");
+  } catch {
+    // ignore settlement failures
+  }
   const row = pushNotifyRow({
     id: dedupKeyFor("agent_end", ctx.sessionId, runToken),
     kind: "agent_end",
@@ -53,6 +61,13 @@ export function notifyApprovalNeeded(ctx: NotifyEmitContext, frameId: string, ti
 /** Failed RPC commands (async response failures, prompt failures, child
  * crashes). `token` disambiguates distinct failures of one session. */
 export function notifyRpcError(ctx: NotifyEmitContext, token: string | number, detail: string): NotifyRow | null {
+  // Handoff settlement (wave 3 P6): a failing target fails its pending
+  // handoff. Best-effort — never affects the feed row.
+  try {
+    settleHandoffForTarget(ctx.sessionId, "failed");
+  } catch {
+    // ignore settlement failures
+  }
   const row = pushNotifyRow({
     id: dedupKeyFor("error", ctx.sessionId, token),
     kind: "error",

@@ -51,6 +51,7 @@ import {
   useRunsBoard,
 } from "@/hooks/useRunsBoard";
 import type { BoardRun } from "@/lib/runs-board";
+import type { HandoffRecord } from "@/lib/handoffs";
 import { projectLabel } from "./AppShell-layout";
 import type { ManagedProject, SessionInfo } from "@/lib/types";
 
@@ -84,11 +85,28 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
   const [transcriptTarget, setTranscriptTarget] = useState<{ sessionId: string; subagent: SubagentInfo } | null>(null);
   // Session→session delegation (wave 2 P5): "Send output" target picker.
   const [delegateSource, setDelegateSource] = useState<BoardRun | null>(null);
+  // Handoff manifest (wave 3 P6): durable delegation settle states.
+  const [handoffs, setHandoffs] = useState<HandoffRecord[]>([]);
 
   // Elapsed timers tick every second while the board is open.
   useEffect(() => {
     const interval = setInterval(() => setNowMs(Date.now()), 1_000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Handoffs load once per board open (read-only manifest; best-effort).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/handoffs", { cache: "no-store" });
+        const payload = await res.json().catch(() => null) as { success?: boolean; data?: { handoffs?: HandoffRecord[] } } | null;
+        if (!cancelled && payload?.success && payload.data?.handoffs) setHandoffs(payload.data.handoffs);
+      } catch {
+        // board works fine without the manifest
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // Esc closes the board; an open ConfirmDialog handles its own Esc first
@@ -389,6 +407,40 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
       />
 
       <DelegateDialog run={delegateSource} onClose={() => setDelegateSource(null)} />
+
+      {/* Handoff manifest (wave 3 P6): settled delegation states, newest
+          first. Hidden entirely when no handoff has ever been recorded. */}
+      {handoffs.length > 0 && (
+        <section aria-label={t("handoffs.title")} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>
+            {t("handoffs.title")} · {handoffs.filter((record) => record.state === "pending").length} {t("handoffs.pendingCount")}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {handoffs.slice(0, 5).map((record) => (
+              <div
+                key={record.id}
+                style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, flexWrap: "wrap", padding: "4px 8px", borderRadius: "var(--radius-control)", background: "var(--bg-subtle)" }}
+              >
+                <span
+                  style={{
+                    flexShrink: 0, fontSize: 10, padding: "1px 7px", borderRadius: 999,
+                    border: "1px solid var(--border)",
+                    color: record.state === "completed" ? "var(--accent)" : record.state === "failed" ? "var(--danger, #b91c1c)" : "var(--text-muted)",
+                  }}
+                >
+                  {t(`handoffs.state.${record.state}`)}
+                </span>
+                <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>
+                  {record.fromSession.slice(0, 8)} → {record.toSession.slice(0, 8)}
+                </span>
+                <span style={{ color: "var(--text-dim)", marginLeft: "auto" }}>
+                  {new Date(record.tsMs).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <SubagentTranscriptDialog
         subagent={transcriptTarget?.subagent ?? null}

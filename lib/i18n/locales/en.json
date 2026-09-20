@@ -2156,5 +2156,11 @@
   "diagnostics.stores.snippets": "Prompt snippets",
   "diagnostics.stores.projects": "Managed projects",
   "diagnostics.stores.serviceConfig": "Service settings",
-  "diagnostics.stores.terminalAudit": "Terminal audit log"
+  "diagnostics.stores.terminalAudit": "Terminal audit log",
+  "handoffs.title": "Handoffs",
+  "handoffs.pendingCount": "pending",
+  "handoffs.state.pending": "pending",
+  "handoffs.state.completed": "completed",
+  "handoffs.state.failed": "failed",
+  "handoffs.state.superseded": "superseded"
 }

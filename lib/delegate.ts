@@ -36,6 +36,7 @@ import {
 } from "./session-reader";
 import { redactSnippet } from "./search/redact";
 import { recordDelegationDelivery } from "./delegation-ledger";
+import { recordHandoff } from "./handoffs";
 import { spawnNewSession, SpawnSessionInputError, type SpawnNewSessionResult } from "./spawn-session";
 import { notifyDelegation } from "./notify/emit";
 import type { SessionEntry } from "./types";
@@ -220,6 +221,8 @@ export interface DelegateDeps {
   emitNotify?: (result: DelegationResult, token: string) => void;
   /** Test seam — defaults to the real durable ledger write (wrapped). */
   recordDelivery?: typeof recordDelegationDelivery;
+  /** Test seam — defaults to the real handoff manifest write (wrapped). */
+  recordHandoff?: typeof recordHandoff;
 }
 
 interface SessionTexts {
@@ -383,6 +386,19 @@ export async function performDelegation(
   // does not survive restarts, this does.
   try {
     (deps.recordDelivery ?? recordDelegationDelivery)({ toSession, fromSession, tsMs: nowMs, mode });
+  } catch {
+    // never break the delegation path over bookkeeping
+  }
+  // Handoff manifest (wave 3 P6): the delivery becomes a durable pending
+  // handoff; settlement happens on the target's terminal agent_end / error.
+  try {
+    (deps.recordHandoff ?? recordHandoff)({
+      id: `del-${toSession}-${nowMs}`,
+      fromSession,
+      toSession,
+      tsMs: nowMs,
+      mode,
+    });
   } catch {
     // never break the delegation path over bookkeeping
   }

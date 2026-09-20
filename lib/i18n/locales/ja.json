@@ -2156,5 +2156,11 @@
   "diagnostics.stores.snippets": "プロンプトスニペット",
   "diagnostics.stores.projects": "管理プロジェクト",
   "diagnostics.stores.serviceConfig": "サービス設定",
-  "diagnostics.stores.terminalAudit": "ターミナル監査ログ"
+  "diagnostics.stores.terminalAudit": "ターミナル監査ログ",
+  "handoffs.title": "ハンドオフ",
+  "handoffs.pendingCount": "保留",
+  "handoffs.state.pending": "保留",
+  "handoffs.state.completed": "完了",
+  "handoffs.state.failed": "失敗",
+  "handoffs.state.superseded": "置き換え済み"
 }
