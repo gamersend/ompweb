@@ -2,6 +2,10 @@ import coreWebVitals from "eslint-config-next/core-web-vitals";
 import typescript from "eslint-config-next/typescript";
 
 const eslintConfig = [
+  {
+    // Capacitor build intermediates and native shells — generated code, never lint it.
+    ignores: ["android/", "ios/", "www/"],
+  },
   ...coreWebVitals,
   ...typescript,
   {

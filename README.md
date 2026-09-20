@@ -22,6 +22,12 @@ A clean, modern web UI for the [oh-my-pi (omp)](https://github.com/can1357/oh-my
 
 ![ompweb — dark theme](docs/screenshot-dark.png)
 
+![Command palette — cross-session search](docs/screenshot-search.png)
+
+![Runs board](docs/screenshot-runs-board.png)
+
+![Live voice panel](docs/screenshot-voice.png)
+
 </details>
 
 ## Requirements
@@ -80,6 +86,17 @@ Manage it from **Settings → System & Updates → Windows Background Service**,
 ompweb --tray          # Start the tray manager
 ompweb --uninstall-tray
 ```
+
+> **Recommended on Windows**: the scheduled task **`ompweb-service`** is the
+> supported launcher. Start and stop it directly with:
+>
+> ```powershell
+> powershell -Command "Start-ScheduledTask -TaskName 'ompweb-service'"
+> powershell -Command "Stop-ScheduledTask -TaskName 'ompweb-service'"
+> ```
+>
+> The tray CLI flags above (`ompweb-tray --start` / `--stop` / `--tray`) still
+> work but are legacy — prefer the scheduled task or the Settings panel.
 
 Shortcuts are created on the Desktop and Start Menu. The service restarts automatically and shows the current port and status in the tray.
 
@@ -225,6 +242,13 @@ host (KDE Plasma, and most Wayland/X11 desktops).
 - **Web-based Settings** (8 tabs): Interface & Behavior, Safety & Approvals, AI Model Defaults, API Keys & Providers, Usage, Agent & Intelligence (advisor, memory, compaction), Agents, Extensions & Tools (MCP, skills, plugins), System & Updates.
 - **Slash Commands & Shortcuts**: Quick prompts (`/plan`, `/review`, `/fix`, `/test`, etc.), `⌘K` / `Ctrl+K` palette, and model/reasoning cycling.
 - **UI Themes & Localization**: Warm paper light/dark themes plus an omp.sh-inspired midnight (`omp`) theme, chat font size & interface scale, with full English, Chinese (简体中文), and Japanese (日本語) translations.
+
+## Roadmap
+
+Wave 1 (13 phases) is complete; the features above are live. What's next —
+multi-device client-state sync, Web Push, live-voice integration, mobile
+shell — is tracked in [ROADMAP-2.md](./ROADMAP-2.md) (the *what and why*)
+and [BUILD-PLAN-2.md](./BUILD-PLAN-2.md) (the *how and when*).
 
 ## Environment Variables
 

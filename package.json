@@ -46,6 +46,8 @@
     "test": "node --experimental-strip-types --test lib/*.test.mjs lib/omp/*.test.mjs lib/checkpoints/*.test.mjs lib/scheduler/*.test.mjs lib/search/*.test.mjs lib/live/*.test.mjs lib/insights/*.test.mjs lib/snippets/*.test.mjs lib/notify/*.test.mjs lib/terminal/*.test.mjs components/*.test.mjs components/ui/*.test.mjs hooks/*.test.mjs bin/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "file-map": "node scripts/gen-file-map.mjs",
+    "file-map:check": "node scripts/gen-file-map.mjs --check",
     "tray:install": "node bin/omp-web-tray.js --install",
     "tray:uninstall": "node bin/omp-web-tray.js --uninstall",
     "tray:start": "node bin/omp-web-tray.js --start",

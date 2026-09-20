@@ -56,9 +56,22 @@ Shared foundations in `lib/omp/`:
 ## File Map
 
 Colocated `*.test.mjs` files are omitted below (every module listed has one
-unless noted). Counts: 70 API routes, 77 components, 22 hooks, 112 lib modules
-plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/checkpoints/`
-+ `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/`, 13 `bin/` scripts.
+unless noted).
+
+<!-- BEGIN GENERATED FILE-MAP COUNTS -->
+Counts: 73 API routes, 79 components, 22 hooks, 110 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/`, 13 `bin/` scripts.
+<!-- END GENERATED FILE-MAP COUNTS -->
+
+### File Map counts gate (`scripts/gen-file-map.mjs`)
+- The File Map counts line above is generated: `npm run file-map` prints it,
+  `npm run file-map:check` exits 1 if the line between the
+  `<!-- BEGIN GENERATED FILE-MAP COUNTS -->` markers in this file has
+  drifted from the tree. Refresh counts after adding/removing modules
+  (they are re-verified at the end of each build wave).
+- The script counts: `app/api/**/route.ts`, top-level `components/*.{ts,tsx}`,
+  `hooks/*.ts`, top-level `lib/*.ts` (subdirs are named in the "plus" list,
+  in canonical order, `lib/memory/` included only when present), and
+  non-test `bin/*.js`. Colocated `*.test.mjs` files are never counted.
 
 ```
 root/
@@ -585,6 +598,12 @@ handled or safely ignored.
 - `POST /api/omp-update` (`action: "check"`) runs `omp update --check` and returns `updateAvailable` plus `updateCommand: "omp update"`.
 - `POST /api/omp-update` (`action: "restart"`) restarts active OMP sessions after a manual CLI update.
 - Notifications in `AppShell` and settings cards in `SettingsConfig` present the update notification alongside copyable terminal update commands.
+
+### Windows service launcher
+- On Windows the supported launcher is the scheduled task
+  `ompweb-service`: `powershell -Command "Start-ScheduledTask -TaskName 'ompweb-service'"`
+  (or `Stop-ScheduledTask`). The `ompweb-tray` CLI flags
+  (`--start`/`--stop`/`--tray`) still work but are legacy.
 
 ### Auth and model config
 - Auth flows go through RPC commands (`get_login_providers`, `login`) against the omp child process; credentials live in omp's `agent.db` (SQLite) which omp-web never touches directly.
