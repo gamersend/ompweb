@@ -141,6 +141,125 @@ export function mapLiveSignalFailure(
 }
 
 /**
+ * Delegation context — the client→live direction of the `oai-events` channel.
+ *
+ * A live session is opened with `delegation: { type: "client" }`, so the model
+ * may answer a spoken request with a `delegation.created` event whose item
+ * carries a plain-language request for the LOCAL agent (ompweb's chat
+ * session). When that run finishes, the result is fed back into the call as
+ * `delegation.context.append` frames — the `speakable` channel means the
+ * voice reads it aloud; `commentary` is context only. This mirrors omp's own
+ * terminal /live extension (`live-elevenlabs`): session.ts injects the
+ * request into the real session and speaks the final assistant text through
+ * exactly these frames. Delegation injection is browser-local: it rides the
+ * data channel the browser already owns, so the ompweb server never sees it.
+ */
+
+/** Context channels: `speakable` is read aloud, `commentary` is context only. */
+export type LiveContextChannel = "speakable" | "commentary";
+
+/** One text content entry of a context append (the only shape the route takes). */
+export interface LiveInputTextContent {
+  type: "input_text";
+  text: string;
+}
+
+/** The client→live frames ompweb sends (a subset of what the route accepts). */
+export type LiveClientMessage =
+  | {
+      type: "delegation.context.append";
+      delegation_item_id: string;
+      channel?: LiveContextChannel;
+      content: LiveInputTextContent[];
+    }
+  | {
+      type: "session.context.append";
+      channel?: LiveContextChannel;
+      content: LiveInputTextContent[];
+    };
+
+/** Maximum UTF-8 payload size accepted by each context append. */
+export const LIVE_CONTEXT_CHUNK_BYTES = 500;
+
+function utf8ByteLength(codePoint: number): number {
+  if (codePoint <= 0x7f) return 1;
+  if (codePoint <= 0x7ff) return 2;
+  if (codePoint <= 0xffff) return 3;
+  return 4;
+}
+
+/**
+ * Split context into character-safe chunks of at most 500 UTF-8 bytes
+ * (ported from omp's live extension — surrogate pairs are never split).
+ */
+export function chunkLiveContext(text: string): string[] {
+  if (text.length === 0) return [""];
+  const chunks: string[] = [];
+  let chunkStart = 0;
+  let chunkBytes = 0;
+  let index = 0;
+  while (index < text.length) {
+    const codePoint = text.codePointAt(index);
+    if (codePoint === undefined) break;
+    const characterLength = codePoint > 0xffff ? 2 : 1;
+    const characterBytes = utf8ByteLength(codePoint);
+    if (chunkBytes + characterBytes > LIVE_CONTEXT_CHUNK_BYTES) {
+      chunks.push(text.slice(chunkStart, index));
+      chunkStart = index;
+      chunkBytes = 0;
+    }
+    chunkBytes += characterBytes;
+    index += characterLength;
+  }
+  chunks.push(text.slice(chunkStart));
+  return chunks;
+}
+
+/** Build one `delegation.context.append` frame (channel defaults to speakable upstream). */
+export function buildDelegationContextAppend(
+  delegationItemId: string,
+  text: string,
+  channel?: LiveContextChannel,
+): LiveClientMessage {
+  return {
+    type: "delegation.context.append",
+    delegation_item_id: delegationItemId,
+    ...(channel === undefined ? {} : { channel }),
+    content: [{ type: "input_text", text }],
+  };
+}
+
+/** Build one `session.context.append` frame (call-wide, not tied to a delegation). */
+export function buildSessionContextAppend(text: string, channel?: LiveContextChannel): LiveClientMessage {
+  return {
+    type: "session.context.append",
+    ...(channel === undefined ? {} : { channel }),
+    content: [{ type: "input_text", text }],
+  };
+}
+
+/**
+ * Reduce an assistant reply to what a voice can speak: markdown stripped
+ * (fences, inline code, links, headings, emphasis), the "Agent Final Message:"
+ * envelope prefix removed, whitespace collapsed, capped at `maxLen` with an
+ * ellipsis. Ported verbatim in spirit from omp's live extension
+ * (`formatSpeakableForVoice`).
+ */
+export function formatSpeakableForVoice(text: string, maxLen = 500): string {
+  let t = text.trim();
+  if (!t) return "";
+  t = t.replace(/```[\s\S]*?```/g, " ");
+  t = t.replace(/`([^`]+)`/g, "$1");
+  t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  t = t.replace(/^#{1,6}\s+/gm, "");
+  t = t.replace(/[*_~]{1,3}/g, "");
+  t = t.replace(/^Agent Final Message:\s*/i, "");
+  t = t.replace(/\s+/g, " ").trim();
+  if (t.length > maxLen) t = `${t.slice(0, Math.max(0, maxLen - 1)).trimEnd()}…`;
+  return t;
+}
+
+/**
  * Extract the SDP answer from a successful signaling response. The accepted
  * implementation saw both shapes — a bare SDP text body and a JSON envelope
  * `{ "sdp": ... }` — so both are handled forever.

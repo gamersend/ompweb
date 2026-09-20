@@ -29,10 +29,22 @@ import {
   claimLiveEngine,
   releaseLiveEngine,
   type LiveDebugEvent,
+  type LiveDelegationCreated,
   type LiveState,
   type LiveTranscriptLine,
   type LiveVoiceEngine,
 } from "@/lib/live/engine";
+import { redactTranscriptText } from "@/lib/live/events";
+import {
+  formatSpeakableForVoice,
+} from "@/lib/live/protocol";
+import {
+  newestDelegationInState,
+  patchDelegation,
+  upsertDelegation,
+  type LiveDelegationBridge,
+  type LiveDelegationItem,
+} from "@/lib/live/delegation";
 import { LIVE_NATIVE_VOICES, DEFAULT_LIVE_VOICE, type LiveVoice } from "@/lib/live/protocol";
 
 interface GateData {
@@ -44,9 +56,20 @@ interface GateData {
 interface VoicePanelProps {
   open: boolean;
   onClose: () => void;
+  /**
+   * The chat-surface bridge (from ChatWindow) that delegation requests ride:
+   * when present, `delegation.created` events are injected into the active
+   * chat session (auto, or per-item via Send) and the delegated run's final
+   * assistant text is fed back into the call. Absent → delegation falls
+   * back to a manual list with no send path.
+   */
+  delegation?: LiveDelegationBridge | null;
 }
 
-export function VoicePanel({ open, onClose }: VoicePanelProps) {
+/** Result preview cap for the delegation list (the speakable text itself is ≤500). */
+const LIVE_RESULT_PREVIEW_CHARS = 240;
+
+export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
   const { t } = useI18n();
   const reducedMotion = usePrefersReducedMotion();
 
@@ -58,9 +81,27 @@ export function VoicePanel({ open, onClose }: VoicePanelProps) {
   const [debug, setDebug] = useState<LiveDebugEvent[]>([]);
   const [muted, setMuted] = useState(false);
   const [speechPulse, setSpeechPulse] = useState(false);
+  // Delegations (memory only, like every other surface in this panel): the
+  // live model hands repo work to the client; the panel bridges it into the
+  // chat session and walks the item's lifecycle chip as the run progresses.
+  const [delegations, setDelegations] = useState<LiveDelegationItem[]>([]);
+  // Auto-delegate mirrors the terminal /live behavior (every request is
+  // injected immediately). A toggle, not a preference: memory only, default
+  // on each time the panel opens.
+  const [autoDelegate, setAutoDelegate] = useState(true);
 
   const engineRef = useRef<LiveVoiceEngine | null>(null);
   const speechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const delegationsRef = useRef<LiveDelegationItem[]>([]);
+  delegationsRef.current = delegations;
+  const autoDelegateRef = useRef(autoDelegate);
+  autoDelegateRef.current = autoDelegate;
+  const delegationBridgeRef = useRef<LiveDelegationBridge | null | undefined>(delegation);
+  delegationBridgeRef.current = delegation;
+  // The engine's onDelegation callback is fixed at claim time; route it
+  // through this ref so the handler always sees current state/toggle.
+  const delegationEventRef = useRef<((delegation: LiveDelegationCreated) => void) | null>(null);
+  const dispatchingRef = useRef<Set<string>>(new Set());
 
   // Probe the gate each time the panel opens; the probe is metadata-only.
   useEffect(() => {
@@ -100,6 +141,13 @@ export function VoicePanel({ open, onClose }: VoicePanelProps) {
     setDebug([]);
     setMuted(false);
     setSpeechPulse(false);
+    // Delegation tracking dies with the call — same ephemerality as the
+    // transcript. The auto-delegate toggle resets to the terminal default.
+    delegationsRef.current = [];
+    setDelegations([]);
+    setAutoDelegate(true);
+    delegationEventRef.current = null;
+    dispatchingRef.current = new Set();
   }, []);
 
   useEffect(() => {
@@ -109,6 +157,98 @@ export function VoicePanel({ open, onClose }: VoicePanelProps) {
       teardownEngine();
     };
   }, [open, teardownEngine]);
+
+  // -------------------------------------------------------------------
+  // Delegation lifecycle (mirrors omp's terminal /live extension):
+  // `delegation.created` → inject the plain-language request into the chat
+  // session (automatically, or per-item via Send) → on the delegated run's
+  // terminal agent_end, feed the final assistant text back into the call as
+  // `delegation.context.append` frames on the speakable channel — the voice
+  // reads the result aloud. One delegation in flight at a time, exactly
+  // like the terminal's single pendingDelegationId. Everything here lives
+  // in tab memory; the ompweb server never sees any of it.
+  // -------------------------------------------------------------------
+  const dispatchDelegation = useCallback(async (id: string) => {
+    const item = delegationsRef.current.find((entry) => entry.id === id);
+    const bridge = delegationBridgeRef.current ?? null;
+    if (!item || !item.requestText || !bridge || dispatchingRef.current.has(id)) return;
+    dispatchingRef.current.add(id);
+    delegationsRef.current = patchDelegation(delegationsRef.current, id, { state: "delegating" });
+    setDelegations(delegationsRef.current);
+    let dispatched = false;
+    try {
+      dispatched = await bridge.send(item.requestText);
+    } catch {
+      dispatched = false;
+    } finally {
+      dispatchingRef.current.delete(id);
+    }
+    delegationsRef.current = patchDelegation(
+      delegationsRef.current,
+      id,
+      { state: dispatched ? "running" : "failed" },
+    );
+    setDelegations(delegationsRef.current);
+  }, []);
+
+  const handleDelegationAgentEnd = useCallback(async () => {
+    // The delegated prompt's run just ended: speak its result into the call.
+    const target = newestDelegationInState(delegationsRef.current, "running");
+    const engine = engineRef.current;
+    if (!target || !engine) return;
+    const bridge = delegationBridgeRef.current ?? null;
+    let raw = "";
+    try {
+      raw = bridge ? await bridge.lastAssistantText() : "";
+    } catch {
+      raw = "";
+    }
+    const speakable = formatSpeakableForVoice(raw, 500);
+    // Same redaction discipline as the transcript: nothing this panel
+    // speaks or renders ever carries credential-shaped text verbatim.
+    const redacted = speakable ? redactTranscriptText(speakable) : "";
+    if (redacted) engine.sendDelegationContext(target.id, redacted, "speakable");
+    delegationsRef.current = patchDelegation(delegationsRef.current, target.id, {
+      state: "done",
+      resultPreview: redacted || undefined,
+    });
+    setDelegations(delegationsRef.current);
+  }, []);
+
+  const handleDelegationCreated = useCallback((event: LiveDelegationCreated) => {
+    const isAuto = autoDelegateRef.current && Boolean(delegationBridgeRef.current);
+    delegationsRef.current = upsertDelegation(delegationsRef.current, {
+      id: event.id,
+      requestText: event.requestText,
+      state: isAuto && event.requestText ? "delegating" : "pending",
+    });
+    setDelegations(delegationsRef.current);
+    if (isAuto && event.requestText) void dispatchDelegation(event.id);
+  }, [dispatchDelegation]);
+
+  // The engine's onDelegation is fixed at claim time; it routes through this
+  // ref, which always points at the current handler.
+  useEffect(() => {
+    delegationEventRef.current = handleDelegationCreated;
+    return () => {
+      delegationEventRef.current = null;
+    };
+  }, [handleDelegationCreated]);
+
+  // Subscribe to the chat surface's terminal agent_end for the whole time
+  // this panel is mounted (the result feed-back needs it even mid-call).
+  useEffect(() => {
+    if (!delegation) return;
+    let disposed = false;
+    const unsubscribe = delegation.onAgentEnd(() => {
+      if (disposed) return;
+      void handleDelegationAgentEnd();
+    });
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [delegation, handleDelegationAgentEnd]);
 
   const startCall = useCallback(async () => {
     const engine = claimLiveEngine({
@@ -122,6 +262,7 @@ export function VoicePanel({ open, onClose }: VoicePanelProps) {
         speechTimerRef.current = setTimeout(() => setSpeechPulse(false), 1200);
       },
       onDebug: setDebug,
+      onDelegation: (event) => delegationEventRef.current?.(event),
     });
     engineRef.current = engine;
     try {
@@ -326,6 +467,97 @@ export function VoicePanel({ open, onClose }: VoicePanelProps) {
           )}
         </div>
 
+        {/* Delegations: requests the live voice handed to the chat session.
+            role="log" announces state-chip changes politely; the list is a
+            bounded, memory-only companion to the transcript above. */}
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+            <span
+              id="live-delegations-label"
+              style={{ fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}
+            >
+              {t("live.delegations")}
+            </span>
+            <label
+              style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-muted)", cursor: "pointer" }}
+              title={t("live.autoDelegateHint")}
+            >
+              <input
+                type="checkbox"
+                checked={autoDelegate}
+                onChange={(e) => setAutoDelegate(e.target.checked)}
+                aria-label={t("live.autoDelegate")}
+              />
+              {t("live.autoDelegate")}
+            </label>
+          </div>
+          <div
+            role="log"
+            aria-labelledby="live-delegations-label"
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-card)",
+              background: "var(--bg-panel)",
+              padding: "8px 10px",
+              minHeight: 44,
+              maxHeight: "20dvh",
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            {delegations.length === 0 ? (
+              <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("live.delegationsEmpty")}</span>
+            ) : (
+              delegations.map((item) => (
+                <div key={item.id} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 18 }}>
+                    <DelegationStateDot state={item.state} />
+                    <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      {t(`live.delegationState.${item.state}`)}
+                    </span>
+                    {(item.state === "pending" || item.state === "failed") && (
+                      <button
+                        type="button"
+                        onClick={() => void dispatchDelegation(item.id)}
+                        disabled={!delegation || !item.requestText}
+                        aria-label={t("live.delegationSend")}
+                        title={item.state === "failed" ? t("live.delegationFailedHint") : undefined}
+                        style={{
+                          marginLeft: "auto",
+                          padding: "2px 8px",
+                          background: "var(--bg)",
+                          border: "1px solid var(--border)",
+                          borderRadius: "var(--radius-control)",
+                          color: "var(--accent)",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: !delegation || !item.requestText ? "not-allowed" : "pointer",
+                          opacity: !delegation || !item.requestText ? 0.6 : 1,
+                        }}
+                      >
+                        {t("live.delegationSend")}
+                      </button>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 12, lineHeight: 1.5, color: "var(--text)", overflowWrap: "anywhere" }}>
+                    {item.requestText || t("live.delegationEmptyRequest")}
+                  </span>
+                  {item.resultPreview && (
+                    <span style={{ fontSize: 11, lineHeight: 1.5, color: "var(--text-muted)", overflowWrap: "anywhere" }}>
+                      {t("live.delegationResult")}
+                      {": "}
+                      {item.resultPreview.slice(0, LIVE_RESULT_PREVIEW_CHARS)}
+                      {item.resultPreview.length > LIVE_RESULT_PREVIEW_CHARS ? "…" : ""}
+                    </span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
         <p style={{ margin: "10px 0 0", fontSize: 11, lineHeight: 1.5, color: "var(--text-dim)", display: "flex", alignItems: "center", gap: 5 }}>
           <Radio size={11} aria-hidden="true" />
           {t("live.ephemeralNote")}
@@ -388,6 +620,34 @@ function LiveStatusDot({ phase, pulse }: { phase: LiveState["phase"]; pulse: boo
       style={{
         width: 8,
         height: 8,
+        borderRadius: "50%",
+        background: color,
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+/** A delegation item's state dot: static colors only — no animation, so it is
+ *  reduced-motion safe by construction. Decorative (the chip text carries the
+ *  state for assistive tech). */
+function DelegationStateDot({ state }: { state: LiveDelegationItem["state"] }) {
+  const color =
+    state === "running"
+      ? "var(--accent)"
+      : state === "delegating"
+        ? "var(--status-warning)"
+        : state === "done"
+          ? "var(--status-success)"
+          : state === "failed"
+            ? "var(--status-error)"
+            : "var(--text-dim)";
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 7,
+        height: 7,
         borderRadius: "50%",
         background: color,
         flexShrink: 0,

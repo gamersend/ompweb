@@ -46,6 +46,46 @@ export interface ParsedOaiEvent {
   raw: Record<string, unknown>;
 }
 
+/**
+ * A `delegation.created` event: the live model handed a plain-language
+ * request to the CLIENT (this browser) to run through the local agent. The
+ * request text is what gets injected into ompweb's chat session; the id is
+ * what the result is fed back under (`delegation.context.append`).
+ */
+export interface LiveDelegationCreated {
+  id: string;
+  requestText: string;
+}
+
+/** True for the delegation lifecycle event ompweb acts on. */
+export function isDelegationCreatedEvent(type: string): boolean {
+  return type === "delegation.created";
+}
+
+/**
+ * Tolerant parse of one `delegation.created` frame: the item must name
+ * `type: "delegation"`, `target: "client"` and a string id; the content
+ * array's `input_text` entries are joined with newlines (mirroring omp's
+ * terminal live extension). A delegation without text still parses — the
+ * caller decides what to do with it.
+ */
+export function parseDelegationCreated(raw: Record<string, unknown>): LiveDelegationCreated | null {
+  const item = raw.item;
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const record = item as Record<string, unknown>;
+  if (record.type !== "delegation" || record.target !== "client") return null;
+  if (typeof record.id !== "string" || !record.id) return null;
+  if (!Array.isArray(record.content)) return null;
+  const parts: string[] = [];
+  for (const candidate of record.content) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const entry = candidate as Record<string, unknown>;
+    if (entry.type !== "input_text" || typeof entry.text !== "string") continue;
+    parts.push(entry.text);
+  }
+  return { id: record.id, requestText: parts.join("\n").trim() };
+}
+
 /** Tolerant JSON parse of one data-channel frame; null for non-JSON noise. */
 export function parseOaiEvent(raw: string): ParsedOaiEvent | null {
   try {
@@ -207,6 +247,8 @@ export interface OaiEventOutcome {
   changedId: number;
   nextLineId: number;
   speechStarted: boolean;
+  /** A parsed `delegation.created` item, when the frame was one. */
+  delegation: LiveDelegationCreated | null;
   /** false for unknown/non-JSON frames (they only reach the debug ring). */
   known: boolean;
   /** The event type as received ("" for non-JSON), for the debug ring. */
@@ -219,10 +261,21 @@ export function applyOaiEvent(
 ): OaiEventOutcome {
   const parsed = parseOaiEvent(raw);
   if (!parsed || !parsed.type) {
-    return { lines: [...state.lines], changedId: -1, nextLineId: state.nextLineId, speechStarted: false, known: false, eventType: "" };
+    return { lines: [...state.lines], changedId: -1, nextLineId: state.nextLineId, speechStarted: false, delegation: null, known: false, eventType: "" };
   }
   if (isSpeechStarted(parsed.type)) {
-    return { lines: [...state.lines], changedId: -1, nextLineId: state.nextLineId, speechStarted: true, known: true, eventType: parsed.type };
+    return { lines: [...state.lines], changedId: -1, nextLineId: state.nextLineId, speechStarted: true, delegation: null, known: true, eventType: parsed.type };
+  }
+  if (isDelegationCreatedEvent(parsed.type)) {
+    return {
+      lines: [...state.lines],
+      changedId: -1,
+      nextLineId: state.nextLineId,
+      speechStarted: false,
+      delegation: parseDelegationCreated(parsed.raw),
+      known: true,
+      eventType: parsed.type,
+    };
   }
   if (isTranscriptEvent(parsed.type)) {
     const mutation = mergeTranscriptLine(
@@ -239,13 +292,14 @@ export function applyOaiEvent(
       changedId: mutation.changedId,
       nextLineId: appended ? state.nextLineId + 1 : state.nextLineId,
       speechStarted: false,
+      delegation: null,
       known: true,
       eventType: parsed.type,
     };
   }
   if (isTurnDoneEvent(parsed.type)) {
     const mutation = closeTranscriptLines(state.lines, turnDoneSide(parsed.raw));
-    return { lines: mutation.lines, changedId: mutation.changedId, nextLineId: state.nextLineId, speechStarted: false, known: true, eventType: parsed.type };
+    return { lines: mutation.lines, changedId: mutation.changedId, nextLineId: state.nextLineId, speechStarted: false, delegation: null, known: true, eventType: parsed.type };
   }
-  return { lines: [...state.lines], changedId: -1, nextLineId: state.nextLineId, speechStarted: false, known: false, eventType: parsed.type };
+  return { lines: [...state.lines], changedId: -1, nextLineId: state.nextLineId, speechStarted: false, delegation: null, known: false, eventType: parsed.type };
 }

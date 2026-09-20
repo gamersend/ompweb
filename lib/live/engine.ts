@@ -23,17 +23,21 @@
 
 import {
   OAI_EVENTS_CHANNEL,
+  buildDelegationContextAppend,
+  chunkLiveContext,
+  type LiveContextChannel,
 } from "./protocol";
 import {
   applyOaiEvent,
   emptyTranscript,
   pushDebugEvent,
   type LiveDebugEvent,
+  type LiveDelegationCreated,
   type LiveTranscriptLine,
 } from "./events";
 import { initialLiveState, reduceLiveEvent, type LivePhase, type LiveState } from "./call-state";
 
-export type { LivePhase, LiveState, LiveTranscriptLine, LiveDebugEvent };
+export type { LivePhase, LiveState, LiveTranscriptLine, LiveDebugEvent, LiveDelegationCreated };
 
 export interface LiveEngineCallbacks {
   onState: (state: LiveState) => void;
@@ -41,6 +45,11 @@ export interface LiveEngineCallbacks {
   /** Fired on the earliest interruption signal — the panel may pulse. */
   onSpeechStart: () => void;
   onDebug: (events: LiveDebugEvent[]) => void;
+  /**
+   * Fired when the live model hands work to the client
+   * (`delegation.created`) — the panel bridges it into the chat session.
+   */
+  onDelegation?: (delegation: LiveDelegationCreated) => void;
 }
 
 /** The engine keeps no audio constraints beyond the proven echo set. */
@@ -198,6 +207,7 @@ export class LiveVoiceEngine {
   private handleChannelFrame(raw: string): void {
     const outcome = applyOaiEvent({ lines: this.lines, nextLineId: this.nextLineId }, raw);
     if (outcome.speechStarted) this.cb.onSpeechStart();
+    if (outcome.delegation) this.cb.onDelegation?.(outcome.delegation);
     if (outcome.known) {
       this.pushDebug(`dc:${outcome.eventType}`, { type: outcome.eventType });
     } else {
@@ -211,6 +221,33 @@ export class LiveVoiceEngine {
     } else {
       this.lines = outcome.lines;
     }
+  }
+
+  /**
+   * Feed the delegated run's result back into the call: chunked
+   * `delegation.context.append` frames on the `oai-events` channel (the
+   * `speakable` channel — the voice reads it aloud, exactly like omp's
+   * terminal live extension in native TTS mode). Returns the number of
+   * frames sent; 0 when the channel is not open or the text is empty.
+   */
+  sendDelegationContext(
+    delegationItemId: string,
+    text: string,
+    channel: LiveContextChannel = "speakable",
+  ): number {
+    const dc = this.dc;
+    if (!dc || dc.readyState !== "open") return 0;
+    if (!text.trim()) return 0;
+    let sent = 0;
+    for (const chunk of chunkLiveContext(text)) {
+      try {
+        dc.send(JSON.stringify(buildDelegationContextAppend(delegationItemId, chunk, channel)));
+        sent += 1;
+      } catch {
+        break;
+      }
+    }
+    return sent;
   }
 
   setMuted(muted: boolean): void {

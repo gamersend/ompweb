@@ -995,6 +995,28 @@ gesture — the autoplay-unlock discipline from `useAudio`.
 - Drift rule: after any auth/signaling failure, re-read omp's `/live`
   before touching the pinned constants in `lib/live/protocol.ts`.
 
+### Live voice delegation (`lib/live/delegation.ts`, VoicePanel + ChatWindow bridge)
+- The live model may hand work to the client via `delegation.created`
+  (`lib/live/events.ts`). ompweb injects the plain-language request into the
+  ACTIVE chat session client-side — idle → the normal `handleSend` path
+  (a fresh tab spawns its session with the delegation as the first message);
+  while a run is active, the composer's steer-vs-queue preference
+  (`lib/composer-prefs.ts`) picks steer vs follow-up. No server route is
+  involved.
+- On the delegated run's terminal `agent_end`, the result is read back via
+  `get_last_assistant_text` (rendered-history fallback), reduced with
+  `formatSpeakableForVoice` (500 chars, markdown stripped) and REDACTED
+  (`lib/search/redact.ts`), then fed into the call as chunked
+  `delegation.context.append` frames (`speakable` channel, 500 UTF-8-byte
+  chunks) over the browser-owned `oai-events` channel — the voice reads it
+  aloud, mirroring omp's terminal /live extension.
+- One delegation in flight per call (the terminal's `pendingDelegationId`
+  serialization); the VoicePanel delegation list (request text, state chip
+  pending→delegating→running→done/failed, redacted result preview) is
+  tab-memory only — never persisted. "Delegate to chat" is ON by default
+  (auto-delegate like the terminal) and resets on close; with it off, each
+  item waits for its Send button.
+
 ## omp Session File Format (v3)
 
 Location: `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`

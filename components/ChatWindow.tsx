@@ -31,6 +31,9 @@ import type { ProviderUsageContext } from "@/lib/provider-usage-types";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { resolveAvailableThinkingLevels } from "@/lib/thinking-levels";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
+import { sendAgentCommand } from "@/lib/agent-client";
+import { getSubmitDuringRunBehavior } from "@/lib/composer-prefs";
+import type { LiveDelegationBridge } from "@/lib/live/delegation";
 import {
   captureScrollDistance,
   getNextVisibleCount,
@@ -606,6 +609,10 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
   // P5 checkpoints: refreshed from below via ref so this callback's identity
   // stays stable (useAgentSession syncs the latest onAgentEnd every render).
   const checkpointsRefreshRef = useRef<() => void>(() => {});
+  // Live voice delegation (VoicePanel): subscribers to the terminal agent_end
+  // of this chat surface. A Set of callbacks via ref keeps the identity of
+  // wrappedOnAgentEnd stable while the panel registers/unregisters.
+  const liveAgentEndNotifiersRef = useRef<Set<() => void>>(new Set());
   const wrappedOnAgentEnd = useCallback(() => {
     playDoneSoundRef.current();
     // 6b TTS replies: auto-speak the newest reply when "Read replies aloud"
@@ -613,6 +620,15 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     // and registers itself (MessageView → rememberAssistantReply) first.
     setTimeout(speakLatestReply, 300);
     onAgentEnd?.();
+    // Live voice: a delegated prompt's run just ended — the panel feeds the
+    // result back into the call. Listener failures must never break the chat.
+    for (const notify of liveAgentEndNotifiersRef.current) {
+      try {
+        notify();
+      } catch {
+        /* ignore */
+      }
+    }
     // Snapshots land server-side a beat after agent_end (git status + tree
     // write) — refresh now and once more after a grace period.
     checkpointsRefreshRef.current();
@@ -654,6 +670,71 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     anchorRequest,
   });
   const sessionBusy = agentRunning || bashRunning;
+  // -------------------------------------------------------------------
+  // Live voice delegation bridge (VoicePanel → this chat surface).
+  // A `delegation.created` request from the call is delivered through the
+  // SAME path a typed message takes: idle → handleSend (a fresh tab spawns
+  // its session with the delegation as the first message); while a run is
+  // active, the composer's steer-vs-queue preference decides steer vs
+  // follow-up — exactly like ChatInput does. The delegated run's final
+  // assistant text is read back via get_last_assistant_text (rendered
+  // history as fallback). Handler identities ride refs so the bridge
+  // object handed to VoicePanel is created once.
+  // -------------------------------------------------------------------
+  const liveSendRef = useRef(handleSend);
+  liveSendRef.current = handleSend;
+  const liveSteerRef = useRef(handleSteer);
+  liveSteerRef.current = handleSteer;
+  const liveFollowUpRef = useRef(handleFollowUp);
+  liveFollowUpRef.current = handleFollowUp;
+  const liveBusyRef = useRef(sessionBusy);
+  liveBusyRef.current = sessionBusy;
+  const liveSessionRef = useRef(session);
+  liveSessionRef.current = session;
+  const liveMessagesRef = useRef(messages);
+  liveMessagesRef.current = messages;
+  const liveDelegationBridge = useMemo<LiveDelegationBridge>(() => ({
+    send: async (requestText: string) => {
+      const text = requestText.trim();
+      if (!text) return false;
+      if (liveBusyRef.current) {
+        const sid = liveSessionRef.current?.id;
+        if (!sid) return false;
+        if (getSubmitDuringRunBehavior() === "steer") await liveSteerRef.current(text);
+        else await liveFollowUpRef.current(text);
+        return true;
+      }
+      return liveSendRef.current(text);
+    },
+    lastAssistantText: async () => {
+      const sid = liveSessionRef.current?.id;
+      if (sid) {
+        try {
+          const data = await sendAgentCommand<{ text?: string }>(sid, { type: "get_last_assistant_text" });
+          if (typeof data?.text === "string" && data.text.trim()) return data.text;
+        } catch {
+          // Route hiccup: fall through to the rendered history below.
+        }
+      }
+      for (let i = liveMessagesRef.current.length - 1; i >= 0; i--) {
+        const msg = liveMessagesRef.current[i];
+        if (!msg || msg.role !== "assistant") continue;
+        const text = (msg as AssistantMessage).content
+          .map((block) => (block.type === "text" ? block.text : ""))
+          .filter(Boolean)
+          .join("\n")
+          .trim();
+        if (text) return text;
+      }
+      return "";
+    },
+    onAgentEnd: (fn: () => void) => {
+      liveAgentEndNotifiersRef.current.add(fn);
+      return () => {
+        liveAgentEndNotifiersRef.current.delete(fn);
+      };
+    },
+  }), []);
   // 6e: record every SUCCESSFUL send into the global prompt history (the
   // store handles consecutive-dedupe). `!cmd` sends are shell commands, not
   // prompts, so they stay out of the list.
@@ -1336,7 +1417,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
 
       {/* /live: browser-direct Codex live voice call (server only brokers the
          signaling handshake; media + transcripts never reach it). */}
-      <VoicePanel open={voiceOpen} onClose={() => setVoiceOpen(false)} />
+      <VoicePanel open={voiceOpen} onClose={() => setVoiceOpen(false)} delegation={liveDelegationBridge} />
 
       {/* P5 checkpoints: file rewind confirmation for user messages. */}
       <RestoreDialog
