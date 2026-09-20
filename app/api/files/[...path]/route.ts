@@ -12,6 +12,7 @@ import {
 } from "@/lib/file-access";
 import {
   DOCX_PREVIEW_MAX_BYTES,
+  EDITOR_MAX_BYTES,
   IMAGE_PREVIEW_MAX_BYTES,
   TEXT_PREVIEW_MAX_BYTES,
   documentPreviewKind,
@@ -55,7 +56,6 @@ const MAX_UPLOAD_CHECK_REQUEST_BYTES = 1024 * 1024;
 // body wrapping the content escapes newlines/quotes, so the wire cap allows
 // headroom for that encoding; the decoded content is re-checked against the
 // real 2 MB limit below before anything touches disk.
-export const EDITOR_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_EDIT_BODY_BYTES = EDITOR_MAX_BYTES * 4 + 64 * 1024;
 
 const EXT_TO_LANGUAGE: Record<string, string> = {

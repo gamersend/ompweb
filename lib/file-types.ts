@@ -119,3 +119,6 @@ export function isAudioPath(filePath: string): boolean {
 export function isDocumentPreviewPath(filePath: string): boolean {
   return documentPreviewKind(filePath) !== null;
 }
+
+/** Hard size cap for the FileViewer editor load/save paths (2 MB). */
+export const EDITOR_MAX_BYTES = 2 * 1024 * 1024;

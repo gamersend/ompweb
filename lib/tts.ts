@@ -17,3 +17,12 @@ export const MAX_TTS_REQUEST_BYTES = 64 * 1024;
  * (OpenAI-compatible speech API defaults). */
 export const TTS_DEFAULT_MODEL = "tts-1";
 export const TTS_DEFAULT_VOICE = "alloy";
+
+/** Accept either the STT-style full endpoint URL (…/v1/audio/speech) or a
+ * bare OpenAI-compatible base URL (https://host) — the speech path is then
+ * appended, mirroring the build plan's `{endpoint}/v1/audio/speech`. */
+export function resolveSpeechUrl(endpoint: string): string {
+  const base = endpoint.replace(/\/+$/, "");
+  if (/\/v1\/audio\/speech$/i.test(base)) return base;
+  return `${base}/v1/audio/speech`;
+}

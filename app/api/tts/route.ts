@@ -5,6 +5,7 @@ import {
   MAX_TTS_TEXT_CHARS,
   TTS_DEFAULT_MODEL,
   TTS_DEFAULT_VOICE,
+  resolveSpeechUrl,
 } from "@/lib/tts";
 
 export const runtime = "nodejs";
@@ -31,17 +32,6 @@ function extractUpstreamErrorMessage(data: unknown, rawText: string, status: num
 function cleanEnvVar(val?: string): string | undefined {
   const cleaned = val?.replace(/\\n|[\r\n]/g, "").trim();
   return cleaned || undefined;
-}
-
-/**
- * Accept either the STT-style full endpoint URL (…/v1/audio/speech) or a
- * bare OpenAI-compatible base URL (https://host) — the speech path is then
- * appended, mirroring the build plan's `{endpoint}/v1/audio/speech`.
- */
-export function resolveSpeechUrl(endpoint: string): string {
-  const base = endpoint.replace(/\/+$/, "");
-  if (/\/v1\/audio\/speech$/i.test(base)) return base;
-  return `${base}/v1/audio/speech`;
 }
 
 export async function POST(request: Request) {
