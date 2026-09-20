@@ -197,7 +197,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
     session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
-    onOpenFile, anchorRequest,
+    onOpenFile, onOpenLiveVoice, anchorRequest,
   } = opts;
   const reducedMotion = usePrefersReducedMotion();
   const isNew = session === null && newSessionCwd !== null;
@@ -3062,12 +3062,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     const [, commandName, rawArgs = ""] = match;
     const args = rawArgs.trim();
+
+    // /live needs no session at all: it opens the client-side Codex live
+    // voice panel (media + transcripts never touch the server, see
+    // lib/live/). Handled before the sid resolution so a fresh tab does not
+    // spawn an omp child just to open the panel.
+    if (commandName === "live") {
+      if (!onOpenLiveVoice) return { handled: false };
+      onOpenLiveVoice();
+      return { handled: true, action: "openLiveVoice" };
+    }
+
     const sid = sessionIdRef.current ?? await ensureNewSession();
     const complete = (result: BuiltinSlashCommandResult): BuiltinSlashCommandResult => {
       if (!result.handled) return result;
       if (result.error) {
         addNotice({ type: "error", message: result.error });
-      } else if (result.action !== "openSessionStats") {
+      } else if (result.action !== "openSessionStats" && result.action !== "openLiveVoice") {
         addNotice({ type: "success", message: result.message ?? translate("agentSession.commandCompleted") });
       }
       return result;
@@ -3181,7 +3192,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setIsCompacting(false);
       }
     }
-  }, [addNotice, advisorEnabled, ensureNewSession, handleSend, isCompacting, loadModels, loadSession, loadSlashCommands, promoteNewSession, onSessionStatsPanelOpen]);
+  }, [addNotice, advisorEnabled, ensureNewSession, handleSend, isCompacting, loadModels, loadSession, loadSlashCommands, promoteNewSession, onSessionStatsPanelOpen, onOpenLiveVoice]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An

@@ -18,7 +18,6 @@
  * server restart.
  */
 
-import { OMP_CODEX_PROVIDER } from "./protocol";
 import { listCodexAccounts, type CodexAccount } from "./token";
 import { resolveOmpBin } from "@/lib/omp/omp-cli";
 
@@ -96,4 +95,9 @@ async function probeGate(): Promise<LiveGate> {
 /** Tests only — forget the cached probe. */
 export function resetLiveGateForTests(): void {
   cacheStore().cache = undefined;
+}
+
+/** Test seam — pre-seed the probe cache so tests never exec the real omp. */
+export function _seedLiveGateCache(gate: LiveGate, at = Date.now()): void {
+  cacheStore().cache = { at, gate };
 }

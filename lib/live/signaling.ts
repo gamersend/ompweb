@@ -42,15 +42,25 @@ export interface LiveCallAnswer {
 }
 
 /**
- * Injectable fetch for tests — production uses the global. (The server's
- * HTTP(S)_PROXY wiring applies naturally: Node's fetch honors the env proxy
- * dispatcher installed at boot in instrumentation.ts.)
+ * Injectable fetch for tests — production uses the global. The seam lives on
+ * globalThis (the rpc-manager discipline) so every module instance of this
+ * file shares one swap, exactly like the token provider seam in token.ts.
+ * (The server's HTTP(S)_PROXY wiring applies naturally: Node's fetch honors
+ * the env proxy dispatcher installed at boot in instrumentation.ts.)
  */
-let httpFetch: typeof fetch = (...args) => fetch(...args);
+const HTTP_FETCH_KEY = "__ompweb_live_signal_http__";
 
-/** Test seam — swaps the transport. */
+/** Test seam — swaps the transport (and forgets the swap with null). */
 export function _setLiveSignalHttp(fake: typeof fetch | null): void {
-  httpFetch = fake ?? ((...args) => fetch(...args));
+  const g = globalThis as Record<string, unknown>;
+  if (fake) g[HTTP_FETCH_KEY] = fake;
+  else delete g[HTTP_FETCH_KEY];
+}
+
+function signalFetch(): typeof fetch {
+  const seam = (globalThis as Record<string, unknown>)[HTTP_FETCH_KEY];
+  if (typeof seam === "function") return seam as typeof fetch;
+  return (...args) => fetch(...args);
 }
 
 /**
@@ -76,7 +86,7 @@ export async function startLiveCall(opts: {
 
   let res: Response;
   try {
-    res = await httpFetch(LIVE_SIGNAL_URL, {
+    res = await signalFetch()(LIVE_SIGNAL_URL, {
       method: "POST",
       headers,
       body,

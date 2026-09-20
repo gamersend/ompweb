@@ -231,7 +231,9 @@ export function applyOaiEvent(
       transcriptTextOf(parsed.raw),
       state.nextLineId,
     );
-    const appended = mutation.changedId === -1 && mutation.lines.length > state.lines.length;
+    // A new line appended (length grew) consumes the id; an open-line merge
+    // reuses the line's existing id and does not bump the counter.
+    const appended = mutation.lines.length > state.lines.length;
     return {
       lines: mutation.lines,
       changedId: mutation.changedId,

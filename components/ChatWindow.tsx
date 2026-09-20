@@ -12,6 +12,7 @@ import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput
 import { ExtensionDialog } from "./ExtensionDialog";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { RestoreDialog } from "./RestoreDialog";
+import { VoicePanel } from "./VoicePanel";
 import type { CheckpointPoint } from "@/lib/checkpoints/store";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ComposerPanels } from "./ComposerPanels";
@@ -649,6 +650,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
     onOpenFile,
+    onOpenLiveVoice: () => setVoiceOpen(true),
     anchorRequest,
   });
   const sessionBusy = agentRunning || bashRunning;
@@ -849,6 +851,8 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     anchorAppliedRef.current?.();
   }, [anchorTarget, loading, entryIds, messages.length, visibleCount, scrollContainerRef]);
   const [selectedSubagent, setSelectedSubagent] = useState<SubagentInfo | null>(null);
+  // /live voice panel (opened by the /live composer command).
+  const [voiceOpen, setVoiceOpen] = useState(false);
   const [composerMinimized, setComposerMinimized] = useState(false);
   const minimizedExpandRef = useRef<HTMLButtonElement | null>(null);
   // True while the viewport is at/near the conversation bottom. Drives the
@@ -1329,6 +1333,10 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
         events={selectedSubagent ? (subagentEvents[selectedSubagent.id] ?? []) : undefined}
         onClose={() => setSelectedSubagent(null)}
       />
+
+      {/* /live: browser-direct Codex live voice call (server only brokers the
+         signaling handshake; media + transcripts never reach it). */}
+      <VoicePanel open={voiceOpen} onClose={() => setVoiceOpen(false)} />
 
       {/* P5 checkpoints: file rewind confirmation for user messages. */}
       <RestoreDialog

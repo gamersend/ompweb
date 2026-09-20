@@ -86,9 +86,12 @@ export async function POST(request: Request) {
       const status = error.code === "live_bad_request" ? 400 : 502;
       return NextResponse.json({ error: error.message, code: error.code }, { status });
     }
-    if (error instanceof LiveTokenError) {
+    if (error instanceof LiveTokenError || (error instanceof Error && error.name === "LiveTokenError")) {
       // Local capability problems: no omp binary, or no stored Codex account.
-      return NextResponse.json({ error: error.message, code: error.code }, { status: 503 });
+      // The name check keeps the mapping stable across duplicated module
+      // instances (tests import this file through different specifiers).
+      const code = (error as LiveTokenError).code === "omp_unavailable" ? "omp_unavailable" : "live_unauthorized";
+      return NextResponse.json({ error: error.message, code }, { status: 503 });
     }
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message, code: "live_signaling" }, { status: 500 });

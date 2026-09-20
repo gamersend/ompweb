@@ -972,6 +972,29 @@ gesture — the autoplay-unlock discipline from `useAudio`.
   must not orphan shell children. Exited terminals linger 5 min so late SSE
   subscribers observe the exit.
 
+### Live voice (`/live`) — Codex live lane (`lib/live/*`, `app/api/live/*`, `components/VoicePanel.tsx`)
+- This is omp's private ChatGPT Codex subscription route (`/live`,
+  `gpt-live-1-codex`) — NEVER the public OpenAI Realtime API, and there is
+  no API-key fallback (test-enforced in `lib/live-source.test.mjs`).
+- The server's ONLY role is one OAuth-authenticated signaling POST: it
+  shells `omp token openai-codex` (the user's own omp credential store —
+  ompweb keeps no OAuth state) and returns `{ answerSdp, callId }`. Audio
+  and the `oai-events` data channel flow browser↔OpenAI directly; there is
+  no sideband relay and the server never sees transcripts.
+- Transcripts are ephemeral: tab memory only, bounded, redacted via
+  `lib/search/redact.ts`, never persisted anywhere.
+- Entry: the `/live` composer command (builtin; handled in
+  `useAgentSession` BEFORE session resolution so no omp child spawns) opens
+  `VoicePanel`. One engine per tab (`lib/live/engine.ts` registry); closing
+  the panel stops mic tracks, closes the peer, releases the engine.
+- Gate: `OMP_WEB_LIVE_ENABLED=0` off, `=1` forced on, unset → auto when omp
+  has a stored Codex OAuth account (`omp token openai-codex --list`,
+  metadata only, 5-min cache). Envelope codes: `live_disabled`,
+  `omp_unavailable`, `live_unauthorized`, `live_signaling`,
+  `live_bad_request` (i18n via `errors.*`).
+- Drift rule: after any auth/signaling failure, re-read omp's `/live`
+  before touching the pinned constants in `lib/live/protocol.ts`.
+
 ## omp Session File Format (v3)
 
 Location: `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`

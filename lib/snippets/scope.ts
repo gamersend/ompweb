@@ -36,6 +36,7 @@ export const RESERVED_SLASH_NAMES: ReadonlySet<string> = new Set([
   "name",
   "session",
   "copy",
+  "live",
   "snippets",
 ]);
 

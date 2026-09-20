@@ -57,14 +57,8 @@ function runOmp(args: string[], timeoutMs: number): Promise<string> {
   });
 }
 
-/**
- * The access token for one signaling exchange, obtained fresh from the user's
- * own omp install. omp refreshes it when near expiry; no caching here, because
- * a token is only needed once per call and a cached one could outlive a
- * logout. Failures carry a machine code and a bounded message — never the
- * token itself.
- */
-export async function getCodexLiveToken(): Promise<{ token: string; accountID: string }> {
+/** The production provider: shell the user's own omp. */
+async function defaultCodexTokenProvider(): Promise<{ token: string; accountID: string }> {
   let out: string;
   try {
     out = await runOmp(["token", OMP_CODEX_PROVIDER], 15_000);
@@ -77,6 +71,32 @@ export async function getCodexLiveToken(): Promise<{ token: string; accountID: s
     throw new LiveTokenError("live_unauthorized", "omp token output was empty or malformed");
   }
   return { token, accountID: claimsFromJwt(token).accountID };
+}
+
+// The seam lives on globalThis (the rpc-manager discipline) so every module
+// instance of this file — jiti duplicates them across alias/relative
+// specifiers in tests, Next hot reload across route edits — shares one swap.
+const TOKEN_PROVIDER_KEY = "__ompweb_live_token_provider__";
+type TokenProvider = () => Promise<{ token: string; accountID: string }>;
+
+/** Test seam — swaps the token provider (and forgets the swap with null). */
+export function _setCodexTokenProvider(fake: TokenProvider | null): void {
+  const g = globalThis as Record<string, unknown>;
+  if (fake) g[TOKEN_PROVIDER_KEY] = fake;
+  else delete g[TOKEN_PROVIDER_KEY];
+}
+
+/**
+ * The access token for one signaling exchange, obtained fresh from the user's
+ * own omp install. omp refreshes it when near expiry; no caching here, because
+ * a token is only needed once per call and a cached one could outlive a
+ * logout. Failures carry a machine code and a bounded message — never the
+ * token itself.
+ */
+export async function getCodexLiveToken(): Promise<{ token: string; accountID: string }> {
+  const seam = (globalThis as Record<string, unknown>)[TOKEN_PROVIDER_KEY];
+  if (typeof seam === "function") return (seam as TokenProvider)();
+  return defaultCodexTokenProvider();
 }
 
 /**

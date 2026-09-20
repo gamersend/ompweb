@@ -1969,6 +1969,20 @@ span.token.table {
   from { opacity: 0; transform: translate(-50%, -46%) scale(0.97); }
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
+
+/* Live voice status dot, mid-call interruption pulse (components/VoicePanel).
+   Reduced motion: collapsed to a static dot in the global block below. */
+@keyframes omp-live-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-success) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.omp-live-pulse {
+  animation: omp-live-pulse 0.9s var(--ease-out-warm) 2;
+}
+@media (prefers-reduced-motion: reduce) {
+  .omp-live-pulse { animation: none; }
+}
 .dropdown-surface {
   background: var(--bg-panel);
   border: 1px solid var(--border);
