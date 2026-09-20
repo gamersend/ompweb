@@ -78,6 +78,9 @@ export const BUILTIN_SLASH_COMMAND_DEFS: { name: string; descriptionKey: string;
   { name: "name", descriptionKey: "chatInput.cmdName" },
   { name: "session", descriptionKey: "chatInput.cmdSession" },
   { name: "copy", descriptionKey: "chatInput.cmdCopy" },
+  // Live voice: opens the browser-direct Codex live panel (server only
+  // brokers the handshake; media + transcripts never touch it).
+  { name: "live", descriptionKey: "chatInput.cmdLive" },
 ];
 
 export const CLIENT_BUILTIN_COMMAND_NAMES = new Set(BUILTIN_SLASH_COMMAND_DEFS.map((def) => def.name));

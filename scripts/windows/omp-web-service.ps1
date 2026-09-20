@@ -157,7 +157,9 @@ function Stop-WebServer {
 }
 
 # Handle Ctrl-C / termination
-[Console]::TreatControlCAsInput = $false
+# Hidden/headless sessions (scheduled task, no console handle) throw here —
+# the console ctrl-c setting is best-effort and must not kill the service.
+try { [Console]::TreatControlCAsInput = $false } catch { }
 $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { $script:IsExiting = $true; Stop-WebServer } -ErrorAction SilentlyContinue
 
 # Trap termination signals

@@ -222,7 +222,7 @@ export interface SlashCommandInfo {
 
 export type BuiltinSlashCommandResult =
   | { handled: false }
-  | { handled: true; message?: string; error?: string; action?: "openSessionStats"; retainInput?: boolean };
+  | { handled: true; message?: string; error?: string; action?: "openSessionStats" | "openLiveVoice"; retainInput?: boolean };
 
 export type ThinkingLevelOption = string;
 

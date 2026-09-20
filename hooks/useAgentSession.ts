@@ -187,6 +187,8 @@ export interface UseAgentSessionOptions {
   setToolPreset?: (preset: "none" | "default" | "full") => void;
   /** Opens a file in the web UI's file viewer (used by the open_file host tool). */
   onOpenFile?: (filePath: string, name: string, sessionId?: string) => void;
+  /** Opens the live voice panel (the /live composer command). */
+  onOpenLiveVoice?: () => void;
   /** URL/palette-driven anchor: deep-link to one message (see AnchorRequest). */
   anchorRequest?: AnchorRequest | null;
 }
