@@ -140,6 +140,48 @@ export interface NativeUsageAggregates {
   projects: Array<{ folder: string; cost: number; tokens: number; sessions: number }>;
 }
 
+/** P9 (model report card): per-(model, provider, session) rollup inside a
+ * time window. `stopReason` is the stop_reason of the row with the MAX
+ * timestamp in the group (SQLite's min/max bare-column guarantee), i.e. the
+ * session's terminal assistant outcome for that model. */
+export interface ModelSessionFact {
+  model: string;
+  provider: string;
+  /** Absolute .jsonl path — the scheduled/delegated origin matcher keys on it. */
+  sessionPath: string;
+  messages: number;
+  tokensIn: number;
+  tokensOut: number;
+  cacheRead: number;
+  cacheWrite: number;
+  tokensTotal: number;
+  /** Summed cost for the group; null when the window recorded no cost at all. */
+  costUsd: number | null;
+  /** Terminal stop_reason of the group's last recorded message. */
+  lastStopReason: string | null;
+}
+
+/** P9: tool_calls rollup per (model, provider) inside a time window. */
+export interface ModelToolFact {
+  model: string;
+  provider: string;
+  calls: number;
+  errors: number;
+}
+
+/** One raw ttft sample feeding the per-model median (SQL has no median). */
+export interface ModelTtftSample {
+  model: string;
+  provider: string;
+  ttftMs: number;
+}
+
+export interface ModelFactsBundle {
+  sessions: ModelSessionFact[];
+  tools: ModelToolFact[];
+  ttft: ModelTtftSample[];
+}
+
 /** Shape-level degrade flags, surfaced to the UI as the "partial data" badge. */
 export interface NativeStatsState {
   /** The database files existed and opened read-only. */
@@ -157,6 +199,9 @@ export interface NativeStats extends NativeStatsState {
   modelUsage(): ModelUsageRow[];
   quotaHistory(): QuotaSample[];
   usageAggregates(sinceMs: number, untilMs: number): NativeUsageAggregates;
+  /** P9: range-windowed per-model rollups (messages grouped per session with
+   * the terminal stop_reason, tool_calls per model, raw ttft samples). */
+  modelFacts(sinceMs: number, untilMs: number): ModelFactsBundle;
 }
 
 export interface NativeStatsOptions {
@@ -186,6 +231,7 @@ const BUSY_BACKOFF_MS = 25;
 const FACTS_FULL_TABLE_CAP = 5_000;
 const FACTS_PER_SESSION_CAP = 20_000;
 const QUOTA_CAP = 1_000;
+const FACTS_TTFT_SAMPLE_CAP = 20_000;
 
 function getCache(): Map<string, CacheEntry<unknown>> {
   if (!globalThis.__ompNativeStatsCache) globalThis.__ompNativeStatsCache = new Map();
@@ -384,13 +430,16 @@ export function createNativeStats(opts: NativeStatsOptions = {}): NativeStats {
   }
 
   /** Open a db for one query; degrade the shape when absent/unopenable.
-   * Genuine file absence marks unavailable-but-NOT-partial: nothing was lost. */
+   * Genuine file absence marks unavailable-but-NOT-partial: nothing was lost.
+   * Availability is per query — a db that appears mid-process (omp installed
+   * while the server runs) flips the flag back for later queries. */
   function open(dbPath: string, startedAt: number): { db: DatabaseSync } | null {
     if (!existsSync(dbPath)) {
       state.available = false;
       state.partial = false;
       return null;
     }
+    state.available = true;
     const db = getDb(dbPath);
     if (!db) return degrade();
     void startedAt;
@@ -646,6 +695,104 @@ export function createNativeStats(opts: NativeStatsOptions = {}): NativeStats {
             tokens: num(row.tokens),
             sessions: num(row.sessions),
           })),
+        };
+      } catch {
+        degrade();
+        return empty;
+      }
+    },
+    modelFacts(sinceMs: number, untilMs: number): ModelFactsBundle {
+      const empty: ModelFactsBundle = { sessions: [], tools: [], ttft: [] };
+      if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs) || untilMs < sinceMs) return empty;
+      const startedAt = Date.now();
+      const opened = open(statsDbPath, startedAt);
+      if (!opened) return empty;
+      const { db } = opened;
+      const budgetRef = { exceeded: false };
+      // A table missing from an older omp build degrades only its own part of
+      // the bundle (same discipline as messageFacts' no-such-table catch) —
+      // never the whole shape.
+      const rowsOrEmpty = (
+        key: string,
+        run: () => Array<Record<string, unknown>>,
+        ...args: unknown[]
+      ): Array<Record<string, unknown>> => {
+        try {
+          return query(key, budgetRef, () => withBusyRetry(run), ...args);
+        } catch (error) {
+          if (/no such table|no such column/i.test(String((error as Error)?.message))) {
+            state.partial = true;
+            return [];
+          }
+          throw error;
+        }
+      };
+      try {
+        // GROUP BY (model, provider, session_file) with exactly one MAX()
+        // aggregate: SQLite's bare-column guarantee puts stop_reason on the
+        // group's last-recorded row — the session's terminal outcome.
+        const sessions = rowsOrEmpty("modelFacts:sessions", () =>
+          db.prepare(
+            `SELECT model, provider, session_file, MAX(timestamp) AS last_ts, stop_reason,
+                    COUNT(*) AS messages,
+                    SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+                    SUM(cache_read_tokens) AS cache_read_tokens,
+                    SUM(cache_write_tokens) AS cache_write_tokens,
+                    SUM(total_tokens) AS total_tokens,
+                    SUM(cost_total) AS cost, COUNT(cost_total) AS cost_samples
+             FROM messages WHERE timestamp >= ? AND timestamp <= ?
+             GROUP BY model, provider, session_file
+             ORDER BY last_ts DESC
+             LIMIT ${FACTS_FULL_TABLE_CAP}`,
+          ).all(sinceMs, untilMs) as unknown as Array<Record<string, unknown>>,
+          sinceMs, untilMs,
+        );
+        const tools = rowsOrEmpty("modelFacts:tools", () =>
+          db.prepare(
+            `SELECT model, provider, COUNT(*) AS calls,
+                    SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) AS errors
+             FROM tool_calls WHERE timestamp >= ? AND timestamp <= ?
+             GROUP BY model, provider ORDER BY calls DESC LIMIT 200`,
+          ).all(sinceMs, untilMs) as unknown as Array<Record<string, unknown>>,
+          sinceMs, untilMs,
+        );
+        // Median needs raw samples — SQL has no median. Bounded fetch.
+        // Provider rides along so samples group exactly like sessions.
+        const ttft = rowsOrEmpty("modelFacts:ttft", () =>
+          db.prepare(
+            `SELECT model, provider, ttft FROM messages
+             WHERE timestamp >= ? AND timestamp <= ? AND ttft IS NOT NULL
+             ORDER BY timestamp ASC
+             LIMIT ${FACTS_TTFT_SAMPLE_CAP}`,
+          ).all(sinceMs, untilMs) as unknown as Array<Record<string, unknown>>,
+          sinceMs, untilMs,
+        );
+        if (overBudget(startedAt)) { budgetRef.exceeded = true; state.partial = true; }
+        return {
+          sessions: sessions.map((row) => ({
+            model: strOrNull(row.model) ?? "unknown",
+            provider: strOrNull(row.provider) ?? "unknown",
+            sessionPath: typeof row.session_file === "string" ? row.session_file : "",
+            messages: num(row.messages),
+            tokensIn: num(row.input_tokens),
+            tokensOut: num(row.output_tokens),
+            cacheRead: num(row.cache_read_tokens),
+            cacheWrite: num(row.cache_write_tokens),
+            tokensTotal: num(row.total_tokens),
+            costUsd: num(row.cost_samples) > 0 && typeof row.cost === "number" ? row.cost : null,
+            lastStopReason: strOrNull(row.stop_reason),
+          })),
+          tools: tools.map((row) => ({
+            model: strOrNull(row.model) ?? "unknown",
+            provider: strOrNull(row.provider) ?? "unknown",
+            calls: num(row.calls),
+            errors: num(row.errors),
+          })).filter((f) => f.calls > 0),
+          ttft: ttft.map((row) => ({
+            model: strOrNull(row.model) ?? "unknown",
+            provider: strOrNull(row.provider) ?? "unknown",
+            ttftMs: num(row.ttft),
+          })).filter((s) => s.ttftMs > 0),
         };
       } catch {
         degrade();

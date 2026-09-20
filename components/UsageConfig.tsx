@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ChevronDown, Database, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { AlertCircle, ChevronDown, Database, Loader2, RefreshCw, Timer, TriangleAlert } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type {
   UsageBreakdownView,
@@ -11,6 +11,7 @@ import type {
   UsageTimeRange,
 } from "@/lib/usage-types";
 import type { QuotaCardSample, NativeUsageMeta } from "@/lib/usage-native";
+import type { ModelReport, ModelReportRange, ModelReportRow } from "@/lib/insights/model-report";
 
 /** The usage route response: the base report plus the P7 native union fields. */
 type UsageConfigReport = UsageReport & { native?: NativeUsageMeta; quota?: QuotaCardSample[] };
@@ -53,6 +54,339 @@ function formatCurrency(amount: number): string {
     return `$${amount.toFixed(3)}`;
   }
   return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// ---------------------------------------------------------------------------
+// P9: Model report card — sortable per-model comparison table fed by
+// GET /api/model-report (stats.db facts ∪ ompweb usage; see the route).
+// Self-contained: own fetch/range/sort state, mounted below the breakdown.
+// ---------------------------------------------------------------------------
+
+type ReportSortKey = "model" | "sessions" | "completionPct" | "ttftMedianMs" | "tokens" | "costUsd" | "costPerCompletedSessionUsd";
+
+const REPORT_SORT_ACCESSORS: Record<ReportSortKey, (row: ModelReportRow) => number | string | null> = {
+  model: (row) => row.model,
+  sessions: (row) => row.sessions,
+  completionPct: (row) => row.completionPct,
+  ttftMedianMs: (row) => row.ttftMedianMs,
+  tokens: (row) => row.tokens,
+  costUsd: (row) => row.costUsd,
+  costPerCompletedSessionUsd: (row) => row.costPerCompletedSessionUsd,
+};
+
+function sortReportRows(rows: ModelReportRow[], key: ReportSortKey, dir: "asc" | "desc"): ModelReportRow[] {
+  const accessor = REPORT_SORT_ACCESSORS[key];
+  const sorted = [...rows].sort((a, b) => {
+    const va = accessor(a);
+    const vb = accessor(b);
+    // Nulls always sink regardless of direction.
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === "string" || typeof vb === "string") {
+      return String(va).localeCompare(String(vb));
+    }
+    return va - vb;
+  });
+  return dir === "desc" ? sorted.reverse() : sorted;
+}
+
+/** Minimal token-styled sparkbar: fixed-width share bar (the quota-meter
+ * pattern at spark size). value < 0 clamps to invisible, max shared by rows. */
+function ReportSparkBar({ value, max }: { value: number; max: number }) {
+  const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width: 64, height: 4, borderRadius: 2, background: "var(--bg-subtle)",
+        overflow: "hidden", marginTop: 3, marginLeft: "auto",
+      }}
+    >
+      <div
+        style={{
+          height: "100%", width: `${Math.max(pct, value > 0 ? 2 : 0)}%`,
+          background: "var(--accent)",
+          transition: "width var(--dur-fast) var(--ease-out-warm)",
+        }}
+      />
+    </div>
+  );
+}
+
+function ModelReportCard() {
+  const { t } = useI18n();
+  const [range, setRange] = useState<ModelReportRange>("30d");
+  const [report, setReport] = useState<ModelReport | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [sortKey, setSortKey] = useState<ReportSortKey>("costUsd");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const fetchReport = useCallback(async (nextRange: ModelReportRange, isRefresh = false, signal?: AbortSignal) => {
+    if (isRefresh) setRefreshing(true);
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ range: nextRange });
+      if (isRefresh) params.set("refresh", "1");
+      const res = await fetch(`/api/model-report?${params.toString()}`, { signal });
+      if (!res.ok) throw new Error(`Failed to fetch model report: ${res.statusText}`);
+      const body = await res.json();
+      setReport(body?.data ?? null);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setReport(null);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchReport(range, false, controller.signal);
+    return () => controller.abort();
+  }, [range, fetchReport]);
+
+  const rows = useMemo(
+    () => (report ? sortReportRows(report.rows, sortKey, sortDir) : []),
+    [report, sortKey, sortDir],
+  );
+  const maxTokens = useMemo(() => Math.max(...rows.map((r) => r.tokens), 0), [rows]);
+  const maxCost = useMemo(() => Math.max(...rows.map((r) => r.costUsd ?? 0), 0), [rows]);
+
+  const header = (key: ReportSortKey, label: string, align: "left" | "right" = "right") => {
+    const active = sortKey === key;
+    const ariaSort = active ? (sortDir === "asc" ? "ascending" : "descending") : "none";
+    return (
+      <th
+        aria-sort={ariaSort}
+        style={{ padding: "6px 8px", fontWeight: 500, textAlign: align, whiteSpace: "nowrap" }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            if (active) setSortDir(sortDir === "asc" ? "desc" : "asc");
+            else {
+              setSortKey(key);
+              setSortDir(key === "model" ? "asc" : "desc");
+            }
+          }}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 3,
+            background: "none", border: "none", padding: 0,
+            font: "inherit", color: active ? "var(--text)" : "var(--text-dim)",
+            cursor: "pointer",
+          }}
+        >
+          {label}
+          <ChevronDown
+            size={11}
+            aria-hidden="true"
+            style={{
+              opacity: active ? 1 : 0.35,
+              transform: active && sortDir === "asc" ? "rotate(180deg)" : "none",
+              transition: "transform var(--dur-fast) var(--ease-out-warm)",
+              flexShrink: 0,
+            }}
+          />
+        </button>
+      </th>
+    );
+  };
+
+  return (
+    <div
+      style={{
+        background: "var(--bg-panel)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-card)",
+        padding: "14px 16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      {/* Section header: title + range picker + refresh */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Timer size={13} style={{ color: "var(--text-dim)" }} aria-hidden="true" />
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+            {t("report.title")}
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div
+            role="radiogroup"
+            aria-label={t("report.range")}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              background: "var(--bg-subtle)",
+              padding: 2,
+              borderRadius: "var(--radius-control)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            {(["7d", "30d", "90d"] as ModelReportRange[]).map((r) => (
+              <button
+                key={r}
+                type="button"
+                role="radio"
+                aria-checked={range === r}
+                onClick={() => setRange(r)}
+                style={{
+                  padding: "3px 8px",
+                  fontSize: 11,
+                  fontWeight: range === r ? 600 : 400,
+                  borderRadius: "calc(var(--radius-control) - 2px)",
+                  border: "none",
+                  background: range === r ? "var(--bg-selected)" : "transparent",
+                  color: range === r ? "var(--text)" : "var(--text-muted)",
+                  cursor: "pointer",
+                }}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => fetchReport(range, true)}
+            disabled={refreshing}
+            aria-label={t("usageConfig.refresh")}
+            title={t("usageConfig.refresh")}
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 26, height: 26, borderRadius: "var(--radius-control)",
+              border: "1px solid var(--border)", background: "var(--bg-panel)",
+              color: "var(--text-muted)",
+              cursor: refreshing ? "default" : "pointer",
+            }}
+          >
+            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+          </button>
+        </div>
+      </div>
+
+      {/* Native unavailable: ompweb-usage-only degrade notice (never empty page) */}
+      {report && !report.native.available && (
+        <div
+          role="status"
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "7px 10px", border: "1px solid var(--border)",
+            borderRadius: "var(--radius-control)", background: "var(--bg-subtle)",
+            fontSize: 12, color: "var(--text-muted)",
+          }}
+        >
+          <TriangleAlert size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} aria-hidden="true" />
+          {t("report.nativeUnavailable")}
+        </div>
+      )}
+      {report && report.native.available && report.partial && (
+        <div
+          role="status"
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "7px 10px", border: "1px solid var(--border)",
+            borderRadius: "var(--radius-control)", background: "var(--bg-subtle)",
+            fontSize: 12, color: "var(--text-muted)",
+          }}
+        >
+          <TriangleAlert size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} aria-hidden="true" />
+          {t("report.partial")}
+        </div>
+      )}
+
+      {loading && !report ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 90, color: "var(--text-muted)", gap: 8 }}>
+          <Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} />
+          <span style={{ fontSize: 12 }}>{t("report.loading")}</span>
+        </div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: "14px 4px", textAlign: "center", color: "var(--text-dim)", fontSize: 12 }}>
+          {t("report.empty")}
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--text-dim)", textAlign: "left" }}>
+                {header("model", t("report.colModel"), "left")}
+                {header("sessions", t("report.colSessions"))}
+                {header("completionPct", t("report.colCompletion"))}
+                {header("ttftMedianMs", t("report.colTtft"))}
+                {header("tokens", t("report.colTokens"))}
+                {header("costUsd", t("report.colCost"))}
+                {header("costPerCompletedSessionUsd", t("report.colCostPerCompleted"))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={`${row.provider}/${row.model}`} style={{ borderBottom: "1px solid var(--bg-subtle)" }}>
+                  <td style={{ padding: "6px 4px", color: "var(--text)", fontWeight: 500 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      <span
+                        title={`${row.provider} / ${row.model}`}
+                        style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      >
+                        {row.model}
+                      </span>
+                      {row.source === "native"
+                        ? <NativeBadge label={t("report.badgeNative")} />
+                        : <NativeBadge label={t("report.badgeEst")} />}
+                      {row.sessionsScheduled > 0 && (
+                        <span
+                          title={row.scheduledBy ? t("report.scheduledBy", { name: row.scheduledBy }) : undefined}
+                          style={{
+                            display: "inline-flex", flexShrink: 0, fontSize: 9, fontWeight: 600,
+                            letterSpacing: "0.04em", color: "var(--accent)",
+                            border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+                            padding: "0 5px", lineHeight: "14px", background: "var(--bg-subtle)",
+                          }}
+                        >
+                          {t("report.scheduledChip", { count: row.sessionsScheduled })}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>
+                    {row.source === "native" ? row.sessions.toLocaleString() : "—"}
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+                    {row.completionPct != null ? `${row.completionPct.toFixed(1)}%` : "—"}
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+                    {row.ttftMedianMs != null ? `${row.ttftMedianMs.toLocaleString()} ms` : "—"}
+                  </td>
+                  <td style={{ padding: "6px 4px", textAlign: "right", color: "var(--text-muted)" }}>
+                    <div style={{ fontVariantNumeric: "tabular-nums" }}>{formatTokens(row.tokens)}</div>
+                    <ReportSparkBar value={row.tokens} max={maxTokens} />
+                  </td>
+                  <td style={{ padding: "6px 4px", textAlign: "right", color: "var(--text)" }}>
+                    <div style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(row.costUsd ?? 0)}</div>
+                    <ReportSparkBar value={row.costUsd ?? 0} max={maxCost} />
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+                    {row.costPerCompletedSessionUsd != null ? formatCurrency(row.costPerCompletedSessionUsd) : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Labeling honesty footer: what is badged and how metrics are derived */}
+      {report && report.rows.length > 0 && (
+        <div style={{ fontSize: 10, color: "var(--text-dim)", lineHeight: 1.5 }}>
+          {t("report.labelsNote")}
+          {report.labeled.scheduled > 0 ? ` ${t("report.scheduledNote", { count: report.labeled.scheduled })}` : ""}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function UsageConfig() {
@@ -1313,6 +1647,9 @@ export function UsageConfig() {
           </div>
         )}
       </div>
+
+      {/* P9: Model report card — per-model comparison over 7d/30d/90d */}
+      <ModelReportCard />
 
       {/* 5. Footer: Transcript Scan Status */}
       {scanInfo && (
