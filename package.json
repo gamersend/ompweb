@@ -88,6 +88,9 @@
     "web-push": "^3.6.7",
     "yaml": "^2"
   },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
+  },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
     "@tailwindcss/postcss": "^4.3.3",

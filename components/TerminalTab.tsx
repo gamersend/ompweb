@@ -1,13 +1,26 @@
 "use client";
 
 // ============================================================================
-// Terminal tab (Phase 13) — the Right panel's pinned Terminal view.
+// Terminal tab (Phase 13; P11 adds opt-in PTY + select→composer) — the Right
+// panel's pinned Terminal view.
 //
-// Plain mode: one shell child (allow-root spawned server-side) per tab, fed
-// over SSE + the input route. No PTY — the banner documents the TUI
+// Plain mode (default): one shell child (allow-root spawned server-side) per
+// tab, fed over SSE + the input route. No PTY — the banner documents the TUI
 // limitation; herdr attach mode (env-gated, default OFF) is the escape hatch
 // for full-screen apps: pane picker → watch (read-only) or attach (input +
 // resize) with the 800 ms read poll diffed through planPaneRender().
+//
+// PTY mode (opt-in server-side via OMP_WEB_TERMINAL_PTY=1 + a passing
+// node-pty probe): the create response reports mode:"pty"; the tab then
+// forwards xterm resize (fit addon drives term.resize → onResize) to the
+// input route as {type:"resize",cols,rows}, and the banner says full TUI
+// apps work. Resize frames from the server are acks; pipe mode never sends.
+//
+// Select→composer: with a selection, a floating toolbar offers Copy
+// selection and Insert into composer — the copy goes through lib/clipboard
+// .ts, the insert through the lib/composer-insert.ts bus targeting the
+// ACTIVE draft (same draftKey semantics as MemoryPanel), capped at 8 KB,
+// never a send.
 //
 // Key encoding: special keys/chords go through lib/terminal-input.ts's
 // toTerminalKeyData (its full-terminal home); printable text + IME flow
@@ -19,7 +32,7 @@
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Radio, RotateCw, X } from "lucide-react";
+import { ClipboardCopy, MessageSquarePlus, Radio, RotateCw, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -27,6 +40,8 @@ import { useI18n } from "@/lib/i18n";
 import { useFontSize } from "@/hooks/useFontSize";
 import { useTheme } from "@/hooks/useTheme";
 import { copyText } from "@/lib/clipboard";
+import { insertIntoComposer } from "@/lib/composer-insert";
+import { TERMINAL_INSERT_MAX_BYTES, truncateToByteCap } from "@/lib/terminal/select-insert";
 import { asBracketedPaste, toTerminalKeyData, type TerminalKeyEventLike } from "@/lib/terminal-input";
 import { planPaneRender, type HerdrPaneMeta } from "@/lib/terminal/herdr-plan";
 import { Dialog, DialogContent, DialogTitle } from "./ui/primitives";
@@ -41,6 +56,10 @@ interface Props {
   /** True while the terminal is the visible right-panel view — drives refit
    * + focus so a hidden panel never grabs keyboard input. */
   active: boolean;
+  /** Draft key of the ACTIVE session composer (`<id>` or `new:<cwd>`) —
+   * "Insert into composer" targets exactly that draft, never a split pane's
+   * other draft (same semantics as MemoryPanel). */
+  composerDraftKey: string | null;
 }
 
 const HERDR_POLL_MS = 800;
@@ -90,7 +109,7 @@ async function readJson(response: Response): Promise<{ ok: boolean; status: numb
   return { ok: response.ok, status: response.status, body };
 }
 
-export default function TerminalTab({ cwd, active }: Props) {
+export default function TerminalTab({ cwd, active, composerDraftKey }: Props) {
   const { t } = useI18n();
   const { fontSizePx } = useFontSize();
   const { isDark } = useTheme();
@@ -105,18 +124,48 @@ export default function TerminalTab({ cwd, active }: Props) {
   const paneContentRef = useRef<string | null>(null);
   const paneSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const disposedRef = useRef(false);
+  /** P11: the live backend mode, set once the create response reports it —
+   * resize forwarding and the banner branch on it. */
+  const ptyModeRef = useRef(false);
+  /** Last forwarded pty size (dedupes onResize bursts from fit()). */
+  const sentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
   const [spawnCwd, setSpawnCwd] = useState<string | null>(cwd);
   const [sessionSeq, setSessionSeq] = useState(0);
   const [status, setStatus] = useState<TerminalStatus>("creating");
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [mode, setMode] = useState<TerminalMode>({ kind: "local" });
+  const [ptyMode, setPtyMode] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [herdrEnabled, setHerdrEnabled] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [panes, setPanes] = useState<HerdrPaneMeta[]>([]);
   const terminalIdRef = useRef<string | null>(null);
+
+  const sendResize = useCallback(async (cols: number, rows: number) => {
+    if (mode.kind !== "local") return;
+    const id = terminalIdRef.current;
+    if (!id) return;
+    try {
+      await fetch(`/api/terminal/${encodeURIComponent(id)}/input`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "resize", cols, rows }),
+      });
+    } catch {
+      // A dropped resize is corrected by the next fit-driven one.
+    }
+  }, [mode]);
+
+  const forwardResizeIfPty = useCallback((cols: number, rows: number) => {
+    if (!ptyModeRef.current) return; // pipe mode: resize is a no-op server-side
+    const last = sentSizeRef.current;
+    if (last && last.cols === cols && last.rows === rows) return;
+    sentSizeRef.current = { cols, rows };
+    void sendResize(cols, rows);
+  }, [sendResize]);
 
   const sendInput = useCallback(async (data: string) => {
     const current = mode;
@@ -163,6 +212,10 @@ export default function TerminalTab({ cwd, active }: Props) {
     let cancelled = false;
     setStatus("creating");
     setExitCode(null);
+    setHasSelection(false);
+    setPtyMode(false);
+    ptyModeRef.current = false;
+    sentSizeRef.current = null;
     terminalIdRef.current = null;
     pendingInputRef.current = [];
     paneContentRef.current = null;
@@ -225,15 +278,30 @@ export default function TerminalTab({ cwd, active }: Props) {
       if (data) void sendInput(data);
     });
 
+    // P11: pty mode only — the fit addon's fit() drives term.resize, which
+    // fires onResize; forward the new size to the input route. Pipe mode
+    // never sends (the server no-ops resize anyway).
+    term.onResize(({ cols, rows }) => {
+      forwardResizeIfPty(cols, rows);
+    });
+
+    // P11: selection toolbar visibility (Copy / Insert into composer).
+    term.onSelectionChange(() => {
+      setHasSelection(term.hasSelection());
+    });
+
     const openStream = (terminalId: string) => {
       const source = new EventSource(`/api/terminal/${encodeURIComponent(terminalId)}/events`);
       eventSourceRef.current = source;
       source.onmessage = (event) => {
         try {
-          const frame = JSON.parse(event.data) as { t: string; b?: string; code?: number | null };
+          const frame = JSON.parse(event.data) as { t: string; b?: string; code?: number | null; cols?: number; rows?: number };
           if (frame.t === "d" && typeof frame.b === "string") {
             const bytes = Uint8Array.from(atob(frame.b), (c) => c.charCodeAt(0));
             term.write(bytes);
+          } else if (frame.t === "resize") {
+            // Resize ack (pty mode only) — the size is already applied
+            // client-side; nothing to do.
           } else if (frame.t === "exit") {
             setExitCode(typeof frame.code === "number" ? frame.code : null);
             setStatus("exited");
@@ -273,12 +341,20 @@ export default function TerminalTab({ cwd, active }: Props) {
           else setStatus("error");
           return;
         }
-        const data = body.data as { terminalId?: string } | undefined;
+        const data = body.data as { terminalId?: string; mode?: string } | undefined;
         if (!data?.terminalId) {
           setStatus("error");
           return;
         }
         terminalIdRef.current = data.terminalId;
+        // P11: the backend mode decides resize forwarding + which banner.
+        if (data.mode === "pty") {
+          ptyModeRef.current = true;
+          setPtyMode(true);
+          // onResize may have fired before create resolved; push the current
+          // size once so the pty starts at the real pane geometry.
+          forwardResizeIfPty(term.cols, term.rows);
+        }
         setStatus("ready");
         openStream(data.terminalId);
         drainPending();
@@ -498,6 +574,30 @@ export default function TerminalTab({ cwd, active }: Props) {
 
   const showBanner = !bannerDismissed && mode.kind === "local" && (status === "ready" || status === "creating");
 
+  // --------------------------------------------------------------------------
+  // P11: selection → copy / insert into composer (never a send)
+  // --------------------------------------------------------------------------
+  const currentSelection = useCallback((): string => termRef.current?.getSelection() ?? "", []);
+
+  const handleCopySelection = useCallback(async () => {
+    const selection = currentSelection();
+    if (!selection) return;
+    try {
+      await copyText(selection);
+    } catch {
+      toast.error(t("terminal.copyFailed"));
+    }
+  }, [currentSelection, t]);
+
+  const handleInsertSelection = useCallback(() => {
+    const selection = currentSelection();
+    if (!selection) return;
+    const { text, truncated } = truncateToByteCap(selection, TERMINAL_INSERT_MAX_BYTES);
+    insertIntoComposer({ text, draftKey: composerDraftKey ?? undefined, source: "terminal" });
+    if (truncated) toast.error(t("terminal.insertTruncated"));
+    else toast.info(t("terminal.inserted"));
+  }, [composerDraftKey, currentSelection, t]);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: "var(--bg-panel)" }}>
       {/* Toolbar */}
@@ -573,7 +673,8 @@ export default function TerminalTab({ cwd, active }: Props) {
         </button>
       </div>
 
-      {/* Plain-mode banner: the no-PTY limitation + herdr escape hatch */}
+      {/* Mode banner (P11): states the ACTUAL backend. Pipe = the no-PTY
+          limitation + herdr escape hatch; PTY = full TUI apps work. */}
       {showBanner && (
         <div
           role="status"
@@ -593,9 +694,11 @@ export default function TerminalTab({ cwd, active }: Props) {
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
-            <strong style={{ color: "var(--text)", display: "block", marginBottom: 2 }}>{t("terminal.bannerTitle")}</strong>
-            <span>{t("terminal.bannerBody")}</span>
-            {!herdrEnabled && (
+            <strong style={{ color: "var(--text)", display: "block", marginBottom: 2 }}>
+              {ptyMode ? t("terminal.bannerTitlePty") : t("terminal.bannerTitle")}
+            </strong>
+            <span>{ptyMode ? t("terminal.bannerBodyPty") : t("terminal.bannerBody")}</span>
+            {!ptyMode && !herdrEnabled && (
               <span style={{ display: "block", marginTop: 2, color: "var(--text-dim)" }}>{t("terminal.bannerHerdrHint")}</span>
             )}
           </div>
@@ -614,15 +717,64 @@ export default function TerminalTab({ cwd, active }: Props) {
         </div>
       )}
 
-      {/* Terminal surface */}
-      <div
-        ref={containerRef}
-        role="region"
-        aria-label={t("terminal.a11yRegion")}
-        aria-live={status === "ready" ? "off" : "polite"}
-        tabIndex={-1}
-        style={{ flex: 1, minHeight: 0, padding: "4px 6px", overflow: "hidden", outline: "none" }}
-      />
+      {/* Terminal surface (wrapped so the selection toolbar can float without
+          reflowing the xterm grid mid-drag) */}
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <div
+          ref={containerRef}
+          role="region"
+          aria-label={t("terminal.a11yRegion")}
+          aria-live={status === "ready" ? "off" : "polite"}
+          tabIndex={-1}
+          style={{ position: "absolute", inset: 0, padding: "4px 6px", overflow: "hidden", outline: "none" }}
+        />
+        {hasSelection && status === "ready" && mode.kind === "local" && (
+          <div
+            role="toolbar"
+            aria-label={t("terminal.selectionToolbar")}
+            style={{
+              position: "absolute",
+              right: 12,
+              bottom: 12,
+              display: "flex",
+              gap: 6,
+              padding: 5,
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-control)",
+              boxShadow: "var(--shadow-pop)",
+              zIndex: 2,
+            }}
+          >
+            <button
+              onClick={handleInsertSelection}
+              title={t("terminal.insertIntoComposer")}
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "4px 9px", background: "var(--bg-subtle)",
+                border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+                color: "var(--text)", fontSize: 11, cursor: "pointer",
+              }}
+            >
+              <MessageSquarePlus size={13} strokeWidth={2} aria-hidden="true" />
+              {t("terminal.insertIntoComposer")}
+            </button>
+            <button
+              onClick={() => void handleCopySelection()}
+              title={t("terminal.copySelection")}
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "4px 9px", background: "var(--bg-subtle)",
+                border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+                color: "var(--text)", fontSize: 11, cursor: "pointer",
+              }}
+            >
+              <ClipboardCopy size={13} strokeWidth={2} aria-hidden="true" />
+              {t("terminal.copySelection")}
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Non-ready overlays keep the region informative for screen readers */}
       {(status === "disabled" || status === "error" || status === "exited") && (

@@ -1,14 +1,22 @@
 // ============================================================================
-// Terminal manager (Phase 13) — plain-pipe shell sessions for the Terminal tab.
+// Terminal manager (Phase 13; P11 adds opt-in PTY) — shell sessions for the
+// Terminal tab.
 //
-// Safety model (BUILD-PLAN § Security additions, P13):
+// Safety model (BUILD-PLAN § Security additions, P13 + P11):
 // - spawn cwd validated against the SAME allow-roots as /api/files — a
 //   terminal can only ever start where a session/project already may read.
 // - Fixed shell candidates / OMP_WEB_SHELL only. The user's command bytes go
 //   to the shell's stdin — never interpolated into any argv.
-// - No PTY: stdout+stderr merge into one coalesced stream. Full-screen TUI
-//   apps are unsupported (the UI banner documents this); herdr attach mode is
-//   the escape hatch for those.
+// - Default backend is plain pipes: stdout+stderr merge into one coalesced
+//   stream and full-screen TUI apps are unsupported (the UI banner documents
+//   this); herdr attach mode is the escape hatch for those.
+// - PTY is OPT-IN ONLY: `OMP_WEB_TERMINAL_PTY=1` AND a runtime probe that
+//   finds a working node-pty (native, optionalDependency — its install may
+//   legitimately fail). Probe failure or a throwing pty spawn falls back to
+//   plain pipes for that terminal with a logged reason. The env gate lives in
+//   createTerminal BEFORE any pty code runs; the audit discipline, allow-root
+//   check, registry, idle dispose, and scrollback caps are identical for both
+//   backends.
 // - Kill switch: OMP_WEB_DISABLE_TERMINAL=1 refuses every create.
 // - Idle dispose (10 min without output or input) and explicit dispose close
 //   the child; the registry lives on globalThis like rpc-manager's, so Next.js
@@ -21,9 +29,13 @@ import { spawn, type ChildProcess } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { getAllowedFileRoots, isExistingFilePathAllowed, isFilePathAllowed } from "../file-access";
+import { probePtyModule, type PtyProcess } from "./pty-loader";
 
 export const TERMINAL_DISABLED_ENV_VAR = "OMP_WEB_DISABLE_TERMINAL";
 export const TERMINAL_SHELL_ENV_VAR = "OMP_WEB_SHELL";
+/** PTY opt-in: PTY spawns happen ONLY when this is "1" AND the runtime probe
+ * passes. Plain pipes stay the default and the fallback (never implicit). */
+export const TERMINAL_PTY_ENV_VAR = "OMP_WEB_TERMINAL_PTY";
 
 /** Perf budget (BUILD-PLAN table): coalesce terminal output flushes at
  * ≥ 16 KB / 100 ms per terminal before they cross the SSE boundary. */
@@ -39,9 +51,34 @@ export const IDLE_DISPOSE_MS = 10 * 60 * 1000;
  * the exit frame; then the registry entry is purged. */
 export const EXITED_LINGER_MS = 5 * 60 * 1000;
 
+/** Resize bounds (P11): pty resize cols/rows clamp to 2–500 — rejects
+ * degenerate sizes and absurd allocations before they reach node-pty. */
+export const RESIZE_MIN = 2;
+export const RESIZE_MAX = 500;
+
 /** True when the kill switch is armed (env flag wins over everything). */
 export function isTerminalDisabled(env: Record<string, string | undefined> = process.env): boolean {
   return env[TERMINAL_DISABLED_ENV_VAR] === "1";
+}
+
+/** True when PTY was explicitly requested for this spawn ("1" exactly; every
+ * other value — including unset and "true" — stays plain pipes). */
+export function isPtyRequested(env: Record<string, string | undefined> = process.env): boolean {
+  return env[TERMINAL_PTY_ENV_VAR] === "1";
+}
+
+/** Validate a resize request; returns clamped-checked integers or null when
+ * the request is malformed/out of bounds. Pure, unit-tested. */
+export function clampResizeSize(
+  cols: unknown,
+  rows: unknown,
+  min: number = RESIZE_MIN,
+  max: number = RESIZE_MAX,
+): { cols: number; rows: number } | null {
+  const isDim = (v: unknown): v is number =>
+    typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+  if (!isDim(cols) || !isDim(rows)) return null;
+  return { cols, rows };
 }
 
 export class TerminalError extends Error {
@@ -58,12 +95,22 @@ export class TerminalError extends Error {
 // Types
 // ============================================================================
 
-export type TerminalFrame = { t: "d"; b: string } | { t: "exit"; code: number | null };
+export type TerminalBackendMode = "pty" | "pipe";
+
+export type TerminalFrame =
+  | { t: "d"; b: string }
+  | { t: "exit"; code: number | null }
+  /** P11: sent ONLY when a resize was applied in pty mode; the ack never
+   * carries output bytes. Pipe mode ignores resize entirely. */
+  | { t: "resize"; cols: number; rows: number };
 
 export interface TerminalInfo {
   terminalId: string;
   cwd: string;
   shell: string;
+  /** Which backend actually serves this terminal ("pty" only after an
+   * explicit env request AND a passing probe). */
+  mode: TerminalBackendMode;
   createdAt: number;
   lastActivity: number;
   exited: boolean;
@@ -72,9 +119,13 @@ export interface TerminalInfo {
 
 interface TerminalEntry {
   id: string;
-  proc: ChildProcess;
+  /** The plain-pipe child; null in pty mode (where `pty` serves instead). */
+  proc: ChildProcess | null;
+  /** The node-pty handle; null in pipe mode. */
+  pty: PtyProcess | null;
   cwd: string;
   shell: string;
+  mode: TerminalBackendMode;
   createdAt: number;
   lastActivity: number;
   scrollback: string;
@@ -85,6 +136,9 @@ interface TerminalEntry {
   subscribers: Set<(frame: TerminalFrame) => void>;
   idleTimer: ReturnType<typeof setTimeout> | null;
   lingerTimer: ReturnType<typeof setTimeout> | null;
+  /** Resolved by finalizeExit — dispose awaits these instead of reaching into
+   * backend-specific child events. */
+  exitWaiters: Array<() => void>;
   disposed: boolean;
 }
 
@@ -261,7 +315,7 @@ function getRegistry(): Map<string, TerminalEntry> {
     globalThis.__ompTerminals = new Map();
     const cleanup = () => {
       globalThis.__ompTerminals?.forEach((entry) => {
-        try { entry.proc.kill(); } catch { /* already gone */ }
+        try { killEntry(entry); } catch { /* already gone */ }
       });
     };
     process.once("exit", cleanup);
@@ -269,6 +323,16 @@ function getRegistry(): Map<string, TerminalEntry> {
     process.once("SIGTERM", cleanup);
   }
   return globalThis.__ompTerminals;
+}
+
+/** Kill the backend child whichever shape it takes (pipe ChildProcess or
+ * node-pty IPty). Never throws. */
+function killEntry(entry: TerminalEntry): void {
+  if (entry.pty) {
+    try { entry.pty.kill(); } catch { /* already dead */ }
+    return;
+  }
+  try { entry.proc?.kill(); } catch { /* already dead */ }
 }
 
 /** Test hook: drop the registry so a fresh one is created (registry-survival
@@ -284,6 +348,7 @@ export function getTerminalInfo(id: string): TerminalInfo | null {
     terminalId: entry.id,
     cwd: entry.cwd,
     shell: entry.shell,
+    mode: entry.mode,
     createdAt: entry.createdAt,
     lastActivity: entry.lastActivity,
     exited: entry.exited,
@@ -296,6 +361,7 @@ export function listTerminals(): TerminalInfo[] {
     terminalId: entry.id,
     cwd: entry.cwd,
     shell: entry.shell,
+    mode: entry.mode,
     createdAt: entry.createdAt,
     lastActivity: entry.lastActivity,
     exited: entry.exited,
@@ -341,6 +407,21 @@ function emitToEntry(entry: TerminalEntry, frame: TerminalFrame): void {
 // ============================================================================
 // Spawn
 // ============================================================================
+
+/** Logged ONCE per process: the first PTY→pipe fallback carries the reason;
+ * later fallbacks stay silent (BUILD-PLAN P11: "log the reason once"). */
+let ptyFallbackReason: string | null = null;
+
+function notePtyFallback(reason: string): void {
+  if (ptyFallbackReason !== null) return;
+  ptyFallbackReason = reason;
+  console.warn(`[terminal] OMP_WEB_TERMINAL_PTY=1 but PTY is unavailable — ${reason}. Falling back to plain pipes.`);
+}
+
+/** Test hook: clear the once-log (paired with setPtyProbeForTests resets). */
+export function resetPtyFallbackLogForTests(): void {
+  ptyFallbackReason = null;
+}
 
 function trySpawn(candidate: ShellCandidate, cwd: string): Promise<ChildProcess | null> {
   return new Promise((resolve) => {
@@ -395,6 +476,11 @@ function touch(entry: TerminalEntry): void {
  * - `terminal_disabled` — kill switch armed (OMP_WEB_DISABLE_TERMINAL=1)
  * - `access_denied` — cwd outside the /api/files allow-roots
  * - `spawn_failed` — no candidate shell could start
+ *
+ * Backend choice (P11): PTY only when OMP_WEB_TERMINAL_PTY=1 AND the
+ * node-pty probe passes AND the pty spawn does not throw; every other case
+ * falls back to the plain-pipe backend (default). The probe result is
+ * remembered for the process lifetime; the first fallback logs its reason.
  */
 export async function createTerminal(cwd: string): Promise<TerminalInfo> {
   if (isTerminalDisabled()) {
@@ -408,17 +494,55 @@ export async function createTerminal(cwd: string): Promise<TerminalInfo> {
   const candidates = resolveShellCandidates();
   const chosen = firstSpawnableCandidate(candidates) ?? candidates[candidates.length - 1];
   if (!chosen) throw new TerminalError("No shell available", "spawn_failed");
-  const proc = await trySpawn(chosen, cwd);
-  if (!proc) {
-    throw new TerminalError(`Failed to start shell: ${chosen.shell}`, "spawn_failed");
+
+  // ---- PTY attempt (gated; never implicit) --------------------------------
+  let ptyProc: PtyProcess | null = null;
+  if (isPtyRequested()) {
+    const probe = probePtyModule();
+    if (!probe.ok) {
+      notePtyFallback(`node-pty unavailable (${probe.reason})`);
+    } else {
+      // node-pty wants a plain string record (no undefined values).
+      const env: Record<string, string> = {};
+      for (const [key, value] of Object.entries(process.env)) {
+        if (typeof value === "string") env[key] = value;
+      }
+      env.TERM = "xterm-256color";
+      try {
+        ptyProc = probe.module.spawn(chosen.shell, chosen.args, {
+          name: "xterm-256color",
+          cols: 80,
+          rows: 24,
+          cwd,
+          env,
+        });
+      } catch (error) {
+        // Per-spawn fallback — a broken ConPTY here must not take the whole
+        // tab down; the plain-pipe backend still works.
+        notePtyFallback(
+          `pty spawn failed (${error instanceof Error ? `${error.name}: ${error.message}` : String(error)})`,
+        );
+        ptyProc = null;
+      }
+    }
+  }
+
+  let proc: ChildProcess | null = null;
+  if (!ptyProc) {
+    proc = await trySpawn(chosen, cwd);
+    if (!proc) {
+      throw new TerminalError(`Failed to start shell: ${chosen.shell}`, "spawn_failed");
+    }
   }
 
   const id = randomUUID();
   const entry: TerminalEntry = {
     id,
     proc,
+    pty: ptyProc,
     cwd,
     shell: chosen.shell,
+    mode: ptyProc ? "pty" : "pipe",
     createdAt: Date.now(),
     lastActivity: Date.now(),
     scrollback: "",
@@ -428,6 +552,7 @@ export async function createTerminal(cwd: string): Promise<TerminalInfo> {
     subscribers: new Set(),
     idleTimer: null,
     lingerTimer: null,
+    exitWaiters: [],
     disposed: false,
   };
 
@@ -441,17 +566,24 @@ export async function createTerminal(cwd: string): Promise<TerminalInfo> {
   });
   entry.coalescer = coalescer;
 
-  const onOutput = (chunk: Buffer) => coalescer.push(chunk);
-  proc.stdout?.on("data", onOutput);
-  proc.stderr?.on("data", onOutput);
+  if (ptyProc) {
+    ptyProc.onData((data) => coalescer.push(Buffer.from(data, "utf8")));
+    ptyProc.onExit((event) => {
+      finalizeExit(entry, typeof event?.exitCode === "number" ? event.exitCode : null);
+    });
+  } else if (proc) {
+    const onOutput = (chunk: Buffer) => coalescer.push(chunk);
+    proc.stdout?.on("data", onOutput);
+    proc.stderr?.on("data", onOutput);
 
-  proc.once("error", () => {
-    // Spawn succeeded but the child later failed to launch a program.
-    finalizeExit(entry, null);
-  });
-  proc.once("close", (code) => {
-    finalizeExit(entry, typeof code === "number" ? code : null);
-  });
+    proc.once("error", () => {
+      // Spawn succeeded but the child later failed to launch a program.
+      finalizeExit(entry, null);
+    });
+    proc.once("close", (code) => {
+      finalizeExit(entry, typeof code === "number" ? code : null);
+    });
+  }
 
   getRegistry().set(id, entry);
   scheduleIdleDispose(entry);
@@ -467,6 +599,9 @@ function finalizeExit(entry: TerminalEntry, code: number | null): void {
   try { entry.coalescer?.dispose(); } catch { /* never block exit */ }
   entry.coalescer = null;
   emitToEntry(entry, { t: "exit", code });
+  for (const waiter of entry.exitWaiters.splice(0)) {
+    try { waiter(); } catch { /* waiter gone */ }
+  }
   if (entry.idleTimer) {
     clearTimeout(entry.idleTimer);
     entry.idleTimer = null;
@@ -484,7 +619,8 @@ function finalizeExit(entry: TerminalEntry, code: number | null): void {
 // ============================================================================
 
 /** Write raw bytes (keyboard data incl. escape sequences, bracketed paste) to
- * the shell's stdin. Returns false when the child is gone. */
+ * the shell's stdin (pipe backend) or the pty (pty backend). Returns false
+ * when the child is gone. */
 export function writeTerminalInput(id: string, data: string): boolean {
   const entry = getRegistry().get(id);
   if (!entry) throw new TerminalError("Terminal not found", "terminal_not_found");
@@ -493,15 +629,45 @@ export function writeTerminalInput(id: string, data: string): boolean {
   }
   touch(entry);
   scheduleIdleDispose(entry);
+  if (entry.pty) {
+    try {
+      entry.pty.write(data);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   try {
-    return entry.proc.stdin != null && entry.proc.stdin.write(Buffer.from(data, "utf8"));
+    return entry.proc?.stdin != null && entry.proc.stdin.write(Buffer.from(data, "utf8"));
   } catch {
     return false;
   }
 }
 
-/** Kill the shell and drop the registry entry. Resolves after the child's
- * close event so callers that immediately respawn don't overlap exits. */
+/** Resize the pty (P11). Pipe mode has no window to resize and returns false
+ * (a no-op, never an error). In pty mode, applies the size and acknowledges
+ * to subscribers with a `{t:"resize",cols,rows}` frame — the ack rides the
+ * SSE contract only in pty mode. */
+export function resizeTerminal(id: string, cols: number, rows: number): boolean {
+  const entry = getRegistry().get(id);
+  if (!entry) throw new TerminalError("Terminal not found", "terminal_not_found");
+  if (entry.exited || entry.disposed) {
+    throw new TerminalError("Terminal has exited", "terminal_exited");
+  }
+  if (!entry.pty) return false;
+  touch(entry);
+  scheduleIdleDispose(entry);
+  try {
+    entry.pty.resize(cols, rows);
+  } catch {
+    return false;
+  }
+  emitToEntry(entry, { t: "resize", cols, rows });
+  return true;
+}
+
+/** Kill the shell and drop the registry entry. Resolves after the backend's
+ * exit event so callers that immediately respawn don't overlap exits. */
 export async function disposeTerminal(id: string): Promise<boolean> {
   const entry = getRegistry().get(id);
   if (!entry) return false;
@@ -517,23 +683,16 @@ export async function disposeTerminal(id: string): Promise<boolean> {
   getRegistry().delete(id);
   entry.subscribers.clear();
   if (entry.exited) return true;
-  const proc = entry.proc;
   const exited = new Promise<void>((resolve) => {
-    let settled = false;
-    const done = () => {
-      if (!settled) {
-        settled = true;
-        resolve();
-      }
-    };
-    proc.once("close", done);
-    setTimeout(done, 2_000).unref?.();
+    if (entry.exited) {
+      resolve();
+      return;
+    }
+    entry.exitWaiters.push(resolve);
+    // Backend kill is best-effort; never hang dispose past this ceiling.
+    setTimeout(resolve, 2_000).unref?.();
   });
-  try {
-    proc.kill();
-  } catch {
-    // Already dead.
-  }
+  killEntry(entry);
   await exited;
   return true;
 }

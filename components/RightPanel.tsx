@@ -474,7 +474,7 @@ export const RightPanel = memo(function RightPanel({
             mounted afterwards so the shell survives tab switches. */}
         <div style={{ display: terminalOpened ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
           {activeCwd ? (
-            <TerminalTab cwd={activeCwd} active={rightView === "terminal" && rightPanelOpen} />
+            <TerminalTab cwd={activeCwd} active={rightView === "terminal" && rightPanelOpen} composerDraftKey={composerDraftKey} />
           ) : (
             <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, textAlign: "center" }}>
               <SquareTerminal size={26} strokeWidth={1.5} aria-hidden="true" style={{ color: "var(--text-dim)" }} />
