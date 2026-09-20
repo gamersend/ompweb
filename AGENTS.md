@@ -1113,7 +1113,7 @@ gesture — the autoplay-unlock discipline from `useAudio`.
   success; exhaustion lands in the existing `failed` state. User stops never
   reconnect. Still no relay, no API key, never "Realtime".
 
-### mem0 memory browser (P8)
+### mem0 memory browser (W2-P8)
 - Cross-agent shared memory (the omp `mem0-memory` extension's unauthenticated
   HTTP API, ground truth at `~/.omp/agent/extensions/mem0-memory/index.ts`):
   `POST /search {query,user_id,limit} → {result:"<markdown>"}`,
