@@ -16,8 +16,10 @@
  */
 
 // Bump on any change to the precache list or shell assets; old buckets are
-// deleted on activate. (Static file — no build-time templating.)
-const CACHE_VERSION = "ompweb-shell-v1";
+// deleted on activate. (Static file — no build-time templating.) Bumped to v2
+// for the Web Push handlers below (wave 2 P2); the cache-rule code is
+// untouched.
+const CACHE_VERSION = "ompweb-shell-v2";
 const NAVIGATION_FALLBACK = "/";
 
 const PRECACHE_URLS = [
@@ -123,4 +125,51 @@ self.addEventListener("fetch", (event) => {
       return hit ?? network;
     }),
   );
+});
+
+// ─── Web Push (BUILD-PLAN wave 2 P2) ─────────────────────────────────────────
+// The server payload is {id, kind, title, body, sessionId?} — already
+// redacted and byte-capped server-side (lib/push/payload.ts). tag = row id so
+// a re-delivered row REPLACES its notification instead of stacking;
+// renotify stays false (an already-shown notification is not re-alerted).
+self.addEventListener("push", (event) => {
+  let payload = null;
+  try {
+    payload = event.data ? event.data.json() : null;
+  } catch {
+    payload = null; // not JSON → nothing sensible to show
+  }
+  if (!payload || typeof payload !== "object" || typeof payload.title !== "string" || payload.title === "") {
+    return;
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: typeof payload.body === "string" ? payload.body : "",
+      tag: typeof payload.id === "string" && payload.id !== "" ? payload.id : undefined,
+      renotify: false,
+      data: { sessionId: typeof payload.sessionId === "string" ? payload.sessionId : null },
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+    }),
+  );
+});
+
+// Click: focus an existing app window if one is open, otherwise open the app
+// on the session the row came from. Focused windows also get a postMessage so
+// a future listener can deep-link without a navigation.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const sessionId = event.notification.data && typeof event.notification.data.sessionId === "string"
+    ? event.notification.data.sessionId
+    : null;
+  const target = sessionId ? `/?session=${encodeURIComponent(sessionId)}` : "/";
+  event.waitUntil((async () => {
+    const windowClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of windowClients) {
+      await client.focus();
+      client.postMessage({ type: "ompweb-push-click", sessionId });
+      return;
+    }
+    await self.clients.openWindow(target);
+  })());
 });

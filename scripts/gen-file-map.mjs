@@ -28,6 +28,7 @@ const LIB_SUBDIRS = [
   "i18n",
   "search",
   "notify",
+  "push",
   "checkpoints",
   "snippets",
   "insights",

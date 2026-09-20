@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from "path";
 import { getAgentDir } from "../omp/paths";
 import { type NotifyKind, type NotifyRow, WEBHOOK_FAILURE_ID_PREFIX } from "./notify-shared";
+import { dispatchPushForRow } from "../push/send";
 
 // ============================================================================
 // Server-side notification feed (BUILD-PLAN Phase 2 / firedeck notifications
@@ -213,6 +214,17 @@ export function pushNotifyRow(input: NotifyRowInput): NotifyRow | null {
   }
   state.dirty = true;
   scheduleFlush();
+  // Web Push (wave 2 P2): the SINGLE push choke point. This is the one place
+  // a row is born, so every emitter / SSE subscriber count still maps to at
+  // most one OS push (dispatchPushForRow is fire-and-forget and internally
+  // gated on the push config + per-row dedup). It must never be able to break
+  // the feed append — hence the belt-and-braces try/catch around an already
+  // non-throwing dispatcher.
+  try {
+    dispatchPushForRow(row);
+  } catch {
+    // ignore — the feed row is already stored
+  }
   return row;
 }
 

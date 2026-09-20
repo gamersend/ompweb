@@ -40,6 +40,14 @@ export interface NotifyWebhookConfig {
   events: NotifyKind[];
 }
 
+/** Web Push gating (BUILD-PLAN wave 2 P2): which feed kinds also go out as OS
+ * push notifications. `enabled` flips on with the first successful
+ * /api/push/register and off when the last subscription is removed. */
+export interface NotifyPushConfig {
+  enabled: boolean;
+  events: NotifyKind[];
+}
+
 export interface QuietHours {
   /** "HH:MM" local time, inclusive start. */
   from: string;
@@ -51,6 +59,9 @@ export interface NotifyConfig {
   version: 1;
   browser: boolean;
   webhook: NotifyWebhookConfig;
+  /** Push section: defaults to disabled with every kind allowed. Pre-push
+   * config files gain it on migrate (enabled: false). */
+  push: NotifyPushConfig;
   quietHours?: QuietHours;
 }
 
@@ -77,6 +88,10 @@ export function defaultNotifyConfig(): NotifyConfig {
       provider: "generic",
       url: "",
       events: ["agent_end", "approval", "error"],
+    },
+    push: {
+      enabled: false,
+      events: [...NOTIFY_KINDS],
     },
   };
 }
@@ -174,6 +189,14 @@ export function migrateNotifyConfig(raw: unknown): NotifyConfig | null {
     ? { from: quietRaw.from, to: quietRaw.to }
     : undefined;
 
+  // Push section is additive (wave 2): absent → disabled, every kind allowed.
+  const pushRaw = (source.push && typeof source.push === "object" && !Array.isArray(source.push))
+    ? source.push as Record<string, unknown>
+    : {};
+  const pushEvents = Array.isArray(pushRaw.events)
+    ? pushRaw.events.filter((event): event is NotifyKind => (NOTIFY_KINDS as readonly string[]).includes(String(event)))
+    : defaultNotifyConfig().push.events;
+
   return {
     version: 1,
     browser: source.browser === true,
@@ -182,6 +205,10 @@ export function migrateNotifyConfig(raw: unknown): NotifyConfig | null {
       provider,
       url,
       events: events.length > 0 ? events : defaultNotifyConfig().webhook.events,
+    },
+    push: {
+      enabled: pushRaw.enabled === true,
+      events: pushEvents.length > 0 ? pushEvents : defaultNotifyConfig().push.events,
     },
     ...(quietHours ? { quietHours } : {}),
   };
@@ -204,6 +231,10 @@ export interface NotifyConfigUpdate {
     url?: string;
     events?: NotifyKind[];
   };
+  push?: {
+    enabled?: boolean;
+    events?: NotifyKind[];
+  };
   quietHours?: QuietHours | null;
 }
 
@@ -211,7 +242,7 @@ export type NotifyConfigUpdateResult =
   | { ok: true; config: NotifyConfig }
   | { ok: false; errors: string[] };
 
-/** Validate + apply a PUT body onto the stored config. The URL field is
+/** Validate + apply a PUT body onto the stored config. The webhook URL field is
  * special: an omitted url keeps the stored one; an explicit "" clears it;
  * a new value must pass validateWebhookUrl. */
 export function applyNotifyConfigUpdate(current: NotifyConfig, update: NotifyConfigUpdate): NotifyConfigUpdateResult {
@@ -220,7 +251,25 @@ export function applyNotifyConfigUpdate(current: NotifyConfig, update: NotifyCon
     version: 1,
     browser: typeof update.browser === "boolean" ? update.browser : current.browser,
     webhook: { ...current.webhook },
+    push: { ...current.push },
   };
+
+  if (update.push && typeof update.push === "object") {
+    const push = update.push;
+    if (push.enabled !== undefined) {
+      if (typeof push.enabled === "boolean") next.push.enabled = push.enabled;
+      else errors.push("invalid_enabled");
+    }
+    if (push.events !== undefined) {
+      if (Array.isArray(push.events)) {
+        const events = [...new Set(push.events.filter((event): event is NotifyKind => (NOTIFY_KINDS as readonly string[]).includes(String(event))))];
+        if (events.length === 0) errors.push("invalid_events");
+        else next.push.events = events;
+      } else {
+        errors.push("invalid_events");
+      }
+    }
+  }
 
   if (update.webhook && typeof update.webhook === "object") {
     const hook = update.webhook;

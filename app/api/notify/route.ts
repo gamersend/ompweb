@@ -36,6 +36,12 @@ function maskedConfig(config: NotifyConfig) {
       host: mask.host,
       url: "",
     },
+    // Push section (wave 2 P2): kinds + enabled only — the VAPID keys and the
+    // subscription list live behind /api/push/* and never ride this payload.
+    push: {
+      enabled: config.push.enabled,
+      events: config.push.events,
+    },
     ...(config.quietHours ? { quietHours: config.quietHours } : {}),
   };
 }
@@ -72,6 +78,9 @@ export async function PUT(req: Request): Promise<NextResponse> {
     browser: typeof source.browser === "boolean" ? source.browser : undefined,
     webhook: source.webhook && typeof source.webhook === "object" && !Array.isArray(source.webhook)
       ? source.webhook as Record<string, unknown>
+      : undefined,
+    push: source.push && typeof source.push === "object" && !Array.isArray(source.push)
+      ? source.push as Record<string, unknown>
       : undefined,
     quietHours: source.quietHours === null
       ? null

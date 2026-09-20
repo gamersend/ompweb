@@ -1,12 +1,19 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { FlaskConical, Send, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { BellRing, FlaskConical, Send, X } from "lucide-react";
 import { toast } from "./ui/toast";
 import { useI18n } from "@/lib/i18n";
 import { useNotifyFeed } from "@/hooks/useNotifyFeed";
 import { projectLabel } from "./AppShell-layout";
 import type { NotifyKind } from "@/lib/notify/notify-shared";
+import {
+  decodeBase64UrlToUint8Array,
+  detectPushCapability,
+  isIOSUserAgent,
+  isStandaloneDisplay,
+  type PushCapability,
+} from "@/lib/push/client";
 
 // ============================================================================
 // Settings → Notifications tab section (BUILD-PLAN Phase 2):
@@ -105,8 +112,46 @@ export function NotificationsConfig() {
   const [quietFrom, setQuietFrom] = useState("");
   const [quietTo, setQuietTo] = useState("");
   const [testBusy, setTestBusy] = useState(false);
+  // Web Push (wave 2 P2): capability ladder + this-device subscription state.
+  const [pushCapability, setPushCapability] = useState<PushCapability | null>(null);
+  const [pushCount, setPushCount] = useState<number | null>(null);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushTestBusy, setPushTestBusy] = useState(false);
 
   const config = feed.config;
+
+  const refreshPushState = useCallback(async () => {
+    try {
+      const response = await fetch("/api/push/status", { cache: "no-store" });
+      const payload = await response.json().catch(() => null) as { success?: boolean; data?: { subscriptionCount?: number } } | null;
+      if (payload?.success && payload.data) setPushCount(payload.data.subscriptionCount ?? 0);
+    } catch {
+      // status stays unknown; the toggle still works off the local subscription
+    }
+    try {
+      const registration = await navigator.serviceWorker.getRegistration();
+      const subscription = await registration?.pushManager.getSubscription();
+      setPushSubscribed(!!subscription);
+    } catch {
+      setPushSubscribed(false);
+    }
+  }, []);
+
+  // Capability detection on mount only (browser APIs, never during SSR).
+  useEffect(() => {
+    const capability = detectPushCapability({
+      hasServiceWorker: "serviceWorker" in navigator,
+      hasPushManager: "PushManager" in window,
+      isIOS: isIOSUserAgent(navigator.userAgent, navigator.maxTouchPoints ?? 0),
+      isStandalone: isStandaloneDisplay(
+        typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches,
+        (navigator as Navigator & { standalone?: boolean }).standalone === true,
+      ),
+    });
+    setPushCapability(capability);
+    if (capability.supported) void refreshPushState();
+  }, [refreshPushState]);
 
   const handleBrowserToggle = useCallback(async (next: boolean) => {
     if (next) {
@@ -176,6 +221,91 @@ export function NotificationsConfig() {
     if (!result.ok) toast.error(t("notifySettings.saveFailed", { detail: result.error ?? "" }));
   }, [config, feed, t]);
 
+  // ── Web Push (wave 2 P2) ──────────────────────────────────────────────────
+  // Enable: permission (in-gesture) → subscribe with the server's public VAPID
+  // key → register server-side. Disable: unsubscribe + unregister. All steps
+  // surface failures as toasts; the row state refreshes from the server.
+  const handlePushToggle = useCallback(async (next: boolean) => {
+    if (!pushCapability?.supported) return;
+    setPushBusy(true);
+    try {
+      if (next) {
+        // Permission must be requested from this gesture, like the browser ping.
+        const permission = await feed.requestBrowserPermission();
+        if (permission !== "granted") {
+          toast.error(t("push.blocked"));
+          return;
+        }
+        const statusResponse = await fetch("/api/push/status", { cache: "no-store" });
+        const statusPayload = await statusResponse.json().catch(() => null) as { success?: boolean; data?: { publicKey?: string | null } } | null;
+        const publicKey = statusPayload?.data?.publicKey;
+        if (!statusPayload?.success || !publicKey) {
+          toast.error(t("push.enableFailed", { detail: "no VAPID key" }));
+          return;
+        }
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: decodeBase64UrlToUint8Array(publicKey),
+        });
+        const response = await fetch("/api/push/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscription: subscription.toJSON() }),
+        });
+        const payload = await response.json().catch(() => null) as { success?: boolean; error?: string } | null;
+        if (!response.ok || !payload?.success) {
+          // Register failed → roll the browser subscription back so local and
+          // server state agree.
+          await subscription.unsubscribe().catch(() => {});
+          toast.error(t("push.enableFailed", { detail: payload?.error ?? `HTTP ${response.status}` }));
+          return;
+        }
+      } else {
+        const registration = await navigator.serviceWorker.getRegistration();
+        const subscription = await registration?.pushManager.getSubscription();
+        if (subscription) {
+          const endpoint = subscription.endpoint;
+          await subscription.unsubscribe().catch(() => {});
+          await fetch("/api/push/unregister", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint }),
+          }).catch(() => {});
+        }
+      }
+      await refreshPushState();
+      void feed.refresh();
+    } catch (error) {
+      toast.error(t("push.enableFailed", { detail: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setPushBusy(false);
+    }
+  }, [feed, pushCapability, refreshPushState, t]);
+
+  const handlePushTest = useCallback(async () => {
+    setPushTestBusy(true);
+    try {
+      const response = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const payload = await response.json().catch(() => null) as { success?: boolean; error?: string; data?: { delivered?: number; pruned?: number; subscriptionCount?: number } } | null;
+      if (!payload?.success || !payload.data) {
+        toast.error(t("push.testFail", { detail: payload?.error ?? `HTTP ${response.status}` }));
+        return;
+      }
+      if ((payload.data.subscriptionCount ?? 0) === 0) {
+        toast.info(t("push.testNone"));
+        return;
+      }
+      toast.success(t("push.testOk", { delivered: payload.data.delivered ?? 0, pruned: payload.data.pruned ?? 0 }));
+    } finally {
+      setPushTestBusy(false);
+    }
+  }, [t]);
+
   const handleTest = useCallback(async () => {
     setTestBusy(true);
     try {
@@ -224,6 +354,41 @@ export function NotificationsConfig() {
         />
         <div aria-live="polite" style={{ fontSize: 11, color: "var(--text-dim)", paddingLeft: 12 }}>
           {t(`notifySettings.permission.${feed.browserPermission}`)}
+        </div>
+      </section>
+
+      {/* Web Push (wave 2 P2): OS push while no tab is open. Capability is
+          detected first — unsupported browsers and non-installed iOS Safari
+          get an explanation instead of a dead toggle. */}
+      <section style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, border: "1px solid var(--border)", borderRadius: "var(--radius-card)", background: "var(--bg-panel)" }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{t("push.title")}</div>
+          <div style={{ marginTop: 2, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.45 }}>{t("push.desc")}</div>
+        </div>
+        <ToggleRow
+          id="notify-push-toggle"
+          checked={pushSubscribed}
+          disabled={!pushCapability?.supported || pushBusy}
+          label={pushSubscribed ? t("push.disable") : t("push.enable")}
+          description={
+            pushCapability === null ? ""
+              : !pushCapability.supported
+                ? (pushCapability.reason === "ios-needs-install" ? t("push.unsupported.ios") : t("push.unsupported"))
+                : feed.browserPermission === "denied"
+                  ? t("push.blocked")
+                  : t("push.count", { count: pushCount ?? 0 })
+          }
+          onChange={(next) => void handlePushToggle(next)}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => void handlePushTest()}
+            disabled={!pushCapability?.supported || pushTestBusy}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg-subtle)", color: "var(--text)", cursor: pushCapability?.supported && !pushTestBusy ? "pointer" : "not-allowed", fontSize: 12 }}
+          >
+            <BellRing size={12} aria-hidden="true" /> {t("push.test")}
+          </button>
         </div>
       </section>
 

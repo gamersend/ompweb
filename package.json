@@ -43,7 +43,7 @@
     "build": "next build --webpack",
     "start": "next start -H 127.0.0.1 -p 30177",
     "start:lan": "next start -H 0.0.0.0 -p 30177",
-    "test": "node --experimental-strip-types --test lib/*.test.mjs lib/omp/*.test.mjs lib/checkpoints/*.test.mjs lib/scheduler/*.test.mjs lib/search/*.test.mjs lib/live/*.test.mjs lib/insights/*.test.mjs lib/snippets/*.test.mjs lib/notify/*.test.mjs lib/terminal/*.test.mjs components/*.test.mjs components/ui/*.test.mjs hooks/*.test.mjs bin/*.test.mjs",
+    "test": "node --experimental-strip-types --test lib/*.test.mjs lib/omp/*.test.mjs lib/push/*.test.mjs lib/checkpoints/*.test.mjs lib/scheduler/*.test.mjs lib/search/*.test.mjs lib/live/*.test.mjs lib/insights/*.test.mjs lib/snippets/*.test.mjs lib/notify/*.test.mjs lib/terminal/*.test.mjs components/*.test.mjs components/ui/*.test.mjs hooks/*.test.mjs bin/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "file-map": "node scripts/gen-file-map.mjs",
@@ -69,6 +69,7 @@
     "@xterm/xterm": "^6.0.0",
     "cmdk": "^1.1.1",
     "dbus-next": "^0.10.2",
+    "jiti": "^2.7.0",
     "katex": "^0.16.47",
     "lucide-react": "^1.39.0",
     "mammoth": "^1.12.2",
@@ -84,8 +85,8 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "undici": "8.10.1",
-    "yaml": "^2",
-    "jiti": "^2.7.0"
+    "web-push": "^3.6.7",
+    "yaml": "^2"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",

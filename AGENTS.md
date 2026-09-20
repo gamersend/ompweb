@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 73 API routes, 79 components, 22 hooks, 111 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/`, 13 `bin/` scripts.
+Counts: 78 API routes, 80 components, 22 hooks, 113 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -127,6 +127,7 @@ app/api/
   models-config/catalog/route.ts  GET models.dev catalog for "add model" presets (1 h cache)
   usage/route.ts                  GET usage report (range/granularity/project/from/to/refresh)
   provider-usage/route.ts         GET provider rate-limit windows (omp usage --json --redact)
+  memory/route.ts                 GET health probe / ?q= search proxy (results redacted server-side) | POST {action:"remember"} note proxy
   stt/route.ts                    POST audio → transcription via env-configured endpoint
   tts/route.ts                    POST text → speech via env-configured endpoint (audio/mpeg)
   terminal/route.ts               POST spawn a shell child in {cwd} | GET ?id= info | DELETE ?id= dispose
@@ -216,6 +217,7 @@ lib/
   prompt-history.ts       global prompt history in localStorage (cap 200, project-filtered recall)
   bookmarks.ts            per-session localStorage bookmarks (cap 200, notes, cross-tab sync)
   composer-prefs.ts       submit-during-run behavior (steer/queue) preference
+  composer-insert.ts      window-event bus pushing text into the active composer (palette-bus style, never sends)
   message-display.ts      which assistant blocks are visible (empty thinking collapse etc.)
   markdown.ts             shared markdown helpers (math detection, plugin assembly)
   frontmatter.ts          markdown frontmatter parse (agent/skill files)
@@ -333,6 +335,7 @@ components/
   MarkdownBody.tsx    markdown renderer
   MarkdownCode.tsx    shared `code` renderer (MarkdownBody + FileViewer)
   MermaidBlock.tsx    mermaid diagram rendering inside markdown
+  MemoryPanel.tsx     shared mem0 memory browser in the right panel (search, redacted markdown cards, copy/insert, health dot)
   SyntaxHighlightedCode.tsx  Prism-highlighted code block
   ImageLightbox.tsx   click-to-preview lightbox for chat images (ClickableImage)
   RightPanel.tsx      resizable right panel (file tree/viewer, git changes tabs)
@@ -1109,6 +1112,101 @@ gesture — the autoplay-unlock discipline from `useAudio`.
   phase), keeping mic and transcript; the panel re-sends ① context on
   success; exhaustion lands in the existing `failed` state. User stops never
   reconnect. Still no relay, no API key, never "Realtime".
+
+### mem0 memory browser (P8)
+- Cross-agent shared memory (the omp `mem0-memory` extension's unauthenticated
+  HTTP API, ground truth at `~/.omp/agent/extensions/mem0-memory/index.ts`):
+  `POST /search {query,user_id,limit} → {result:"<markdown>"}`,
+  `POST /note {title?,content} → {written:path}`, `GET /health → {ok}`.
+  `lib/memory/mem0.ts` is the only module that knows the endpoint: base
+  `OMP_MEM0_URL` (default `https://mem0.u.red.mba`), user `OMP_MEM0_USER`
+  (default `blaze`), disabled (503 `memory_not_configured`) via
+  `OMP_WEB_DISABLE_MEMORY=1` or an explicitly empty `OMP_MEM0_URL`. The
+  extension's timing contract is kept verbatim: 20 s `AbortSignal.timeout` +
+  22 s overall deadline race.
+- `GET /api/memory` without `q` is a health probe answering
+  `{configured, healthy}` only — the base URL is NEVER echoed (it could carry
+  credentials). `?q=` proxies search and REDACTS the result through
+  `lib/search/redact.ts` before transport (raw text capped 128 KB, query
+  2k chars, limit clamped 1–50, default 10); the client never sees
+  pre-redaction bytes. `POST {action:"remember", title?, content}` proxies
+  notes (64 KiB wire body via `parseJsonWithinLimit`, content 16 KB, title
+  200 chars). Errors map to `memory_not_configured` / `memory_unreachable` /
+  `memory_bad_request`; logs carry only the code, never bodies; nothing is
+  cached to disk.
+- Right panel gains a pinned "Memory" tab (`RightPanelView` + `TabBar`
+  `memorySelected`, lazy-mounted `components/MemoryPanel.tsx` like the
+  terminal): health dot in the view header, search box, results split into
+  markdown cards by `splitMemoryCards` (HR sections, else one card per list
+  item) rendered through `MarkdownBody` with `suppressImages`, per-card Copy
+  and "Insert into composer", and a persistent disclosure line that the
+  service is shared fleet-wide and results are sensitive.
+- **Composer insert seam** (`lib/composer-insert.ts`): tiny window-event bus
+  (palette-bus style) so deep surfaces can append a fenced context block to
+  the ACTIVE composer without imports or prop drilling. `ChatInput` listens
+  (only the composer whose `draftKey` matches the event target answers — the
+  main pane in split view) and appends via `setValue`, which the existing
+  draft-persistence effect saves; it focuses the input and NEVER sends.
+  AppShell derives `composerDraftKey` with the same formula ChatWindow uses
+  (`session?.id ?? "new:<cwd>"`) and passes it RightPanel → MemoryPanel.
+  Later phases reuse this bus.
+
+### Quick-launch toolbar (W2-P3)
+- `projects.json` is schema v2: `ProjectLaunchConfig` may carry `prompt`
+  (≤ 4 KB), `model` ("provider:modelId"), `thinkingLevel`, and
+  `toolsPreset` ("none"|"default"|"full"). Reading the registry migrates
+  v1→v2 in memory (`migrateRegistry`); every invalid new field is DROPPED at
+  parse AND at `/api/projects` write time — never fatal, never partial-loss
+  of the valid remainder.
+- A launch profile's `prompt` is NOT a snippet: it is sent verbatim as the
+  spawned session's first message — no `$PLACEHOLDER` expansion, ever.
+  Empty/absent prompt spawns without a first message (`ensure_session`).
+- Chip → palette → spawn all go through `AppShell.handleLaunchProject` →
+  POST `/api/agent/new` (the `lib/spawn-session.ts` adapter) with the profile
+  mapped by `lib/launch-profile.ts` `launchCommandFields`. Never raw RPC,
+  never a bespoke spawn body. `spawnNewSession` also accepts explicit
+  `launch: {model, thinkingLevel, toolsPreset}` for server callers; explicit
+  command values always beat profile values; invalid profile values never
+  reach the child.
+- Surfaces: sidebar header `LaunchChipRow` (one chip per profiled project,
+  dot = spawn shortcuts present) renders from the sidebar's already-loaded
+  project list — never a registry fetch on the render path. The command
+  palette's Launch group reuses the SAME list via `workspaceOptions` props —
+  the palette never fetches `/api/projects` itself.
+- Spawn failures toast (`launch.failed`); the adopting session flows through
+  `handleSessionCreated` (select + hydrate + `?session=` URL), the same path
+  as a composer-created session. All strings live under `launch.*` ×3 locales.
+
+### Web Push (VAPID) (`lib/push/`, `/api/push/*`, sw.js, NotificationsConfig) (W2-P2)
+- Delivery hooks the SINGLE choke point — `feed.ts` `pushNotifyRow` →
+  `dispatchPushForRow` (fire-and-forget, never per-emitter/per-SSE-subscriber).
+  Gate (pure, `lib/push/gate.ts`): config `push.enabled` + kind allowlist +
+  `wherr-` loop guard + bounded per-row-id dedup + quiet hours (suppression
+  mirrors the browser ping; feed still records).
+- Payload (`lib/push/payload.ts`) is `{id, kind, title, body, sessionId?}`,
+  redacted via `lib/search/redact.ts`, body ≤ 300 chars, JSON ≤ 4 KB — never
+  ship raw RPC error text or local paths.
+- Stores: `~/.omp/agent/web-push-keys.json` (VAPID pair, first-enable
+  generation via `/api/push/status`, mode 0600, atomic) and
+  `web-push-subs.json` (entries keyed by sha256(endpoint), cap 20 evict
+  oldest, pruned on 404/410). Private key/keys never echo over GET.
+- `web-push` is loaded via `createRequire` (`lib/push/webpush-loader.ts`) —
+  never a static import into the Next bundle. Send: 5 s timeout, 1 retry,
+  same fire-and-forget discipline as `lib/notify/webhook.ts`.
+- Routes: `POST /api/push/register` (enables the config push section),
+  `POST /api/push/unregister` (last removal disables it), `GET
+  /api/push/status` (public key + count), `POST /api/push/test` (same send
+  path). All `{success,data}`, nodejs, bounded bodies, no-store.
+- sw.js owns `push` (tag = row id, renotify false) + `notificationclick`
+  (focus existing client, else open `/?session=<id>`); CACHE_VERSION bumped
+  on handler changes; the `lib/pwa-cache-rules.test.mjs` drift guard also
+  pins the handlers + version wiring.
+- Client flow (`components/NotificationsConfig.tsx`): capability-detect first
+  (no PushManager → hint; iOS Safari needs the INSTALLED PWA, 16.4+ → hint),
+  permission only from the toggle gesture, subscribe with the server public
+  key (base64url→Uint8Array via `lib/push/client.ts`), register, rollback
+  unsubscribe on failure. All strings in `push.*` ×3 locales.
+
 ## omp Session File Format (v3)
 
 Location: `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`

@@ -34,6 +34,9 @@ export interface NotifyFeedConfigView {
   version: 1;
   browser: boolean;
   webhook: MaskedNotifyWebhook;
+  /** Web Push section (wave 2 P2): kinds + enabled only. Keys/subscriptions
+   * live behind /api/push/* and never ride this payload. */
+  push?: { enabled: boolean; events: NotifyKind[] };
   quietHours?: { from: string; to: string };
 }
 
@@ -96,6 +99,10 @@ export interface NotifyConfigUpdate {
     enabled?: boolean;
     provider?: MaskedNotifyWebhook["provider"];
     url?: string;
+    events?: NotifyKind[];
+  };
+  push?: {
+    enabled?: boolean;
     events?: NotifyKind[];
   };
   quietHours?: { from: string; to: string } | null;
