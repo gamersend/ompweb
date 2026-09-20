@@ -5,6 +5,13 @@ import { getSubmitDuringRunBehavior, setSubmitDuringRunBehavior, type SubmitDuri
 import { clearPromptHistory, promptHistoryCount as promptHistoryCountStored } from "@/lib/prompt-history";
 import { isSyncEnabled, setSyncEnabled } from "@/lib/client-state-sync";
 import { readTtsEnabled, unlockSharedTtsAudio, writeTtsEnabled } from "@/hooks/useTts";
+import {
+  readElResultsEnabled,
+  readElVoiceId,
+  normalizeElVoiceId,
+  writeElResultsEnabled,
+  writeElVoiceId,
+} from "@/lib/live/el-prefs";
 import dynamic from "next/dynamic";
 import { ArrowLeft, Copy, Download, ExternalLink, RefreshCw, RotateCcw, Search, Monitor, Play, Square, Trash2, X } from "lucide-react";
 import { Alert } from "@/components/ui/field";
@@ -143,6 +150,9 @@ const SETTING_INDEX: SettingIndexEntry[] = [
   { id: "message-during-active-run", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.messageDuringActiveRun", descKey: "settingsConfig.messageDuringActiveRunDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Message during active run", fallbackDesc: "What composer does on submit while agent runs. Steer interrupts; Queue follow-up delivers after finish.", scope: "UI" },
   { id: "clear-prompt-history", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.promptHistory", descKey: "settingsConfig.promptHistoryDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Global prompt history", fallbackDesc: "Composer recall across sessions. Clearing removes every stored prompt.", scope: "UI" },
   { id: "sync-across-devices", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "sync.label", descKey: "sync.desc", fallbackSection: "Interface & Behavior", fallbackLabel: "Sync across devices", fallbackDesc: "Keep bookmarks, prompt history, last-open sessions, and composer preferences identical on every device that opens this ompweb server.", scope: "UI" },
+  // Live voice (voice round 3)
+  { id: "speak-results-elevenlabs", tab: "general", sectionKey: "settingsConfig.liveVoice", labelKey: "settingsConfig.speakResultsElevenLabs", descKey: "settingsConfig.speakResultsElevenLabsDesc", fallbackSection: "Live voice", fallbackLabel: "Speak results with ElevenLabs", fallbackDesc: "Delegated run results are also spoken through the server's ElevenLabs voice. Needs ELEVENLABS_API_KEY on the server.", scope: "UI" },
+  { id: "el-result-voice", tab: "general", sectionKey: "settingsConfig.liveVoice", labelKey: "settingsConfig.elResultVoice", descKey: "settingsConfig.elResultVoiceDesc", fallbackSection: "Live voice", fallbackLabel: "ElevenLabs result voice", fallbackDesc: "Which ElevenLabs voice reads delegated results. Server default uses the configured endpoint voice.", scope: "UI" },
   // Tool Safety & Approvals
   { id: "approval-mode", tab: "safety", sectionKey: "settingsConfig.toolSafetyApprovals", labelKey: "settingsConfig.approvalMode", descKey: "settingsConfig.approvalModeDesc", fallbackSection: "Tool Safety & Approvals", fallbackLabel: "Approval Mode", fallbackDesc: "Choose when OMP asks before tool calls.", scope: "Native OMP" },
   { id: "bash-override", tab: "safety", sectionKey: "settingsConfig.toolSafetyApprovals", labelKey: "settingsConfig.bashOverride", descKey: "settingsConfig.bashOverrideDesc", fallbackSection: "Tool Safety & Approvals", fallbackLabel: "Bash Override", fallbackDesc: "Override default approval policy specifically for terminal commands.", scope: "Native OMP" },
@@ -407,6 +417,14 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
   });
   // 6b TTS replies: auto-speak finished replies (requires OMP_WEB_TTS_ENDPOINT).
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => readTtsEnabled());
+  // Phase 4 live lane: ElevenLabs RESULT voices. The toggle + picker live in
+  // Settings; the VoicePanel reads the stored values at fire time. `null`
+  // config status = probe still in flight.
+  const [elResultsEnabled, setElResultsEnabled] = useState<boolean>(() => readElResultsEnabled());
+  const [elVoiceId, setElVoiceId] = useState<string>(() => readElVoiceId());
+  const [elConfigured, setElConfigured] = useState<boolean | null>(null);
+  const [elVoices, setElVoices] = useState<Array<{ voice_id: string; name: string }>>([]);
+  const [elVoicesFailed, setElVoicesFailed] = useState(false);
   const [update, setUpdate] = useState<UpdateState | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkingAppUpdate, setCheckingAppUpdate] = useState(false);
@@ -473,6 +491,42 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
         if (!nativeSettingsMutatedRef.current) setNativeSettings(data.settings ?? {});
       })
       .catch((error) => setNativeSettingsError(error instanceof Error ? error.message : String(error)));
+  }, []);
+
+  // Phase 4 live lane: probe the ElevenLabs result-voice status once (the
+  // probe is `{configured}` only, no upstream call), and when configured
+  // fetch the voice list for the picker (server-cached 6 h). Failure to
+  // load only disables the row — never an error surface.
+  useEffect(() => {
+    let disposed = false;
+    const loadVoices = (configured: boolean) => {
+      if (disposed) return;
+      setElConfigured(configured);
+      if (!configured) return;
+      fetch("/api/live/el-voices")
+        .then((res) => res.json() as Promise<{ success?: boolean; data?: { voices?: Array<{ voice_id?: unknown; name?: unknown }> } }>)
+        .then((list) => {
+          if (disposed || !list.success) return;
+          const voices: Array<{ voice_id: string; name: string }> = [];
+          for (const entry of list.data?.voices ?? []) {
+            if (entry && typeof entry.voice_id === "string" && typeof entry.name === "string") {
+              voices.push({ voice_id: entry.voice_id, name: entry.name });
+            }
+          }
+          setElVoices(voices);
+          setElVoicesFailed(false);
+        })
+        .catch(() => {
+          if (!disposed) setElVoicesFailed(true);
+        });
+    };
+    fetch("/api/live/el-voices?status=1")
+      .then((res) => res.json() as Promise<{ success?: boolean; data?: { configured?: boolean } }>)
+      .then((payload) => loadVoices(payload.success === true && payload.data?.configured === true))
+      .catch(() => loadVoices(false));
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   const saveNativeSettings = useCallback((next: NativeSettings) => {
@@ -872,6 +926,49 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
                     </button>
                   </NativeSetting>
                 </div>
+                {/* LIVE VOICE (voice round 3): the /live call's result-speech
+                    preferences. Conversation audio always stays on the native
+                    live voice; these rows govern the optional ElevenLabs
+                    one-shot for delegated-run results only. The toggle is
+                    disabled (with a hint) while the server has no key. */}
+                <section style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--border)", paddingTop: 18, width: "100%" }}>
+                  <div className="settings-section-title" style={{ fontSize: 13.5, fontWeight: 600, margin: 0 }}>{t("settingsConfig.liveVoice")}</div>
+                  <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>{t("settingsConfig.liveVoiceDesc")}</p>
+                  <NativeSetting searchId="speak-results-elevenlabs" label={t("settingsConfig.speakResultsElevenLabs")} description={elConfigured === false ? t("settingsConfig.speakResultsElevenLabsNotConfigured") : t("settingsConfig.speakResultsElevenLabsDesc")} scope="UI">
+                    <ToggleSwitch
+                      checked={elResultsEnabled}
+                      disabled={elConfigured === false}
+                      onChange={(next) => {
+                        setElResultsEnabled(next);
+                        writeElResultsEnabled(next);
+                        // Toggling on is a user gesture — prime the shared
+                        // audio element so the later gesture-less one-shot
+                        // may start (the useTts unlock discipline).
+                        if (next) unlockSharedTtsAudio();
+                      }}
+                    />
+                  </NativeSetting>
+                  <NativeSetting searchId="el-result-voice" label={t("settingsConfig.elResultVoice")} description={t("settingsConfig.elResultVoiceDesc")} scope="UI">
+                    <select
+                      style={nativeSelectStyle}
+                      value={normalizeElVoiceId(elVoiceId)}
+                      disabled={elConfigured === false}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        setElVoiceId(next);
+                        writeElVoiceId(next);
+                      }}
+                    >
+                      <option value="" style={nativeOptionStyle}>{t("settingsConfig.elVoiceServerDefault")}</option>
+                      {elVoices.map((voice) => (
+                        <option key={voice.voice_id} value={voice.voice_id} style={nativeOptionStyle}>{voice.name}</option>
+                      ))}
+                    </select>
+                  </NativeSetting>
+                  {elVoicesFailed && (
+                    <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)" }}>{t("settingsConfig.elVoicesFailed")}</p>
+                  )}
+                </section>
               </div>
             )}
 

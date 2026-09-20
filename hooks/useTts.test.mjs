@@ -7,10 +7,12 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
 const {
+  LIVE_RESULT_PLAYBACK_ENTRY_ID,
   TTS_ENABLED_STORAGE_KEY,
   readTtsEnabled,
   rememberAssistantReply,
   resetTtsModuleStateForTests,
+  speakElResultOnce,
   speakLatestReply,
   stopTtsPlayback,
   useTts,
@@ -279,3 +281,64 @@ test("speakLatestReply ignores empty text and never plays a stale reply", async 
   speakLatestReply();
   assert.equal(calls.length, 0, "empty replies must not enqueue speech");
 });
+
+// ─── live-lane result one-shot (Phase 4) ─────────────────────────────────────
+
+test("speakElResultOnce plays through the shared element with the voice field", async () => {
+  const calls = mockFetch(() => okAudioResponse());
+  const { result } = renderHook(() => useTts());
+  let outcome;
+  await act(async () => {
+    outcome = await speakElResultOnce("deploy is green", "EL_VOICE_1");
+  });
+  assert.equal(outcome, "played");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].body, { text: "deploy is green", voice: "EL_VOICE_1" }, "the voice rides the existing body additively");
+  assert.equal(result.current.playback.entryId, LIVE_RESULT_PLAYBACK_ENTRY_ID, "the shared element speaks it, never overlapping");
+  await waitFor(() => assert.equal(result.current.playback.loading, false));
+  act(() => stopTtsPlayback());
+});
+
+test("speakElResultOnce without a voice omits the field (endpoint default)", async () => {
+  const calls = mockFetch(() => okAudioResponse());
+  let outcome;
+  await act(async () => {
+    outcome = await speakElResultOnce("all good");
+  });
+  assert.equal(outcome, "played");
+  assert.deepEqual(calls[0].body, { text: "all good" }, "the existing contract is untouched");
+  act(() => stopTtsPlayback());
+});
+
+test("speakElResultOnce: 503 not-configured skips silently; empty text skips", async () => {
+  mockFetch(() => ({ ok: false, status: 503, json: async () => ({ error: "TTS not configured." }) }));
+  const { result } = renderHook(() => useTts());
+  await act(async () => {
+    assert.equal(await speakElResultOnce("hello"), "skipped_not_configured", "the native voice already spoke it");
+  });
+  assert.equal(result.current.playback.entryId, null);
+  cleanup();
+  resetTtsModuleStateForTests();
+
+  const calls = mockFetch(() => okAudioResponse());
+  await act(async () => {
+    assert.equal(await speakElResultOnce("   "), "skipped_empty");
+  });
+  assert.equal(calls.length, 0);
+});
+
+test("speakElResultOnce: network and upstream failures report failed, never throw", async () => {
+  mockFetch(() => {
+    throw new Error("network down");
+  });
+  await act(async () => {
+    assert.equal(await speakElResultOnce("hello"), "failed");
+  });
+  resetTtsModuleStateForTests();
+
+  mockFetch(() => ({ ok: false, status: 500, json: async () => ({ error: "upstream" }) }));
+  await act(async () => {
+    assert.equal(await speakElResultOnce("hello"), "failed");
+  });
+});
+

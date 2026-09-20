@@ -16,15 +16,19 @@
  * closing the dialog or unmounting ends the call, stops mic tracks, closes
  * the peer connection, and releases the engine slot.
  *
- * Two panel preferences DO persist (both are per-user, call-independent):
- * the native voice (`omp-web-live-voice`) and optional custom persona
+ * Three panel preferences DO persist (all are per-user, call-independent):
+ * the native voice (`omp-web-live-voice`), optional custom persona
  * instructions (`omp-web-live-instructions`, replaces the default session
- * payload instructions). Everything call-scoped — transcript, delegations,
- * progress counters — stays memory-only.
+ * payload instructions), and the hands-free loop
+ * (`omp-web-live-handsfree`, default ON — lib/live/handsfree.ts). The
+ * ElevenLabs RESULT-voice preferences (`omp-web-live-el-results`,
+ * `omp-web-live-el-voice`) are read from storage at fire time; their
+ * editor lives in Settings → Live voice. Everything call-scoped —
+ * transcript, delegations, progress counters — stays memory-only.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, MicOff, PhoneCall, PhoneOff, Radio, SendHorizontal } from "lucide-react";
+import { Ear, EarOff, Mic, MicOff, PhoneCall, PhoneOff, Radio, SendHorizontal } from "lucide-react";
 
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/primitives";
 import { Alert } from "@/components/ui/field";
@@ -53,6 +57,12 @@ import {
 import { buildLiveSessionContext } from "@/lib/live/session-context";
 import { initialProgressState, nextProgressUpdate } from "@/lib/live/progress";
 import { setLiveCallActive } from "@/lib/live/live-indicator";
+import { readHandsFreeEnabled, writeHandsFreeEnabled } from "@/lib/live/handsfree";
+import {
+  readElResultsEnabled,
+  readElVoiceId,
+} from "@/lib/live/el-prefs";
+import { speakElResultOnce, unlockSharedTtsAudio } from "@/hooks/useTts";
 import {
   decideDelegationRouting,
   newestDelegationInState,
@@ -112,6 +122,12 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
   // injected immediately). A toggle, not a preference: memory only, default
   // on each time the panel opens.
   const [autoDelegate, setAutoDelegate] = useState(true);
+  // Hands-free loop (voice round 3): while a delegated run is in flight the
+  // mic pauses; once the result has been spoken (and no queue item is
+  // dispatching) listening auto-resumes — unless the user muted (mute always
+  // wins). Persisted; default ON. The divider marks the auto-resume.
+  const [handsFree, setHandsFree] = useState(true);
+  const [autoResumed, setAutoResumed] = useState(false);
   // ⑥ Typed text into the call (bounded, mono input row under the transcript).
   const [textInput, setTextInput] = useState("");
 
@@ -123,6 +139,9 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
   autoDelegateRef.current = autoDelegate;
   const delegationBridgeRef = useRef<LiveDelegationBridge | null | undefined>(delegation);
   delegationBridgeRef.current = delegation;
+  // Hands-free is read inside fixed-at-claim-time callbacks through this ref.
+  const handsFreeRef = useRef(handsFree);
+  handsFreeRef.current = handsFree;
   // ③ Progress reducer state — one counter set per delegated run, memory only.
   const progressStateRef = useRef(initialProgressState());
   // ① Whether the current call already carries the session context snapshot
@@ -141,8 +160,19 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
       if (storedVoice) setVoice(normalizeLiveVoice(storedVoice));
       const storedInstructions = localStorage.getItem(LIVE_INSTRUCTIONS_STORAGE_KEY);
       if (storedInstructions) setInstructions(storedInstructions.slice(0, LIVE_MAX_INSTRUCTIONS_CHARS));
+      setHandsFree(readHandsFreeEnabled());
     } catch {
       /* storage unavailable — defaults are fine */
+    }
+  }, []);
+
+  const changeHandsFree = useCallback((next: boolean) => {
+    setHandsFree(next);
+    writeHandsFreeEnabled(next);
+    if (!next) {
+      // Turning hands-free off hands the mic back immediately; the engine
+      // refuses while muted — mute always wins.
+      engineRef.current?.autoResumeListening();
     }
   }, []);
 
@@ -204,6 +234,7 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
     setMuted(false);
     setSpeechPulse(false);
     setTextInput("");
+    setAutoResumed(false);
     // Delegation tracking dies with the call — same ephemerality as the
     // transcript. The auto-delegate toggle resets to the terminal default.
     delegationsRef.current = [];
@@ -281,6 +312,14 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
       { state: dispatched ? "running" : "failed" },
     );
     setDelegations(delegationsRef.current);
+    // Hands-free: a dispatched run holds the call's listening (mic track)
+    // until its result has been spoken. Refused by the engine when the user
+    // muted or hands-free is off. A new hold also retires a previous
+    // auto-resume divider — it described the last handoff, not this one.
+    if (dispatched) {
+      engineRef?.current?.pauseListening(handsFreeRef.current);
+      setAutoResumed(false);
+    }
   }, []);
 
   const handleDelegationAgentEnd = useCallback(async () => {
@@ -300,6 +339,13 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
     // speaks or renders ever carries credential-shaped text verbatim.
     const redacted = speakable ? redactTranscriptText(speakable) : "";
     if (redacted) engine.sendDelegationContext(target.id, redacted, "speakable");
+    // ⑨ ElevenLabs RESULT voice (voice round 3, results only): the same
+    // speakable text ALSO plays one-shot through the /api/tts proxy. The
+    // native voice already spoke it, so every failure here (503
+    // not-configured, network, autoplay refusal) is silent by contract.
+    if (redacted && readElResultsEnabled()) {
+      void speakElResultOnce(redacted, readElVoiceId() || undefined).catch(() => {});
+    }
     delegationsRef.current = patchDelegation(delegationsRef.current, target.id, {
       state: "done",
       resultPreview: redacted || undefined,
@@ -307,9 +353,16 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
     setDelegations(delegationsRef.current);
     // ① The session state changed materially — refresh the call's context.
     sendSessionContextToCall();
-    // ⑤ The in-flight slot is free: dispatch the oldest queued request.
+    // ⑤ The in-flight slot is free: dispatch the oldest queued request; the
+    // handoff keeps the hands-free hold (no resume between chained runs).
+    // With nothing queued, hands-free auto-resumes listening — unless the
+    // user muted (mute always wins, and then no divider is shown).
     const next = oldestDelegationInState(delegationsRef.current, "queued");
-    if (next) void dispatchDelegation(next.id);
+    if (next) {
+      void dispatchDelegation(next.id);
+    } else if (engineRef.current?.autoResumeListening()) {
+      setAutoResumed(true);
+    }
   }, [dispatchDelegation, sendSessionContextToCall]);
 
   const handleDelegationCreated = useCallback((event: LiveDelegationCreated) => {
@@ -394,6 +447,10 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
   }, [delegation, handleChatActivity]);
 
   const startCall = useCallback(async () => {
+    // Start is a user gesture — prime the shared TTS <audio> so the later,
+    // gesture-less ElevenLabs result one-shot may begin (the useTts unlock
+    // discipline, mirrored from the settings toggle).
+    unlockSharedTtsAudio();
     const trimmedInstructions = instructions.trim();
     const engine = claimLiveEngine({
       onState: setLiveState,
@@ -569,6 +626,32 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
                     {muted ? <MicOff size={14} aria-hidden="true" /> : <Mic size={14} aria-hidden="true" />}
                     {muted ? t("live.unmute") : t("live.mute")}
                   </button>
+                  {/* Hands-free (voice round 3): pause listening while a
+                      delegated run is in flight, auto-resume after the
+                      result. Persisted; distinct from mute, which always
+                      wins. Sits next to the mute control by design. */}
+                  <button
+                    type="button"
+                    onClick={() => changeHandsFree(!handsFree)}
+                    aria-label={t("live.handsFree")}
+                    aria-pressed={handsFree}
+                    title={t("live.handsFreeHint")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "7px 12px",
+                      background: handsFree ? "var(--bg-selected)" : "var(--bg-panel)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-control)",
+                      color: handsFree ? "var(--accent)" : "var(--text-muted)",
+                      fontSize: 13,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {handsFree ? <Ear size={14} aria-hidden="true" /> : <EarOff size={14} aria-hidden="true" />}
+                    {t("live.handsFree")}
+                  </button>
                   <button
                     type="button"
                     onClick={stopCall}
@@ -663,6 +746,17 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
                 </span>
               </div>
             ))
+          )}
+          {/* Hands-free auto-resume divider: announced politely (the mic is
+              listening again after the spoken result). */}
+          {autoResumed && (
+            <div role="status" aria-live="polite" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+              <span style={{ height: 1, flex: 1, background: "var(--border)" }} aria-hidden="true" />
+              <span style={{ fontSize: 10, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
+                {t("live.autoResumed")}
+              </span>
+              <span style={{ height: 1, flex: 1, background: "var(--border)" }} aria-hidden="true" />
+            </div>
           )}
         </div>
 

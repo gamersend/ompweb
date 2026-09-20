@@ -150,6 +150,7 @@ async function playText(
   text: string,
   entryId: string | null,
   onError?: (error: TtsError) => void,
+  voice?: string,
 ): Promise<void> {
   // A new request stops the current one, including a still-loading fetch.
   stopTtsPlayback();
@@ -163,7 +164,9 @@ async function playText(
     res = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      // `voice` is additive (Phase 4): the live lane's ElevenLabs result
+      // one-shot picks the voice; absent → the endpoint's configured voice.
+      body: JSON.stringify({ text, ...(voice ? { voice } : {}) }),
       signal: abort.signal,
     });
   } catch (err) {
@@ -223,6 +226,49 @@ async function playText(
   }
   if (requestId !== currentRequestId) return; // superseded while starting
   setPlayback({ entryId, loading: false });
+}
+
+// ─── Live-lane result one-shot (voice round 3) ──────────────────────────────
+
+/** The playback id the live delegation result owns while speaking. */
+export const LIVE_RESULT_PLAYBACK_ENTRY_ID = "live-el-result";
+
+export type LiveResultPlaybackOutcome =
+  | "played"
+  | "skipped_empty"
+  | "skipped_not_configured"
+  | "failed";
+
+/**
+ * The live delegation RESULT also plays through /api/tts when the user
+ * enabled ElevenLabs result voices — same shared <audio>, same
+ * never-overlaps discipline, blob URL revocation included. The native live
+ * voice ALREADY spoke the result over the call, so this one-shot is
+ * enhancement only: 503 not-configured and every other failure are silent,
+ * and a call teardown must never observe an error from here.
+ */
+export async function speakElResultOnce(text: string, voice?: string): Promise<LiveResultPlaybackOutcome> {
+  const trimmed = text.trim();
+  if (!trimmed) return "skipped_empty";
+  let outcome: LiveResultPlaybackOutcome = "failed";
+  try {
+    await playText(
+      trimmed,
+      LIVE_RESULT_PLAYBACK_ENTRY_ID,
+      (error) => {
+        if (error.code === "not_configured") outcome = "skipped_not_configured";
+      },
+      voice && voice.trim() ? voice.trim() : undefined,
+    );
+    // playText resolves on success (playing) or after a silent supersede /
+    // teardown: only a live, non-loading entry means the audio started.
+    if (playbackState.entryId === LIVE_RESULT_PLAYBACK_ENTRY_ID && !playbackState.loading) {
+      outcome = "played";
+    }
+  } catch {
+    outcome = "failed";
+  }
+  return outcome;
 }
 
 // ─── Latest-reply registry (agent_end auto-speak) ───────────────────────────

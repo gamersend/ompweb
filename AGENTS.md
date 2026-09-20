@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 78 API routes, 80 components, 22 hooks, 113 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 79 API routes, 80 components, 22 hooks, 113 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -1206,6 +1206,58 @@ gesture — the autoplay-unlock discipline from `useAudio`.
   permission only from the toggle gesture, subscribe with the server public
   key (base64url→Uint8Array via `lib/push/client.ts`), register, rollback
   unsubscribe on failure. All strings in `push.*` ×3 locales.
+
+### Hands-free loop + ElevenLabs result voices (`lib/live/handsfree.ts`, `lib/live/elevenlabs.ts`, `/api/live/el-voices`) (W2-P4)
+- Hands-free (`omp-web-live-handsfree`, default ON): a dispatched delegated
+  run pauses the call's mic track (distinct from mute); when the result has
+  been spoken AND no queued item is dispatching, listening auto-resumes —
+  mute always wins (a muted call never resumes and shows no divider; an
+  explicit unmute also clears a hold). The engine routes every mic change
+  through the pure machine in `lib/live/handsfree.ts`; with the setting off
+  the call behaves exactly as before.
+- ElevenLabs results ONLY: the conversational call stays the native live
+  voice (browser↔OpenAI direct — no streaming EL into the call, that
+  deliberate deviation from the terminal extension). When
+  `omp-web-live-el-results` is on, the delegation result ALSO plays one-shot
+  through the existing `/api/tts` proxy (optional `voice` body field,
+  shared-`<audio>` discipline, 503/failures silent). Key ground truth:
+  `ELEVENLABS_API_KEY` in env or the agent `.env` (same resolution order as
+  the live-elevenlabs extension), server-side only, never echoed.
+- `GET /api/live/el-voices`: `?status=1` → `{configured}` probe (no
+  upstream); otherwise the voice list (`voice_id`/`name`/`labels`, 200 cap)
+  cached 6 h on globalThis; 503 `el_not_configured` without a key. The
+  route is metadata-only — no audio bytes, no media relay (test-enforced).
+- Settings → Live voice (general tab) owns the EL toggle (disabled with a
+  hint while unconfigured) + voice picker; the panel toggle owns hands-free.
+
+### Terminal round 2 — opt-in PTY (W2-P11)
+- **PTY is opt-in, never implicit.** A terminal runs under a real
+  pseudo-terminal ONLY when `OMP_WEB_TERMINAL_PTY=1` AND the runtime probe
+  finds a working `node-pty` AND the pty spawn itself succeeds. Any failure
+  falls back to the plain-pipe backend with a once-per-process logged
+  reason. The gate check provably runs BEFORE any pty code (source-contract
+  test asserts the ordering); plain pipes remain the default backend.
+- **The gating matrix (unchanged by backend):** kill switch
+  `OMP_WEB_DISABLE_TERMINAL=1` refuses every create; spawn cwd must pass the
+  SAME allow-roots as `/api/files`; fixed shell candidates + `OMP_WEB_SHELL`
+  override only; user bytes go to the shell's stdin/pty — never argv. PTY is
+  a FULL shell with TUI capability — the env flag is the only thing standing
+  between a user and e.g. vim/htop over the web, so keep it off on any
+  untrusted-LAN deployment (the passwordless LAN bind applies to PTY mode
+  just as it did to pipes).
+- **Audit discipline UNCHANGED:** every input-route action (keystroke batch
+  OR resize) appends one JSONL row to
+  `~/.omp/agent/web-terminal-audit.jsonl` (1 MB rotate) carrying metadata +
+  a short content hash only — keystrokes/pastes are never written, and that
+  holds identically in pty mode (regression-tested with a secret payload).
+- **Everything else is backend-invariant:** globalThis registry (hot-reload
+  safe), 10-min idle dispose, exited-linger, 10k-line scrollback, 16 KB /
+  100 ms output coalescing, allow-root confined resize/input, bounded
+  resize (2–500) enforced server-side.
+- **Select→composer** is client-side only: the selection is capped at 8 KB
+  (code-point-safe), copied via the clipboard lib and inserted into the
+  composer draft through the existing bus — it can never send on the user's
+  behalf.
 
 ## omp Session File Format (v3)
 

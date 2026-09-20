@@ -22,6 +22,10 @@
  *    transcript is never touched, and the panel re-sends the session context
  *    through `onReconnected` so the voice resumes knowing the session. A
  *    USER stop never reconnects.
+ *  - Hands-free loop (voice round 3): the mic track follows the pure
+ *    lib/live/handsfree.ts machine — the panel pauses it while a delegated
+ *    run is in flight and auto-resumes it once the result has been spoken;
+ *    the user's mute always wins.
  *
  * One engine per tab: a module-level registry guarantees a second start
  * cannot stack peer connections (the "one live session at a time" rule).
@@ -47,6 +51,11 @@ import {
 import { buildUserTextInputContext } from "./session-context";
 import { reconnectDelayMs } from "./reconnect";
 import { initialLiveState, reduceLiveEvent, type LivePhase, type LiveState } from "./call-state";
+import {
+  initialListeningState,
+  reduceListening,
+  type ListeningState,
+} from "./handsfree";
 
 export type { LivePhase, LiveState, LiveTranscriptLine, LiveDebugEvent, LiveDelegationCreated };
 
@@ -82,6 +91,9 @@ export class LiveVoiceEngine {
   private mic: MediaStream | null = null;
   private audio: HTMLAudioElement | null = null;
   private state: LiveState = initialLiveState();
+  // Hands-free listening machine (voice round 3): the mute flag plus the
+  // in-flight-run hold. The mic tracks follow `micEnabledFor` exactly.
+  private listening: ListeningState = initialListeningState();
   private lines: LiveTranscriptLine[] = [];
   private nextLineId = 0;
   private debug: LiveDebugEvent[] = [];
@@ -147,6 +159,9 @@ export class LiveVoiceEngine {
     }
     this.userStopped = false;
     this.resetReconnect();
+    // A fresh call starts listening: mute cleared, no hands-free hold.
+    const listening = reduceListening(this.listening, { kind: "reset" });
+    this.listening = listening.state;
     this.lastStartOpts = { ...opts };
     this.dispatch({ kind: "start" });
     this.lines = [];
@@ -433,8 +448,49 @@ export class LiveVoiceEngine {
     return sent;
   }
 
+  /**
+   * The user's mute (existing panel control). Routed through the pure
+   * listening machine: an explicit UNMUTE also clears a hands-free pause
+   * (the user is taking the call back), while a mute never does.
+   */
   setMuted(muted: boolean): void {
-    for (const track of this.mic?.getAudioTracks() ?? []) track.enabled = !muted;
+    const outcome = reduceListening(this.listening, { kind: "mute", muted });
+    this.listening = outcome.state;
+    this.applyMic(outcome.micEnabled);
+  }
+
+  /**
+   * Hands-free hold (voice round 3): stop listening while a delegated run is
+   * in flight. Refused outright when `handsFree` is false — with the setting
+   * off the call behaves exactly as before. Distinct from mute: the panel
+   * shows it as the call "holding" during a run, not as the user muting.
+   */
+  pauseListening(handsFree: boolean): void {
+    const outcome = reduceListening(this.listening, { kind: "pause", handsFree });
+    this.listening = outcome.state;
+    this.applyMic(outcome.micEnabled);
+  }
+
+  /**
+   * Auto-resume after a delegated run's result has been spoken (and no queue
+   * item is dispatching). The user's mute always wins: a muted call returns
+   * false (nothing resumed). True exactly when the mic actually reopened —
+   * the panel shows the "auto-resumed" divider for that.
+   */
+  autoResumeListening(): boolean {
+    const outcome = reduceListening(this.listening, { kind: "auto_resume" });
+    this.listening = outcome.state;
+    this.applyMic(outcome.micEnabled);
+    return outcome.resumed;
+  }
+
+  /** Read-only view for the panel (chip state / tests). */
+  get isListeningPaused(): boolean {
+    return this.listening.micPaused;
+  }
+
+  private applyMic(enabled: boolean): void {
+    for (const track of this.mic?.getAudioTracks() ?? []) track.enabled = enabled;
   }
 
   /** Hang up. Safe from any phase, and again after that. Never reconnects. */
