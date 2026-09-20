@@ -30,6 +30,17 @@ export interface MaskedNotifyWebhook {
   url: "";
 }
 
+/** Weekly digest schedule view (wave 2 P10) — mirrors the server's
+ * DigestConfigView (lib/digest.ts) without importing server modules. */
+export interface DigestConfigView {
+  enabled: boolean;
+  dayOfWeek: number;
+  time: string;
+  nextRunAt: string | null;
+  lastDigestSent: string | null;
+  lastDigestAt: string | null;
+}
+
 export interface NotifyFeedConfigView {
   version: 1;
   browser: boolean;
@@ -38,6 +49,8 @@ export interface NotifyFeedConfigView {
    * live behind /api/push/* and never ride this payload. */
   push?: { enabled: boolean; events: NotifyKind[] };
   quietHours?: { from: string; to: string };
+  /** Weekly digest schedule state (wave 2 P10). */
+  digest?: DigestConfigView;
 }
 
 export type BrowserPermission = "default" | "granted" | "denied" | "unsupported";
@@ -106,6 +119,11 @@ export interface NotifyConfigUpdate {
     events?: NotifyKind[];
   };
   quietHours?: { from: string; to: string } | null;
+  digest?: {
+    enabled?: boolean;
+    dayOfWeek?: number;
+    time?: string;
+  };
 }
 
 export interface UseNotifyFeedOptions {

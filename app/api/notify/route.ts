@@ -9,17 +9,27 @@ import {
 } from "@/lib/notify/notify-shared";
 import { markDelivered, pushNotifyRow, since } from "@/lib/notify/feed";
 import { getWebhookDeliveryStats, runWebhookTest } from "@/lib/notify/webhook";
-import { loadNotifyConfig } from "@/lib/notify/notify-config";
+import { loadNotifyConfig, saveNotifyConfig } from "@/lib/notify/notify-config";
+import {
+  applyDigestConfigUpdate,
+  digestConfigView,
+  fireDigest,
+  loadDigestConfig,
+  notifyDigestConfigChanged,
+  saveDigestConfig,
+} from "@/lib/digest";
 
 export const runtime = "nodejs";
 
 // ============================================================================
 // GET  /api/notify?since=<rowId> — feed tail + masked config for the bell/hook.
-// PUT  /api/notify — apply a config update; the masked echo never returns the
-//      webhook URL (it is a credential): only enabled/provider/events plus
-//      `configured` + host.
-// POST /api/notify {action:"test"|"delivered"} — webhook test delivery and
-//      browser-delivery bookkeeping.
+// PUT  /api/notify — apply a config update (notification settings + the P10
+//      weekly-digest schedule); the masked echo never returns the webhook URL
+//      (it is a credential): only enabled/provider/events plus `configured` +
+//      host.
+// POST /api/notify {action:"test"|"delivered"|"seed-test-row"|"digest-now"} —
+//      webhook test delivery, browser-delivery bookkeeping, feed preview, and
+//      a manual digest compose (settings gesture; bypasses the weekly dedupe).
 // ============================================================================
 
 /** The client-visible config: the raw url field is replaced by its mask. */
@@ -49,6 +59,9 @@ function maskedConfig(config: NotifyConfig) {
 interface NotifyGetResponse {
   rows: NotifyRow[];
   config: ReturnType<typeof maskedConfig>;
+  /** Weekly digest schedule state (BUILD-PLAN-2 P10) — its own small store
+   *  (web-digest.json); no secrets ride here. */
+  digest: ReturnType<typeof digestConfigView>;
   webhookDeliveries: { sent: number; failed: number };
 }
 
@@ -58,9 +71,17 @@ export async function GET(req: Request): Promise<NextResponse> {
   const data: NotifyGetResponse = {
     rows: since(sinceId),
     config: maskedConfig(loadNotifyConfig()),
+    digest: digestConfigView(loadDigestConfig()),
     webhookDeliveries: getWebhookDeliveryStats(),
   };
   return NextResponse.json({ success: true, data });
+}
+
+/** Shape a digest PUT section (present → plain object, absent → undefined). */
+function digestUpdateOf(source: Record<string, unknown>): Record<string, unknown> | undefined {
+  return source.digest && typeof source.digest === "object" && !Array.isArray(source.digest)
+    ? source.digest as Record<string, unknown>
+    : undefined;
 }
 
 export async function PUT(req: Request): Promise<NextResponse> {
@@ -88,6 +109,27 @@ export async function PUT(req: Request): Promise<NextResponse> {
         ? source.quietHours as { from: string; to: string }
         : undefined,
   };
+
+  // Validate BOTH sections before persisting either, so a bad digest payload
+  // cannot half-apply a notify update (and vice versa).
+  const digestRaw = digestUpdateOf(source);
+  const digestResult = digestRaw
+    ? applyDigestConfigUpdate(
+        loadDigestConfig(),
+        {
+          enabled: typeof digestRaw.enabled === "boolean" ? digestRaw.enabled : undefined,
+          dayOfWeek: typeof digestRaw.dayOfWeek === "number" ? digestRaw.dayOfWeek : undefined,
+          time: typeof digestRaw.time === "string" ? digestRaw.time : undefined,
+        },
+      )
+    : null;
+  if (digestResult && !digestResult.ok) {
+    return NextResponse.json(
+      { error: `Invalid digest config: ${digestResult.errors.join(", ")}`, code: digestResult.errors[0] ?? "invalid_digest_config" },
+      { status: 400 },
+    );
+  }
+
   const result = applyNotifyConfigUpdate(loadNotifyConfig(), update);
   if (!result.ok) {
     return NextResponse.json(
@@ -95,7 +137,15 @@ export async function PUT(req: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
-  return NextResponse.json({ success: true, data: { config: maskedConfig(result.config) } });
+  saveNotifyConfig(result.config);
+  if (digestResult?.ok) {
+    saveDigestConfig(digestResult.config);
+    notifyDigestConfigChanged();
+  }
+  return NextResponse.json({
+    success: true,
+    data: { config: maskedConfig(result.config), digest: digestConfigView(digestResult?.ok ? digestResult.config : loadDigestConfig()) },
+  });
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -134,6 +184,14 @@ export async function POST(req: Request): Promise<NextResponse> {
       body: "This is what a run-completion row looks like in the feed.",
     });
     return NextResponse.json({ success: true, data: { row, deduped: row === null } });
+  }
+
+  if (body.action === "digest-now") {
+    // Settings gesture: compose + publish one digest NOW (≤ 10 s compose
+    // budget). Manual runs bypass the weekly dedupe marker like the
+    // scheduler's run-now — the scheduled digest for the week still goes out.
+    const result = await fireDigest({ scheduled: false });
+    return NextResponse.json({ success: true, data: result });
   }
 
   return NextResponse.json({ error: "Unknown action", code: "unknown_action" }, { status: 400 });

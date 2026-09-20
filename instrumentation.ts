@@ -63,6 +63,19 @@ export async function register(): Promise<void> {
     }
   })();
 
+  // Wave 2 P10 weekly digest: same discipline as the scheduler above — one
+  // globalThis timer per process, armed ONLY here. A missed slot (server was
+  // off at fire time) runs once on this boot if it is less than ~24 h old;
+  // the durable lastDigestSent marker prevents a double digest per ISO week.
+  void (async () => {
+    try {
+      const { ensureDigestSchedulerStarted } = await import("@/lib/digest");
+      ensureDigestSchedulerStarted();
+    } catch (error) {
+      console.warn(`[omp-web] digest scheduler boot failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  })();
+
   // Crash/stall journal: a long-running server that dies or wedges while the
   // user is away leaves no trace in a terminal that no longer exists (CLI runs
   // are killed with their terminal; pages then show endless loading until the
