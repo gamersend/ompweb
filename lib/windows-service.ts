@@ -15,6 +15,9 @@ export interface WebServiceConfig {
   autostart: boolean;
   openBrowserOnLaunch: boolean;
   autoRestart: boolean;
+  /** Web password handed to the server child as OMP_WEB_PASSWORD. Never
+   * logged, never echoed in status output — status exposes passwordSet. */
+  password?: string;
 }
 
 export interface WebServiceStatus {
@@ -210,6 +213,7 @@ export async function loadWebServiceConfig(): Promise<WebServiceConfig> {
       autostart: typeof data.autostart === "boolean" ? data.autostart : DEFAULT_WEB_SERVICE_CONFIG.autostart,
       openBrowserOnLaunch: typeof data.openBrowserOnLaunch === "boolean" ? data.openBrowserOnLaunch : DEFAULT_WEB_SERVICE_CONFIG.openBrowserOnLaunch,
       autoRestart: typeof data.autoRestart === "boolean" ? data.autoRestart : DEFAULT_WEB_SERVICE_CONFIG.autoRestart,
+      password: typeof data.password === "string" && data.password.trim() ? data.password : undefined,
     };
   } catch {
     return { ...DEFAULT_WEB_SERVICE_CONFIG };
@@ -225,6 +229,9 @@ export async function saveWebServiceConfig(updates: Partial<WebServiceConfig>): 
     autostart: typeof updates.autostart === "boolean" ? updates.autostart : current.autostart,
     openBrowserOnLaunch: typeof updates.openBrowserOnLaunch === "boolean" ? updates.openBrowserOnLaunch : current.openBrowserOnLaunch,
     autoRestart: typeof updates.autoRestart === "boolean" ? updates.autoRestart : current.autoRestart,
+    password: updates.password !== undefined
+      ? (typeof updates.password === "string" && updates.password.trim() ? updates.password : undefined)
+      : current.password,
   };
 
   const configPath = getWebServiceConfigPath();

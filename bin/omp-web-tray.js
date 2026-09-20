@@ -60,6 +60,7 @@ async function runCli(argv = process.argv.slice(2)) {
       open:           { type: "boolean" },
       port:           { type: "string", short: "p" },
       hostname:       { type: "string", short: "H" },
+      password:       { type: "string", short: "w" },
       mode:           { type: "string", short: "m" },
       "no-autostart": { type: "boolean" },
       "clean-config": { type: "boolean" },
@@ -116,6 +117,7 @@ async function runCli(argv = process.argv.slice(2)) {
     const installOpts = {};
     if (cliArgs.port) installOpts.port = parseInt(cliArgs.port, 10);
     if (cliArgs.hostname) installOpts.hostname = cliArgs.hostname;
+    if (cliArgs.password) installOpts.password = cliArgs.password;
     if (cliArgs.mode) installOpts.mode = cliArgs.mode;
     if (cliArgs["no-autostart"]) installOpts.autostart = false;
     if (cliArgs.start) installOpts.startImmediately = true;

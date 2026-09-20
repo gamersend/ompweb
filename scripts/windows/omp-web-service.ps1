@@ -117,6 +117,11 @@ function Start-WebServer {
     $psi.EnvironmentVariables["OMP_WEB_HOSTNAME"] = [string]$EffectiveHostname
     $psi.EnvironmentVariables["OMP_WEB_SERVICE"] = "1"
     $psi.EnvironmentVariables["PORT"] = [string]$EffectivePort
+    if ($Config -and $Config.password) {
+        # Required when binding off-loopback (server refuses 0.0.0.0 without a
+        # password). Never logged; the value lives only in web-service.json.
+        $psi.EnvironmentVariables["OMP_WEB_PASSWORD"] = [string]$Config.password
+    }
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo = $psi
     $proc.EnableRaisingEvents = $true

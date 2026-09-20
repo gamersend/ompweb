@@ -144,6 +144,7 @@ if (Test-Path $ConfigPath) {
         $existing = Get-Content $ConfigPath -Raw | ConvertFrom-Json
         if ($existing.openBrowserOnLaunch -ne $null) { $configData.openBrowserOnLaunch = [bool]$existing.openBrowserOnLaunch }
         if ($existing.autoRestart -ne $null) { $configData.autoRestart = [bool]$existing.autoRestart }
+        if ($existing.password) { $configData.password = [string]$existing.password }
     } catch { }
 }
 
