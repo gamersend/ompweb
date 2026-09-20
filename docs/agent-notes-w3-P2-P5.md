@@ -93,16 +93,17 @@ was deliberately left alone.
 
 ## P8 — Durable cross-device goal rail (R3-05)
 
--  (cap 100 sessions LRU) + /api/goals +   (debounced last-wins push, pagehide flush, server-wins-on-newer-ts pull,
-  clear-cancels-pending-push).  above the composer panels with the
-  display-only native-plan bridge;  gained optional
+- `web-goals.json` (cap 100 sessions LRU) + `/api/goals` + `lib/goals-client.ts`
+  (debounced last-wins push, pagehide flush, server-wins-on-newer-ts pull,
+  clear-cancels-pending-push). `GoalRail` above the composer panels with the
+  display-only native-plan bridge; `web-mode-state.ts` gained optional
   non-breaking ts/steps fields. Built by a background agent.
 
 ## P9 — Recovery center + freshness diagnostics (R3-07 / R3-32)
 
-- Pure  (running/stale/idle + orphans + freshness) +
+- Pure `lib/session-health.ts` (running/stale/idle + orphans + freshness) +
   read-only /api/recovery (200-session cap, per-source degrade) +
-   on the runs board (manual refresh, Open/Interrupt via the
+  `RecoveryPanel` on the runs board (manual refresh, Open/Interrupt via the
   board's existing abort path, per-browser dismiss) + sidebar FreshnessChip
   (live/recent/stale/degraded, one 30 s tick). Recovery events reuse the
   existing process-exit/rpc-error feed rows — no new emission authority.
