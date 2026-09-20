@@ -11,7 +11,7 @@ import {
   vscDarkPlus,
 } from "@/lib/syntax-highlight";
 import ReactMarkdown from "react-markdown";
-import { AtSign, Download, WrapText } from "lucide-react";
+import { AtSign, Download, Eye, Pencil, Save, WrapText } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import {
   DOCX_PREVIEW_MAX_BYTES,
@@ -25,7 +25,10 @@ import { translate, useI18n } from "@/lib/i18n";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { normalizeDisplayMath, useMarkdownPlugins } from "@/lib/markdown";
 import { markdownCodeRenderer } from "./MarkdownCode";
-import { Tooltip } from "./ui/primitives";
+import { ConfirmDialog } from "./ui/field";
+import { Dialog, DialogContent, DialogTitle, Tooltip } from "./ui/primitives";
+import { toast } from "./ui/toast";
+import { FileEditor, type FileEditorHandle } from "./FileEditor";
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { parseFrontmatter } from "@/lib/frontmatter";
@@ -38,12 +41,15 @@ interface Props {
   onOpenFile?: (filePath: string) => void;
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
   gitRefreshKey?: number;
+  /** Unsaved-editor changes for this file, bubbled to the tab strip. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface FileData {
   content: string;
   language: string;
   size: number;
+  mtime?: string;
 }
 
 type DisplayMode = "source" | "preview" | "diff";
@@ -190,7 +196,7 @@ function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines }: So
 
 function getFileApiUrl(
   filePath: string,
-  type: "read" | "download" | "meta" | "preview" | "watch",
+  type: "read" | "download" | "meta" | "preview" | "watch" | "edit",
   sourceSessionId?: string | null,
   params: Record<string, string | number | undefined> = {},
 ): string {
@@ -788,7 +794,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
   );
 }
 
-export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey }: Props) {
+export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, onDirtyChange }: Props) {
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
@@ -798,10 +804,10 @@ export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMenti
   if (isDocumentPreviewPath(filePath)) {
     return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
-  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} onMentionLines={onMentionLines} gitRefreshKey={gitRefreshKey} />;
+  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} onMentionLines={onMentionLines} gitRefreshKey={gitRefreshKey} onDirtyChange={onDirtyChange} />;
 }
 
-function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey }: Props) {
+function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, onDirtyChange }: Props) {
   const { t } = useI18n();
   const { isDark } = useTheme();
   const [data, setData] = useState<FileData | null>(null);
@@ -831,12 +837,31 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
 
-  const fetchContent = useCallback((filePath: string) => {
+  // ── Editor state (Phase 10) ──────────────────────────────────────────────
+  const [editing, setEditing] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  const [editorContent, setEditorContent] = useState<string | null>(null);
+  // Bumped to remount the editor with fresh disk content after an explicit
+  // reload, so unsaved-value adoption logic can never fight the user's choice.
+  const [editorKey, setEditorKey] = useState(0);
+  const editorRef = useRef<FileEditorHandle | null>(null);
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [pendingExitEdit, setPendingExitEdit] = useState(false);
+  const [externalChange, setExternalChange] = useState<{ mtime: string } | null>(null);
+  const savedMtimeRef = useRef<string | null>(null);
+  const savingRef = useRef(false);
+  // Disk state the user chose to keep editing over — suppresses repeat
+  // prompts for the same external change on every focus/watch tick.
+  const ignoredMtimeRef = useRef<string | null>(null);
+
+  const fetchContent = useCallback((targetPath: string) => {
     // Guard against stale responses: bump the request id and ignore any
     // resolve that is no longer the latest fetch for this component, so a
     // slower older request cannot overwrite newer content/error state.
     const requestId = ++contentRequestRef.current;
-    return fetch(getFileApiUrl(filePath, "read", sourceSessionId))
+    return fetch(getFileApiUrl(targetPath, "read", sourceSessionId))
       .then((r) => r.json())
       .then((d: FileData & { error?: string }) => {
         if (requestId !== contentRequestRef.current) return null;
@@ -845,6 +870,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
           return null;
         }
         setError(null);
+        savedMtimeRef.current = d.mtime ?? savedMtimeRef.current;
         setData(d);
         return d;
       })
@@ -854,6 +880,145 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
         return null;
       });
   }, [sourceSessionId]);
+
+  /** Silent baseline refresh for a mounted, non-dirty editor. */
+  const loadEditorBaseline = useCallback(async (targetPath: string) => {
+    try {
+      const res = await fetch(getFileApiUrl(targetPath, "edit", sourceSessionId));
+      const d = await res.json() as FileData & { error?: string };
+      if (!res.ok || typeof d.content !== "string") return;
+      savedMtimeRef.current = d.mtime ?? savedMtimeRef.current;
+      setEditorContent(d.content);
+    } catch {
+      // Keep the current baseline on network hiccups; the next watch/focus
+      // tick retries.
+    }
+  }, [sourceSessionId]);
+
+  /** Enters (or re-enters) the editor with a fresh load from disk. */
+  const loadForEdit = useCallback(async (targetPath: string) => {
+    setEditLoading(true);
+    setEditLoadError(null);
+    try {
+      const res = await fetch(getFileApiUrl(targetPath, "edit", sourceSessionId));
+      const d = await res.json() as FileData & { error?: string };
+      if (!res.ok || typeof d.content !== "string") {
+        setEditLoadError(d.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      savedMtimeRef.current = d.mtime ?? savedMtimeRef.current;
+      ignoredMtimeRef.current = null;
+      setEditorKey((k) => k + 1);
+      setEditorContent(d.content);
+      setEditing(true);
+    } catch (error) {
+      setEditLoadError(String(error));
+    } finally {
+      setEditLoading(false);
+    }
+  }, [sourceSessionId]);
+
+  const doExitEdit = useCallback(() => {
+    setEditing(false);
+    setEditorContent(null);
+    setEditorDirty(false);
+    setExternalChange(null);
+    setPendingExitEdit(false);
+    setEditLoadError(null);
+    ignoredMtimeRef.current = null;
+    void fetchContent(filePath);
+  }, [fetchContent, filePath]);
+
+  const requestExitEdit = useCallback(() => {
+    if (editorDirty) {
+      setPendingExitEdit(true);
+      return;
+    }
+    doExitEdit();
+  }, [doExitEdit, editorDirty]);
+
+  const saveAndExitEdit = useCallback(async () => {
+    const saved = await editorRef.current?.save();
+    if (saved) doExitEdit();
+    else setPendingExitEdit(false);
+  }, [doExitEdit]);
+
+  /** PUT the edited content; bytes leave the browser exactly as typed. */
+  const persistEdit = useCallback(async (content: string): Promise<{ mtime: string; size: number } | null> => {
+    setEditSaving(true);
+    savingRef.current = true;
+    try {
+      const res = await fetch(`/api/files/${encodeFilePathForApi(filePath)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      const d = await res.json().catch(() => null) as { size?: number; mtime?: string; error?: string } | null;
+      if (res.ok && d && typeof d.size === "number" && typeof d.mtime === "string") {
+        savedMtimeRef.current = d.mtime;
+        ignoredMtimeRef.current = null;
+        setExternalChange(null);
+        // Keep the read baseline in step so exiting the editor shows what
+        // was written without waiting for a watch event.
+        setData((prev) => (prev ? { content, language: prev.language, size: d.size as number } : prev));
+        return { mtime: d.mtime, size: d.size };
+      }
+      toast.error(d?.error ?? t("fileViewer.saveFailed"));
+      return null;
+    } catch {
+      toast.error(t("fileViewer.saveFailed"));
+      return null;
+    } finally {
+      setEditSaving(false);
+      savingRef.current = false;
+    }
+  }, [filePath, t]);
+
+  /**
+   * A watch tick or focus check says the file changed on disk. Never
+   * blind-overwrite: while the editor is dirty the user chooses reload
+   * (discard local) or overwrite (save local); while clean the view refreshes
+   * quietly. Our own PUT is filtered via savingRef + the saved mtime.
+   * Dirty/editing are read through refs so this callback (and therefore the
+   * SSE watch subscription) stays stable while the user types.
+   */
+  const editorDirtyRef = useRef(false);
+  editorDirtyRef.current = editorDirty;
+  const editingRef = useRef(false);
+  editingRef.current = editing;
+  const handleDiskChange = useCallback((diskMtime: string | null) => {
+    if (savingRef.current) return;
+    if (diskMtime && diskMtime === savedMtimeRef.current) return;
+    if (editorDirtyRef.current) {
+      if (diskMtime && diskMtime === ignoredMtimeRef.current) return;
+      if (diskMtime) setExternalChange({ mtime: diskMtime });
+      return;
+    }
+    ignoredMtimeRef.current = null;
+    void fetchContent(filePath);
+    if (editingRef.current) void loadEditorBaseline(filePath);
+  }, [fetchContent, filePath, loadEditorBaseline]);
+
+  // External-change detection while editing: compare the on-disk mtime
+  // against the editor's saved baseline whenever the window regains focus.
+  useEffect(() => {
+    if (!editing) return;
+    const check = () => {
+      if (document.hidden || savingRef.current) return;
+      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+        .then((r) => r.json())
+        .then((d: { mtime?: string }) => {
+          handleDiskChange(typeof d.mtime === "string" ? d.mtime : null);
+        })
+        .catch(() => { /* unreachable meta is not actionable */ });
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [editing, filePath, handleDiskChange, sourceSessionId]);
 
   const fetchGitDiff = useCallback(async (targetPath: string) => {
     const requestId = ++gitDiffRequestRef.current;
@@ -883,6 +1048,17 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     setWrapLines(false);
     setWatching(false);
 
+    // A new file never carries the previous file's editor session.
+    setEditing(false);
+    setEditorContent(null);
+    setEditorDirty(false);
+    setEditLoading(false);
+    setEditLoadError(null);
+    setExternalChange(null);
+    setPendingExitEdit(false);
+    savedMtimeRef.current = null;
+    ignoredMtimeRef.current = null;
+
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
@@ -906,9 +1082,14 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       setWatching(true);
     });
 
-    es.addEventListener("change", () => {
-      void fetchContent(filePath);
+    es.addEventListener("change", (e) => {
+      let diskMtime: string | null = null;
+      try {
+        const parsed = JSON.parse((e as MessageEvent).data) as { mtime?: string };
+        if (typeof parsed.mtime === "string") diskMtime = parsed.mtime;
+      } catch { /* ignore malformed watch payloads */ }
       void fetchGitDiff(filePath);
+      handleDiskChange(diskMtime);
     });
 
     es.addEventListener("error", () => {
@@ -924,7 +1105,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       es.close();
       esRef.current = null;
     };
-  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId]);
+  }, [filePath, fetchContent, fetchGitDiff, handleDiskChange, sourceSessionId]);
+
+  // Keep the tab strip honest when dirty flips for any reason.
+  useEffect(() => {
+    onDirtyChange?.(editorDirty);
+  }, [editorDirty, onDirtyChange]);
 
   useEffect(() => {
     void fetchGitDiff(filePath);
@@ -1081,7 +1267,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
         />
 
         <div className="file-viewer-controls">
-          {displayModes.length > 1 && (
+          {!editing && displayModes.length > 1 && (
             <div
               className="file-viewer-mode-switch"
               aria-label={t("fileViewer.viewMode")}
@@ -1116,7 +1302,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
           )}
 
           <div className="file-viewer-actions">
-            {displayMode === "source" && (
+            {!editing && displayMode === "source" && (
               <>
                 <Tooltip content={t("fileViewer.mentionSelectedLines")}>
                   <button
@@ -1153,6 +1339,48 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
                 </Tooltip>
               </>
             )}
+            {editing && (
+              <Tooltip content={t("fileViewer.saveFile")}>
+                <button
+                  type="button"
+                  onClick={() => void editorRef.current?.save()}
+                  disabled={editSaving || !editorDirty}
+                  aria-label={t("fileViewer.saveFile")}
+                  className="file-viewer-icon-button"
+                  style={{
+                    borderRadius: "var(--radius-control)",
+                    color: editorDirty ? "var(--accent)" : "var(--text-dim)",
+                    cursor: editSaving ? "wait" : "pointer",
+                    opacity: editSaving || !editorDirty ? 0.6 : 1,
+                    transition: `background var(--dur-fast) var(--ease-out-warm), color var(--dur-fast) var(--ease-out-warm)`,
+                  }}
+                >
+                  <Save size={14} strokeWidth={2.2} aria-hidden="true" />
+                </button>
+              </Tooltip>
+            )}
+            <Tooltip content={editing ? t("fileViewer.stopEditing") : t("fileViewer.editFile")}>
+              <button
+                type="button"
+                onClick={() => (editing ? requestExitEdit() : void loadForEdit(filePath))}
+                disabled={editLoading}
+                aria-label={editing ? t("fileViewer.stopEditing") : t("fileViewer.editFile")}
+                aria-pressed={editing}
+                className="file-viewer-icon-button"
+                style={{
+                  background: editing ? "var(--bg-selected)" : "transparent",
+                  color: editing ? "var(--text)" : "var(--text-muted)",
+                  borderRadius: "var(--radius-control)",
+                  opacity: editLoading ? 0.6 : 1,
+                  cursor: editLoading ? "wait" : "pointer",
+                  transition: `background var(--dur-fast) var(--ease-out-warm), color var(--dur-fast) var(--ease-out-warm)`,
+                }}
+              >
+                {editing
+                  ? <Eye size={14} strokeWidth={2} aria-hidden="true" />
+                  : <Pencil size={14} strokeWidth={2} aria-hidden="true" />}
+              </button>
+            </Tooltip>
           </div>
 
           <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
@@ -1161,7 +1389,31 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
 
       {/* Content area */}
       <div ref={contentRef} data-selection-scope="document" tabIndex={-1} className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
-        {displayMode === "diff" && hasGitDiff ? (
+        {editing ? (
+          editorContent !== null ? (
+            <FileEditor
+              key={editorKey}
+              ref={editorRef}
+              filePath={filePath}
+              language={data?.language ?? "text"}
+              content={editorContent}
+              onSave={persistEdit}
+              onDirtyChange={setEditorDirty}
+            />
+          ) : (
+            <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
+              {t("fileViewer.loading")}
+            </div>
+          )
+        ) : editLoadError ? (
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "var(--status-error)", fontSize: 13, textAlign: "center" }}>
+            {editLoadError}
+          </div>
+        ) : editLoading ? (
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
+            {t("fileViewer.loading")}
+          </div>
+        ) : displayMode === "diff" && hasGitDiff ? (
           <DiffView patch={gitDiff.patch!} />
         ) : isHtml && displayMode === "preview" ? (
           <iframe
@@ -1274,6 +1526,100 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
           </pre>
         )}
       </div>
+
+      {/* Leave-the-editor guard: saving is the primary action, dismissing
+          keeps the editor open. Esc never discards work silently. */}
+      <ConfirmDialog
+        open={pendingExitEdit}
+        onOpenChange={(open) => { if (!open) setPendingExitEdit(false); }}
+        title={t("fileViewer.unsavedTitle")}
+        description={t("fileViewer.unsavedSwitchDescription", { name: getFileName(filePath) })}
+        confirmLabel={t("fileViewer.unsavedConfirm")}
+        cancelLabel={t("fileViewer.keepEditing")}
+        busy={editSaving}
+        onConfirm={() => void saveAndExitEdit()}
+      />
+
+      {/* External change while dirty: the user decides, the agent (or
+          another editor) may have written this file mid-edit. */}
+      <Dialog
+        open={externalChange !== null}
+        onOpenChange={(open) => {
+          if (open) return;
+          // Dismissing (Esc/backdrop) means "keep editing": remember this
+          // disk state so focus checks do not re-prompt for the same change.
+          ignoredMtimeRef.current = externalChange?.mtime ?? null;
+          setExternalChange(null);
+        }}
+      >
+        <DialogContent ariaLabel={t("fileViewer.externalChangeTitle")} style={{ width: 460, maxWidth: "min(92vw, 460px)" }}>
+          <DialogTitle>{t("fileViewer.externalChangeTitle")}</DialogTitle>
+          <p style={{ margin: "0 0 18px", fontSize: 13, lineHeight: 1.55, color: "var(--text-muted)" }}>
+            {t("fileViewer.externalChangeDescription", { name: getFileName(filePath) })}
+          </p>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => {
+                setExternalChange(null);
+                ignoredMtimeRef.current = null;
+                void loadForEdit(filePath);
+              }}
+              style={{
+                padding: "6px 14px",
+                background: "none",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-control)",
+                color: "var(--status-error)",
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              {t("fileViewer.reloadFromDisk")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setExternalChange(null);
+                ignoredMtimeRef.current = null;
+                void editorRef.current?.save();
+              }}
+              disabled={editSaving}
+              style={{
+                padding: "6px 14px",
+                background: "var(--accent-strong)",
+                border: "none",
+                borderRadius: "var(--radius-control)",
+                color: "var(--on-accent)",
+                cursor: editSaving ? "wait" : "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+                opacity: editSaving ? 0.7 : 1,
+              }}
+            >
+              {t("fileViewer.overwriteDisk")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                ignoredMtimeRef.current = externalChange?.mtime ?? null;
+                setExternalChange(null);
+              }}
+              style={{
+                padding: "6px 14px",
+                background: "none",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-control)",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              {t("fileViewer.keepEditing")}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

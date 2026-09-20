@@ -29,6 +29,13 @@ for (const [key, value] of Object.entries(globals)) {
   Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 }
 
+// jsdom implements no layout, so scrollIntoView (composer menus keep the
+// highlighted row in view) throws "not a function" in tests. jsdom keeps the
+// call a no-op: assertions inspect DOM content, never scroll positions.
+if (!dom.window.HTMLElement.prototype.scrollIntoView) {
+  dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+}
+
 after(() => {
   dom.window.close();
   for (const [key, descriptor] of originals) {

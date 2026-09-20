@@ -99,12 +99,36 @@ const nextConfig = (phase: string): NextConfig => {
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
         ],
       };
+      const pwaRules = [
+        {
+          // The SW script itself must revalidate every load (a cached SW can
+          // pin a stale app for weeks), and it must be allowed to control the
+          // whole origin scope, not just /sw.js's own directory.
+          source: "/sw.js",
+          headers: [
+            { key: "Cache-Control", value: "no-cache" },
+            { key: "Service-Worker-Allowed", value: "/" },
+          ],
+        },
+        {
+          // The manifest changes rarely but must not be pinned forever; the
+          // explicit content type keeps installability intact even when the
+          // static file server guesses a less specific type for .webmanifest.
+          source: "/manifest.webmanifest",
+          headers: [
+            { key: "Content-Type", value: "application/manifest+json" },
+            { key: "Cache-Control", value: "public, max-age=3600" },
+          ],
+        },
+      ];
 
       // Dev chunks have stable URLs whose content changes in place; caching
       // them immutably would serve stale module factories after a restart.
-      if (isDev) return [globalRule, fileRule, rootNoCacheRule];
+      // The PWA rules are safe in both phases (the SW itself only registers
+      // in production); the immutable chunk rule is production-only.
+      if (isDev) return [globalRule, fileRule, ...pwaRules, rootNoCacheRule];
 
-      return [globalRule, fileRule, staticImmutableRule, rootNoCacheRule];
+      return [globalRule, fileRule, staticImmutableRule, ...pwaRules, rootNoCacheRule];
     },
     env: {
       NEXT_PUBLIC_APP_VERSION: version,

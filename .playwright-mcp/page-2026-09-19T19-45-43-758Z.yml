@@ -1,0 +1,139 @@
+- generic [active] [ref=f10e1]:
+  - main [ref=f10e63]:
+    - region "Settings" [ref=f10e2404]:
+      - generic [ref=f10e2405]:
+        - generic [ref=f10e2406]:
+          - button "Back" [ref=f10e2407] [cursor=pointer]
+          - heading "Settings" [level=1] [ref=f10e2412]
+          - generic [ref=f10e2413]: Auto-saved
+        - generic [ref=f10e2414]:
+          - textbox "Search settings..." [ref=f10e2416]
+          - button "Close settings" [ref=f10e2417] [cursor=pointer]
+      - generic [ref=f10e2421]:
+        - tablist "Settings sections" [ref=f10e2422]:
+          - tab "Interface & Behavior UI preferences, completion sound, submission mode" [selected] [ref=f10e2423] [cursor=pointer]:
+            - generic [ref=f10e2427]:
+              - generic [ref=f10e2428]: Interface & Behavior
+              - generic [ref=f10e2429]: UI preferences, completion sound, submission mode
+          - tab "Safety & Approvals Tool safety rules, YOLO mode, terminal permissions" [ref=f10e2430] [cursor=pointer]:
+            - generic [ref=f10e2434]:
+              - generic [ref=f10e2435]: Safety & Approvals
+              - generic [ref=f10e2436]: Tool safety rules, YOLO mode, terminal permissions
+          - tab "AI Model Defaults Reasoning budget, verbosity, personality, scratchpad" [ref=f10e2437] [cursor=pointer]:
+            - generic [ref=f10e2441]:
+              - generic [ref=f10e2442]: AI Model Defaults
+              - generic [ref=f10e2443]: Reasoning budget, verbosity, personality, scratchpad
+          - tab "API Keys & Providers Connected OAuth accounts, API keys, and model registry" [ref=f10e2444] [cursor=pointer]:
+            - generic [ref=f10e2448]:
+              - generic [ref=f10e2449]: API Keys & Providers
+              - generic [ref=f10e2450]: Connected OAuth accounts, API keys, and model registry
+          - tab "Usage Tokens, costs, cache analytics, and model breakdown" [ref=f10e2451] [cursor=pointer]:
+            - generic [ref=f10e2454]:
+              - generic [ref=f10e2455]: Usage
+              - generic [ref=f10e2456]: Tokens, costs, cache analytics, and model breakdown
+          - tab "Notifications Browser notifications, webhooks, and quiet hours" [ref=f10e2457] [cursor=pointer]:
+            - generic [ref=f10e2461]:
+              - generic [ref=f10e2462]: Notifications
+              - generic [ref=f10e2463]: Browser notifications, webhooks, and quiet hours
+          - tab "Scheduled Prompts Recurring agent runs on a weekly clock" [ref=f10e2464] [cursor=pointer]:
+            - generic [ref=f10e2472]:
+              - generic [ref=f10e2473]: Scheduled Prompts
+              - generic [ref=f10e2474]: Recurring agent runs on a weekly clock
+          - tab "Agent & Intelligence Advisor, memory, autolearn, compaction and retry" [ref=f10e2475] [cursor=pointer]:
+            - generic [ref=f10e2479]:
+              - generic [ref=f10e2480]: Agent & Intelligence
+              - generic [ref=f10e2481]: Advisor, memory, autolearn, compaction and retry
+          - tab "Agents Task agents, model settings, and tool policy" [ref=f10e2482] [cursor=pointer]:
+            - generic [ref=f10e2486]:
+              - generic [ref=f10e2487]: Agents
+              - generic [ref=f10e2488]: Task agents, model settings, and tool policy
+          - tab "Extensions & Tools MCP servers, managed skills, and OMP plugins" [ref=f10e2489] [cursor=pointer]:
+            - generic [ref=f10e2494]:
+              - generic [ref=f10e2495]: Extensions & Tools
+              - generic [ref=f10e2496]: MCP servers, managed skills, and OMP plugins
+          - tab "System & Updates App updates, runtime version, and active session restart" [ref=f10e2497] [cursor=pointer]:
+            - generic [ref=f10e2503]:
+              - generic [ref=f10e2504]: System & Updates
+              - generic [ref=f10e2505]: App updates, runtime version, and active session restart
+        - tabpanel "Interface & Behavior UI preferences, completion sound, submission mode" [ref=f10e2507]:
+          - generic [ref=f10e2508]:
+            - heading "Interface & Behavior" [level=2] [ref=f10e2509]
+            - paragraph [ref=f10e2510]: Controls interface presentation, notification sounds, and execution submission mode.
+          - generic [ref=f10e2511]:
+            - generic [ref=f10e2512]:
+              - generic [ref=f10e2513]:
+                - generic [ref=f10e2514]:
+                  - generic [ref=f10e2515] [cursor=pointer]: Keep tool calls collapsed
+                  - generic [ref=f10e2516]: UI
+                - text: Show only compact headers while tools execute.
+              - switch "Keep tool calls collapsed" [checked] [ref=f10e2518] [cursor=pointer]
+            - generic [ref=f10e2520]:
+              - generic [ref=f10e2521]:
+                - generic [ref=f10e2522]:
+                  - generic [ref=f10e2523] [cursor=pointer]: Scope native Select All (experimental)
+                  - generic [ref=f10e2524]: UI
+                - text: Limit whole-page selections from browser or touch menus to the active message, chat, or file. May also narrow deliberate whole-page selections. Turn off if selection handles or menus misbehave. Keyboard shortcuts are unaffected.
+              - switch "Scope native Select All (experimental)" [ref=f10e2526] [cursor=pointer]
+            - generic [ref=f10e2528]:
+              - generic [ref=f10e2529]:
+                - generic [ref=f10e2530]:
+                  - generic [ref=f10e2531] [cursor=pointer]: Completion sound
+                  - generic [ref=f10e2532]: UI
+                - text: Play a tone when the agent completes a run.
+              - switch "Completion sound" [checked] [ref=f10e2534] [cursor=pointer]
+            - generic [ref=f10e2536]:
+              - generic [ref=f10e2537]:
+                - generic [ref=f10e2538]:
+                  - generic [ref=f10e2539] [cursor=pointer]: Read replies aloud
+                  - generic [ref=f10e2540]: UI
+                - text: Auto-play each finished reply as speech. Requires OMP_WEB_TTS_ENDPOINT on the server.
+              - switch "Read replies aloud" [ref=f10e2542] [cursor=pointer]
+            - generic [ref=f10e2544]:
+              - generic [ref=f10e2545]:
+                - generic [ref=f10e2546]:
+                  - generic [ref=f10e2547] [cursor=pointer]: Provider usage limits
+                  - generic [ref=f10e2548]: UI
+                - text: Show provider usage in the sidebar, above Settings.
+              - switch "Provider usage limits" [checked] [ref=f10e2550] [cursor=pointer]
+            - generic [ref=f10e2552]:
+              - generic [ref=f10e2553]:
+                - generic [ref=f10e2554]:
+                  - generic [ref=f10e2555] [cursor=pointer]: Chat Font Size
+                  - generic [ref=f10e2556]: UI
+                - text: Adjust text size for conversation messages, code blocks, and markdown output.
+              - combobox "Chat Font Size" [ref=f10e2558] [cursor=pointer]:
+                - option "Small (13px)"
+                - option "Medium (14px - Default)" [selected]
+                - option "Large (16px)"
+                - option "Extra Large (18px)"
+            - generic [ref=f10e2559]:
+              - generic [ref=f10e2560]:
+                - generic [ref=f10e2561]:
+                  - generic [ref=f10e2562] [cursor=pointer]: Interface Scale
+                  - generic [ref=f10e2563]: UI
+                - text: Adjust overall UI zoom and display density across sidebars, dialogs, and toolbars.
+              - combobox "Interface Scale" [ref=f10e2565] [cursor=pointer]:
+                - option "Compact (90%)"
+                - option "Standard (100% - Default)" [selected]
+                - option "Comfortable (110%)"
+                - option "Large (120%)"
+            - generic [ref=f10e2566]:
+              - generic [ref=f10e2567]:
+                - generic [ref=f10e2568]:
+                  - generic [ref=f10e2569] [cursor=pointer]: Message during active run
+                  - generic [ref=f10e2570]: UI
+                - text: What composer does on submit while agent runs. Steer interrupts; Queue follow-up delivers after finish.
+              - combobox "Message during active run" [ref=f10e2572] [cursor=pointer]:
+                - option "Steer current run" [selected]
+                - option "Queue follow-up"
+            - generic [ref=f10e2573]:
+              - generic [ref=f10e2574]:
+                - generic [ref=f10e2575]:
+                  - generic [ref=f10e2576] [cursor=pointer]: Global prompt history
+                  - generic [ref=f10e2577]: UI
+                - text: Composer recall across sessions (0 stored). Clearing removes every stored prompt.
+              - button "Global prompt history" [disabled] [ref=f10e2579]: Clear history
+  - button "Open Next.js Dev Tools" [ref=f10e105] [cursor=pointer]
+  - alert [ref=f10e109]: mcpscratch - omp web
+  - generic:
+    - region "Notifications"

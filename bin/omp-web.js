@@ -448,6 +448,12 @@ function trackServer(child) {
 }
 
 function spawnServer() {
+  // NOTE (Phase 11 scheduler boot): the scheduled-prompt engine is armed by
+  // the SERVER process via instrumentation.register()
+  // (lib/scheduler/engine.ts ensureSchedulerStarted, one globalThis singleton
+  // per process). It must NOT be started here: this launcher is a separate
+  // process from the Next server, so the singleton cannot dedupe the two and
+  // a launcher-armed copy would fire every schedule twice.
   return trackServer(spawn(process.execPath, [nextBin, ...nextArgs], {
     cwd: pkgDir,
     stdio: ["inherit", "pipe", "inherit", "ipc"],

@@ -68,6 +68,8 @@ export interface ModelUsageSummary {
   reasoningTokens: number;
   share: number; // 0-100 percentage
   recordsCount: number;
+  /** P7: "native" rows came from omp's stats.db (CLI/TUI usage union). */
+  source?: "ompweb" | "native";
 }
 
 export interface TimeSeriesPoint {
@@ -88,6 +90,8 @@ export interface DayUsageSummary {
   outputTokens: number;
   cacheReadTokens: number;
   share: number; // 0-100 percentage
+  /** P7: "native" rows came from omp's stats.db (CLI/TUI usage union). */
+  source?: "ompweb" | "native";
 }
 
 export interface ProjectUsageSummary {
@@ -97,6 +101,8 @@ export interface ProjectUsageSummary {
   tokens: number;
   share: number; // 0-100 percentage
   sessionsCount: number;
+  /** P7: "native" rows came from omp's stats.db (CLI/TUI usage union). */
+  source?: "ompweb" | "native";
 }
 
 export interface UsageReportScanInfo {

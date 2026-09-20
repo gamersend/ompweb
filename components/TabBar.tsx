@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Folder, GitBranch, X } from "lucide-react";
+import { Folder, GitBranch, SquareTerminal, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { getFileIcon } from "./FileIcons";
+import { ConfirmDialog } from "./ui/field";
 
 export interface Tab {
   id: string;
   label: string;
   filePath: string;
   sourceSessionId?: string | null;
+  /** Unsaved editor changes (Phase 10): dot + close confirmation. */
+  dirty?: boolean;
 }
 
 interface Props {
@@ -27,12 +30,28 @@ interface Props {
   onSelectGit?: () => void;
   /** Changed-file count badge on the Git tab. */
   gitBadge?: number;
+  /** Pinned Terminal tab rendered after Git (Phase 13). Hidden when the
+   * callback is absent — feature-flag entry-point guard. */
+  terminalSelected?: boolean;
+  onSelectTerminal?: () => void;
 }
 
-export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSelected = false, onSelectExplorer, explorerBadge = 0, gitSelected = false, onSelectGit, gitBadge = 0 }: Props) {
+export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSelected = false, onSelectExplorer, explorerBadge = 0, gitSelected = false, onSelectGit, gitBadge = 0, terminalSelected = false, onSelectTerminal }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
+  const [pendingDirtyClose, setPendingDirtyClose] = useState<Tab | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Dirty tabs get one confirmation before their unsaved edits are discarded;
+  // clean tabs close straight away. Every close path (X, middle click,
+  // Delete key) funnels through here.
+  const requestCloseTab = (tab: Tab) => {
+    if (tab.dirty) {
+      setPendingDirtyClose(tab);
+      return;
+    }
+    onCloseTab(tab.id);
+  };
 
   // Keep the active tab visible when the bar overflows horizontally.
   useEffect(() => {
@@ -217,8 +236,64 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSel
           )}
         </div>
       )}
+      {onSelectTerminal && (
+        <div
+          data-tab-id="terminal"
+          className="tabbar-tab ui-focus-ring"
+          onClick={onSelectTerminal}
+          role="tab"
+          tabIndex={terminalSelected ? 0 : -1}
+          aria-selected={terminalSelected}
+          aria-label={t("terminal.tab")}
+          title={t("terminal.tab")}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectTerminal(); }
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            height: 36,
+            paddingLeft: 12,
+            paddingRight: 10,
+            borderRight: "1px solid var(--border)",
+            background: terminalSelected ? "var(--bg)" : "var(--bg-panel)",
+            cursor: "pointer",
+            fontSize: 12,
+            color: terminalSelected ? "var(--text)" : "var(--text-muted)",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            userSelect: "none",
+            position: "relative",
+            transition: `background var(--dur-fast) var(--ease-out-warm), color var(--dur-fast) var(--ease-out-warm)`,
+          }}
+        >
+          {terminalSelected && (
+            <span
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 2,
+                background: "var(--accent)",
+                borderTopLeftRadius: "var(--radius-control)",
+                borderTopRightRadius: "var(--radius-control)",
+              }}
+            />
+          )}
+          <span style={{ flexShrink: 0, opacity: terminalSelected ? 1 : 0.7, display: "flex", alignItems: "center", color: terminalSelected ? "var(--accent)" : undefined }}>
+            <SquareTerminal size={13} strokeWidth={2} aria-hidden="true" />
+          </span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", fontWeight: terminalSelected ? 500 : 400 }}>
+            {t("terminal.tab")}
+          </span>
+        </div>
+      )}
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
+        const showDirtyDot = tab.dirty === true && hoveredClose !== tab.id;
         return (
           <div
             key={tab.id}
@@ -228,10 +303,10 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSel
             role="tab"
             tabIndex={isActive ? 0 : -1}
             aria-selected={isActive}
-            aria-label={tab.filePath}
+            aria-label={tab.dirty ? t("tabBar.tabUnsaved", { label: tab.label }) : tab.filePath}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectTab(tab.id); }
-              if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); onCloseTab(tab.id); }
+              if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); requestCloseTab(tab); }
               if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
                 event.preventDefault();
                 const index = tabs.findIndex((item) => item.id === tab.id);
@@ -252,7 +327,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSel
               if (e.button !== 1) return;
               e.preventDefault();
               e.stopPropagation();
-              onCloseTab(tab.id);
+              requestCloseTab(tab);
             }}
             style={{
               display: "flex",
@@ -304,32 +379,70 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, explorerSel
             >
               {tab.label}
             </span>
-            <button
-              onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
-              tabIndex={-1}
-              className="tabbar-close ui-focus-ring"
-              onMouseEnter={() => setHoveredClose(tab.id)}
-              onMouseLeave={() => setHoveredClose(null)}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: 24, height: 24,
-                background: hoveredClose === tab.id ? "var(--bg-hover)" : "transparent",
-                border: "none",
-                borderRadius: "var(--radius-control)",
-                color: hoveredClose === tab.id ? "var(--text)" : "var(--text-dim)",
-                cursor: "pointer",
-                padding: 0,
-                flexShrink: 0,
-                transition: `background var(--dur-fast) var(--ease-out-warm), color var(--dur-fast) var(--ease-out-warm)`,
-              }}
-              title={t("tabBar.close")}
-              aria-label={t("tabBar.closeTab", { label: tab.label })}
-            >
-              <X size={11} strokeWidth={2} aria-hidden="true" />
-            </button>
+            {showDirtyDot ? (
+              <span
+                aria-hidden="true"
+                title={t("tabBar.unsavedDotTitle")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 24,
+                  height: 24,
+                  flexShrink: 0,
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: "var(--status-modified)",
+                    display: "inline-block",
+                  }}
+                />
+              </span>
+            ) : (
+              <button
+                onClick={(e) => { e.stopPropagation(); requestCloseTab(tab); }}
+                tabIndex={-1}
+                className="tabbar-close ui-focus-ring"
+                onMouseEnter={() => setHoveredClose(tab.id)}
+                onMouseLeave={() => setHoveredClose(null)}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 24, height: 24,
+                  background: hoveredClose === tab.id ? "var(--bg-hover)" : "transparent",
+                  border: "none",
+                  borderRadius: "var(--radius-control)",
+                  color: hoveredClose === tab.id ? "var(--text)" : "var(--text-dim)",
+                  cursor: "pointer",
+                  padding: 0,
+                  flexShrink: 0,
+                  transition: `background var(--dur-fast) var(--ease-out-warm), color var(--dur-fast) var(--ease-out-warm)`,
+                }}
+                title={t("tabBar.close")}
+                aria-label={t("tabBar.closeTab", { label: tab.label })}
+              >
+                <X size={11} strokeWidth={2} aria-hidden="true" />
+              </button>
+            )}
           </div>
         );
       })}
+      <ConfirmDialog
+        open={pendingDirtyClose !== null}
+        onOpenChange={(open) => { if (!open) setPendingDirtyClose(null); }}
+        title={t("tabBar.dirtyCloseTitle")}
+        description={pendingDirtyClose ? t("tabBar.dirtyCloseDescription", { label: pendingDirtyClose.label }) : undefined}
+        confirmLabel={t("tabBar.dirtyCloseConfirm")}
+        cancelLabel={t("tabBar.dirtyCloseCancel")}
+        danger
+        onConfirm={() => {
+          if (pendingDirtyClose) onCloseTab(pendingDirtyClose.id);
+          setPendingDirtyClose(null);
+        }}
+      />
     </div>
   );
 }

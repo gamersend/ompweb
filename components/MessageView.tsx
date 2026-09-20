@@ -1,7 +1,9 @@
 "use client";
 
 import { memo, useState, useId, useRef, useEffect, useMemo, useCallback, type ComponentProps } from "react";
-import { Copy, Check, GitFork, CornerUpLeft, ChevronRight, ChevronDown, Brain, EyeOff, CircleAlert, CircleSlash, LoaderCircle, FileText, Search, FileEdit, Terminal, CheckSquare, Bot, Code2, Globe, MessagesSquare, Wrench } from "lucide-react";
+import { Copy, Check, GitFork, CornerUpLeft, ChevronRight, ChevronDown, Brain, EyeOff, CircleAlert, CircleSlash, LoaderCircle, FileText, Search, FileEdit, Terminal, CheckSquare, Bot, Code2, Globe, MessagesSquare, Wrench, History, Volume2, Square } from "lucide-react";
+import { toast } from "@/components/ui/toast";
+import { rememberAssistantReply, useTts } from "@/hooks/useTts";
 import { MarkdownBody } from "./MarkdownBody";
 import { MessageCopyActions } from "./MessageCopyActions";
 import { ClickableImage } from "./ImageLightbox";
@@ -205,6 +207,10 @@ interface Props {
   toolCallsDefaultCollapsed?: boolean;
   /** omp-reported output throughput (get_state.tokensPerSecond), live while streaming. */
   liveTokensPerSecond?: number | null;
+  /** P5 checkpoints: true when a checkpoint exists at/before this entry. */
+  checkpointAvailable?: boolean;
+  /** Opens the RestoreDialog for this entry (omitted while the session is busy). */
+  onRestoreFiles?: (entryId: string) => void;
 }
 
 function formatTime(ts: number | undefined, locale: Locale): string | null {
@@ -234,9 +240,9 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, forkEntryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, toolCallsDefaultCollapsed = true, liveTokensPerSecond }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, forkEntryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, toolCallsDefaultCollapsed = true, liveTokensPerSecond, checkpointAvailable, onRestoreFiles }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} checkpointAvailable={checkpointAvailable} onRestoreFiles={onRestoreFiles} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} forkEntryId={forkEntryId} onFork={onFork} forking={forking} toolCallsDefaultCollapsed={toolCallsDefaultCollapsed} liveTokensPerSecond={liveTokensPerSecond} />;
@@ -280,7 +286,9 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.prevTimestamp === next.prevTimestamp
     && prev.sessionId === next.sessionId
     && prev.toolCallsDefaultCollapsed === next.toolCallsDefaultCollapsed
-    && (!prev.isStreaming || prev.liveTokensPerSecond === next.liveTokensPerSecond);
+    && (!prev.isStreaming || prev.liveTokensPerSecond === next.liveTokensPerSecond)
+    && prev.checkpointAvailable === next.checkpointAvailable
+    && prev.onRestoreFiles === next.onRestoreFiles;
 });
 
 // lib/types.ts ImageContent uses the Anthropic-style {source:{type,data,media_type,url}}
@@ -336,7 +344,64 @@ function ForkSessionButton({ entryId, onFork, forking }: {
     </Tooltip>
   );
 }
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent }: {  message: UserMessage;
+
+/**
+ * 6b TTS replies: 🔊/⏹ read-aloud toggle on completed assistant messages.
+ * Self-contained (owns its useTts instance) so playback state comes from the
+ * module-level store in hooks/useTts instead of ChatWindow props — that keeps
+ * MessageView's memo comparator untouched. Hidden while streaming (the whole
+ * action row is) and when the message has no visible text.
+ */
+function TtsSpeakButton({ entryId, texts }: { entryId?: string; texts: string[] }) {
+  const { t } = useI18n();
+  const fullText = useMemo(() => texts.join("\n"), [texts]);
+  const { playback, toggle } = useTts({
+    onError: (error) => {
+      toast.error(
+        error.code === "not_configured"
+          ? t("tts.notConfigured")
+          : t("tts.failed", { detail: error.detail }),
+      );
+    },
+  });
+  if (!entryId || !fullText.trim()) return null;
+  const active = playback.entryId === entryId;
+  const speaking = active && !playback.loading;
+  const label = speaking || active ? t("tts.stop") : t("tts.speak");
+  return (
+    <Tooltip content={label}>
+      <button
+        type="button"
+        onClick={() => toggle(entryId, fullText)}
+        aria-label={label}
+        aria-pressed={speaking}
+        data-tts-active={speaking ? "true" : undefined}
+        style={{
+          display: "flex", alignItems: "center", gap: 4,
+          padding: "3px 8px", height: 24, minHeight: 24,
+          background: "none", border: "none",
+          borderRadius: 5,
+          color: active ? "var(--accent)" : "var(--text-dim)",
+          cursor: "pointer",
+          fontSize: 11, fontWeight: 400,
+          whiteSpace: "nowrap",
+          transition: "color var(--dur-fast) var(--ease-out-warm)",
+        }}
+        onMouseEnter={(e) => { if (!active) e.currentTarget.style.color = "var(--accent)"; }}
+        onMouseLeave={(e) => { if (!active) e.currentTarget.style.color = "var(--text-dim)"; }}
+      >
+        {speaking ? (
+          <Square size={11} strokeWidth={1.8} />
+        ) : active ? (
+          <LoaderCircle size={11} strokeWidth={1.8} className="activity-row-spinner" />
+        ) : (
+          <Volume2 size={11} strokeWidth={1.8} />
+        )}
+      </button>
+    </Tooltip>
+  );
+}
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, checkpointAvailable, onRestoreFiles }: {  message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
   entryId?: string;
@@ -345,6 +410,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   onNavigate?: (entryId: string) => boolean | Promise<boolean>;
   prevAssistantEntryId?: string;
   onEditContent?: (content: string) => void;
+  checkpointAvailable?: boolean;
+  onRestoreFiles?: (entryId: string) => void;
 }) {
   const { t, locale } = useI18n();
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -365,6 +432,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   const time = formatTime(message.timestamp, locale);
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
+  const canRestore = !!entryId && !!onRestoreFiles && checkpointAvailable === true;
 
   return (
     <div
@@ -419,12 +487,36 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             gap: 6, marginTop: 3, width: "100%",
           }}>
           <MessageCopyActions texts={[content]} bodyRef={bodyRef} />
-          {(canFork || canNavigate) && (
+          {(canRestore || canFork || canNavigate) && (
             <div
               style={{
                 display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 3,
               }}
             >
+              {canRestore && (
+                <Tooltip content={t("checkpoints.actionTitle")}>
+                  <button
+                    onClick={() => { onRestoreFiles!(entryId!); }}
+                    aria-label={t("checkpoints.actionTitle")}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 4,
+                      padding: "3px 8px", height: 24, minHeight: 24,
+                      background: "none", border: "none",
+                      borderRadius: 5,
+                      color: "var(--text-dim)",
+                      cursor: "pointer",
+                      fontSize: 11, fontWeight: 400,
+                      whiteSpace: "nowrap",
+                      transition: "color var(--dur-fast) var(--ease-out-warm)",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+                  >
+                    <History size={11} strokeWidth={1.8} />
+                    {t("checkpoints.actionLabel")}
+                  </button>
+                </Tooltip>
+              )}
               {canNavigate && (
                 <Tooltip content={t("messageView.editFromHereTitle")}>
                   <button
@@ -514,6 +606,13 @@ function AssistantMessageView({
   const bodyRef = useRef<HTMLDivElement>(null);
   const texts = (message.content ?? []).filter((block): block is TextContent => block.type === "text").map((block) => block.text);
   const canFork = !!forkEntryId && !!onFork;
+  // 6b TTS: register each completed reply so ChatWindow's agent_end
+  // auto-speak finds the newest assistant text without props threading.
+  const ttsText = useMemo(() => texts.join("\n"), [texts]);
+  useEffect(() => {
+    if (isStreaming || !ttsText.trim()) return;
+    rememberAssistantReply(entryId, ttsText, message.timestamp ?? Date.now());
+  }, [entryId, isStreaming, ttsText, message.timestamp]);
   const blockItems = (message.content ?? [])
     .map((block, originalIndex) => ({ block, originalIndex }))
     .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming }));
@@ -739,6 +838,7 @@ function AssistantMessageView({
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 6, marginTop: 3 }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 3 }}>
             <MessageCopyActions texts={texts} bodyRef={bodyRef} />
+            <TtsSpeakButton entryId={entryId} texts={texts} />
             {canFork && <ForkSessionButton entryId={forkEntryId!} onFork={onFork!} forking={forking} />}
           </div>
           {time && <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>}

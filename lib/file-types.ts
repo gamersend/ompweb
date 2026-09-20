@@ -77,6 +77,37 @@ export function getStreamSecurityHeaders(contentType: string): Record<string, st
   };
 }
 
+/**
+ * Extensions the file editor must never load or write. The list is a
+ * denylist on purpose: text formats appear faster than anyone updates an
+ * allowlist, and the route additionally refuses any body that is not valid
+ * UTF-8, so a mislabeled binary still cannot be served or saved as text.
+ * Mirrored by the editor's own load path — keep both on this one constant.
+ */
+const BINARY_EDIT_DENYLIST = new Set([
+  // Images (includes svg+xml? no — svg is text and safe to edit as text)
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif", "tif", "tiff", "heic", "heif",
+  // Audio / video
+  "mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac", "weba", "webm",
+  "mp4", "mov", "avi", "mkv", "wmv", "flv", "m4v", "mpg", "mpeg",
+  // Documents / print
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
+  // Archives / packages / disk images
+  "zip", "tar", "gz", "bz2", "xz", "zst", "7z", "rar", "jar", "war", "apk", "ipa", "dmg", "iso", "img",
+  // Executables / libraries / object code
+  "exe", "dll", "so", "dylib", "bin", "com", "msi", "elf", "o", "obj", "a", "lib", "class", "pyc", "pyo", "wasm",
+  // Fonts
+  "ttf", "otf", "woff", "woff2", "eot",
+  // Databases / compiled stores
+  "db", "sqlite", "sqlite3", "mdb", "accdb", "dat",
+  // Certificates / key material and other opaque blobs
+  "p12", "pfx", "keystore", "der", "crt",
+]);
+
+export function isEditableTextPath(filePath: string): boolean {
+  return !BINARY_EDIT_DENYLIST.has(getFileExt(filePath));
+}
+
 export function isImagePath(filePath: string): boolean {
   return getImageMime(filePath) !== null;
 }

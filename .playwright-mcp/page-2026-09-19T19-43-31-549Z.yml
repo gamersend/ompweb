@@ -1,0 +1,785 @@
+- generic [active] [ref=f9e1]:
+  - generic [ref=f9e2]:
+    - generic [ref=f9e4]:
+      - generic [ref=f9e5]:
+        - generic [ref=f9e6]:
+          - button "omp logo ompweb" [ref=f9e7] [cursor=pointer]:
+            - img "omp logo" [ref=f9e8]
+            - generic [ref=f9e11]: ompweb
+          - generic [ref=f9e12]:
+            - button "Archived Sessions" [ref=f9e13] [cursor=pointer]
+            - button "Import session" [ref=f9e17] [cursor=pointer]
+            - button "Refresh" [ref=f9e22] [cursor=pointer]
+        - button "New Session" [ref=f9e28] [cursor=pointer]
+      - generic [ref=f9e31]:
+        - generic [ref=f9e32]: Workspaces
+        - button "Search sessions" [ref=f9e33] [cursor=pointer]
+        - button "Show running sessions only" [ref=f9e37] [cursor=pointer]
+        - button "Add workspace" [ref=f9e39] [cursor=pointer]
+      - generic [ref=f9e41]:
+        - generic [ref=f9e107]:
+          - generic [ref=f9e108]:
+            - button "mcpscratch" [ref=f9e109] [cursor=pointer]
+            - button "Actions" [ref=f9e114] [cursor=pointer]
+            - button "Collapse mcpscratch" [expanded] [ref=f9e119] [cursor=pointer]
+          - generic [ref=f9e122]:
+            - generic [ref=f9e125] [cursor=pointer]:
+              - button "Spawn ONE subagent via the task tool with agent ty" [ref=f9e126]
+              - generic "1 bookmark" [ref=f9e128]: "1"
+              - generic [ref=f9e132]:
+                - generic "8/5/2026, 10:09:31 PM" [ref=f9e134]: 1mo
+                - button "Project actions" [ref=f9e136]
+            - generic [ref=f9e143] [cursor=pointer]:
+              - button "Spawn ONE subagent via the task tool with agent ty" [ref=f9e144]
+              - generic [ref=f9e147]:
+                - generic "8/5/2026, 10:08:19 PM" [ref=f9e149]: 1mo
+                - button "Project actions" [ref=f9e151]
+        - generic [ref=f9e157]:
+          - button "blaze" [ref=f9e158] [cursor=pointer]
+          - button "Actions" [ref=f9e163] [cursor=pointer]
+          - button "Expand blaze" [ref=f9e168] [cursor=pointer]
+        - generic [ref=f9e172]:
+          - button ".omp" [ref=f9e173] [cursor=pointer]
+          - button "Actions" [ref=f9e178] [cursor=pointer]
+          - button "Expand .omp" [ref=f9e183] [cursor=pointer]
+        - generic [ref=f9e187]:
+          - button "scratchpad" [ref=f9e188] [cursor=pointer]
+          - button "Actions" [ref=f9e193] [cursor=pointer]
+          - button "Expand scratchpad" [ref=f9e198] [cursor=pointer]
+        - generic [ref=f9e202]:
+          - button "Desktop" [ref=f9e203] [cursor=pointer]
+          - button "Actions" [ref=f9e208] [cursor=pointer]
+          - button "Expand Desktop" [ref=f9e213] [cursor=pointer]
+        - generic [ref=f9e217]:
+          - button "bobbabobba" [ref=f9e218] [cursor=pointer]
+          - button "Actions" [ref=f9e223] [cursor=pointer]
+          - button "Expand bobbabobba" [ref=f9e228] [cursor=pointer]
+        - generic [ref=f9e232]:
+          - button "GameCreation" [ref=f9e233] [cursor=pointer]
+          - button "Actions" [ref=f9e238] [cursor=pointer]
+          - button "Expand GameCreation" [ref=f9e243] [cursor=pointer]
+        - generic [ref=f9e247]:
+          - button "Skillshare-water-skills" [ref=f9e248] [cursor=pointer]
+          - button "Actions" [ref=f9e253] [cursor=pointer]
+          - button "Expand Skillshare-water-skills" [ref=f9e258] [cursor=pointer]
+        - generic [ref=f9e262]:
+          - button "pencil" [ref=f9e263] [cursor=pointer]
+          - button "Actions" [ref=f9e268] [cursor=pointer]
+          - button "Expand pencil" [ref=f9e273] [cursor=pointer]
+        - generic [ref=f9e277]:
+          - button "realtime-voice-chat" [ref=f9e278] [cursor=pointer]
+          - button "Actions" [ref=f9e283] [cursor=pointer]
+          - button "Expand realtime-voice-chat" [ref=f9e288] [cursor=pointer]
+        - generic [ref=f9e292]:
+          - button "fire" [ref=f9e293] [cursor=pointer]
+          - button "Actions" [ref=f9e298] [cursor=pointer]
+          - button "Expand fire" [ref=f9e303] [cursor=pointer]
+        - generic [ref=f9e307]:
+          - button "GameDEV" [ref=f9e308] [cursor=pointer]
+          - button "Actions" [ref=f9e313] [cursor=pointer]
+          - button "Expand GameDEV" [ref=f9e318] [cursor=pointer]
+        - generic [ref=f9e322]:
+          - button "agent-plugins" [ref=f9e323] [cursor=pointer]
+          - button "Actions" [ref=f9e328] [cursor=pointer]
+          - button "Expand agent-plugins" [ref=f9e333] [cursor=pointer]
+        - generic [ref=f9e337]:
+          - button "auraterm" [ref=f9e338] [cursor=pointer]
+          - button "Actions" [ref=f9e343] [cursor=pointer]
+          - button "Expand auraterm" [ref=f9e348] [cursor=pointer]
+        - generic [ref=f9e352]:
+          - button "benchblazer" [ref=f9e353] [cursor=pointer]
+          - button "Actions" [ref=f9e358] [cursor=pointer]
+          - button "Expand benchblazer" [ref=f9e363] [cursor=pointer]
+        - generic [ref=f9e367]:
+          - button "blaze-command-center" [ref=f9e368] [cursor=pointer]
+          - button "Actions" [ref=f9e373] [cursor=pointer]
+          - button "Expand blaze-command-center" [ref=f9e378] [cursor=pointer]
+        - generic [ref=f9e382]:
+          - button "blaze-pipecat-test" [ref=f9e383] [cursor=pointer]
+          - button "Actions" [ref=f9e388] [cursor=pointer]
+          - button "Expand blaze-pipecat-test" [ref=f9e393] [cursor=pointer]
+        - generic [ref=f9e397]:
+          - button "drawland" [ref=f9e398] [cursor=pointer]
+          - button "Actions" [ref=f9e403] [cursor=pointer]
+          - button "Expand drawland" [ref=f9e408] [cursor=pointer]
+        - generic [ref=f9e412]:
+          - button "da-android-design" [ref=f9e413] [cursor=pointer]
+          - button "Actions" [ref=f9e418] [cursor=pointer]
+          - button "Expand da-android-design" [ref=f9e423] [cursor=pointer]
+        - generic [ref=f9e427]:
+          - button "dw-windows-design" [ref=f9e428] [cursor=pointer]
+          - button "Actions" [ref=f9e433] [cursor=pointer]
+          - button "Expand dw-windows-design" [ref=f9e438] [cursor=pointer]
+        - generic [ref=f9e442]:
+          - button "f-relay" [ref=f9e443] [cursor=pointer]
+          - button "Actions" [ref=f9e448] [cursor=pointer]
+          - button "Expand f-relay" [ref=f9e453] [cursor=pointer]
+        - generic [ref=f9e457]:
+          - button "h-sync" [ref=f9e458] [cursor=pointer]
+          - button "Actions" [ref=f9e463] [cursor=pointer]
+          - button "Expand h-sync" [ref=f9e468] [cursor=pointer]
+        - generic [ref=f9e472]:
+          - button "m-search" [ref=f9e473] [cursor=pointer]
+          - button "Actions" [ref=f9e478] [cursor=pointer]
+          - button "Expand m-search" [ref=f9e483] [cursor=pointer]
+        - generic [ref=f9e487]:
+          - button "n-capture" [ref=f9e488] [cursor=pointer]
+          - button "Actions" [ref=f9e493] [cursor=pointer]
+          - button "Expand n-capture" [ref=f9e498] [cursor=pointer]
+        - generic [ref=f9e502]:
+          - button "o-relay" [ref=f9e503] [cursor=pointer]
+          - button "Actions" [ref=f9e508] [cursor=pointer]
+          - button "Expand o-relay" [ref=f9e513] [cursor=pointer]
+        - generic [ref=f9e517]:
+          - button "p-cli" [ref=f9e518] [cursor=pointer]
+          - button "Actions" [ref=f9e523] [cursor=pointer]
+          - button "Expand p-cli" [ref=f9e528] [cursor=pointer]
+        - generic [ref=f9e532]:
+          - button "r6-abi" [ref=f9e533] [cursor=pointer]
+          - button "Actions" [ref=f9e538] [cursor=pointer]
+          - button "Expand r6-abi" [ref=f9e543] [cursor=pointer]
+        - generic [ref=f9e547]:
+          - button "r6-android" [ref=f9e548] [cursor=pointer]
+          - button "Actions" [ref=f9e553] [cursor=pointer]
+          - button "Expand r6-android" [ref=f9e558] [cursor=pointer]
+        - generic [ref=f9e562]:
+          - button "r6-bindings" [ref=f9e563] [cursor=pointer]
+          - button "Actions" [ref=f9e568] [cursor=pointer]
+          - button "Expand r6-bindings" [ref=f9e573] [cursor=pointer]
+        - generic [ref=f9e577]:
+          - button "r6-core" [ref=f9e578] [cursor=pointer]
+          - button "Actions" [ref=f9e583] [cursor=pointer]
+          - button "Expand r6-core" [ref=f9e588] [cursor=pointer]
+        - generic [ref=f9e592]:
+          - button "r6-daemon" [ref=f9e593] [cursor=pointer]
+          - button "Actions" [ref=f9e598] [cursor=pointer]
+          - button "Expand r6-daemon" [ref=f9e603] [cursor=pointer]
+        - generic [ref=f9e607]:
+          - button "r6-proof" [ref=f9e608] [cursor=pointer]
+          - button "Actions" [ref=f9e613] [cursor=pointer]
+          - button "Expand r6-proof" [ref=f9e618] [cursor=pointer]
+        - generic [ref=f9e622]:
+          - button "r6-windows" [ref=f9e623] [cursor=pointer]
+          - button "Actions" [ref=f9e628] [cursor=pointer]
+          - button "Expand r6-windows" [ref=f9e633] [cursor=pointer]
+        - generic [ref=f9e637]:
+          - button "s-windows" [ref=f9e638] [cursor=pointer]
+          - button "Actions" [ref=f9e643] [cursor=pointer]
+          - button "Expand s-windows" [ref=f9e648] [cursor=pointer]
+        - generic [ref=f9e652]:
+          - button "t-android" [ref=f9e653] [cursor=pointer]
+          - button "Actions" [ref=f9e658] [cursor=pointer]
+          - button "Expand t-android" [ref=f9e663] [cursor=pointer]
+        - generic [ref=f9e667]:
+          - button "u-ai" [ref=f9e668] [cursor=pointer]
+          - button "Actions" [ref=f9e673] [cursor=pointer]
+          - button "Expand u-ai" [ref=f9e678] [cursor=pointer]
+        - generic [ref=f9e682]:
+          - button "v-extensions" [ref=f9e683] [cursor=pointer]
+          - button "Actions" [ref=f9e688] [cursor=pointer]
+          - button "Expand v-extensions" [ref=f9e693] [cursor=pointer]
+        - generic [ref=f9e697]:
+          - button "w-hardening" [ref=f9e698] [cursor=pointer]
+          - button "Actions" [ref=f9e703] [cursor=pointer]
+          - button "Expand w-hardening" [ref=f9e708] [cursor=pointer]
+        - generic [ref=f9e712]:
+          - button "z-android-engine" [ref=f9e713] [cursor=pointer]
+          - button "Actions" [ref=f9e718] [cursor=pointer]
+          - button "Expand z-android-engine" [ref=f9e723] [cursor=pointer]
+        - generic [ref=f9e727]:
+          - button "fableforge" [ref=f9e728] [cursor=pointer]
+          - button "Actions" [ref=f9e733] [cursor=pointer]
+          - button "Expand fableforge" [ref=f9e738] [cursor=pointer]
+        - generic [ref=f9e742]:
+          - button "ff-cliff-observatory" [ref=f9e743] [cursor=pointer]
+          - button "Actions" [ref=f9e748] [cursor=pointer]
+          - button "Expand ff-cliff-observatory" [ref=f9e753] [cursor=pointer]
+        - generic [ref=f9e757]:
+          - button "ff-the-foundry" [ref=f9e758] [cursor=pointer]
+          - button "Actions" [ref=f9e763] [cursor=pointer]
+          - button "Expand ff-the-foundry" [ref=f9e768] [cursor=pointer]
+        - generic [ref=f9e772]:
+          - button "ff-the-glasshouse" [ref=f9e773] [cursor=pointer]
+          - button "Actions" [ref=f9e778] [cursor=pointer]
+          - button "Expand ff-the-glasshouse" [ref=f9e783] [cursor=pointer]
+        - generic [ref=f9e787]:
+          - button "ff-the-interchange" [ref=f9e788] [cursor=pointer]
+          - button "Actions" [ref=f9e793] [cursor=pointer]
+          - button "Expand ff-the-interchange" [ref=f9e798] [cursor=pointer]
+        - generic [ref=f9e802]:
+          - button "firedeck" [ref=f9e803] [cursor=pointer]
+          - button "Actions" [ref=f9e808] [cursor=pointer]
+          - button "Expand firedeck" [ref=f9e813] [cursor=pointer]
+        - generic [ref=f9e817]:
+          - button "server" [ref=f9e818] [cursor=pointer]
+          - button "Actions" [ref=f9e823] [cursor=pointer]
+          - button "Expand server" [ref=f9e828] [cursor=pointer]
+        - generic [ref=f9e832]:
+          - button "fleetdeck" [ref=f9e833] [cursor=pointer]
+          - button "Actions" [ref=f9e838] [cursor=pointer]
+          - button "Expand fleetdeck" [ref=f9e843] [cursor=pointer]
+        - generic [ref=f9e847]:
+          - button "ForgePad" [ref=f9e848] [cursor=pointer]
+          - button "Actions" [ref=f9e853] [cursor=pointer]
+          - button "Expand ForgePad" [ref=f9e858] [cursor=pointer]
+        - generic [ref=f9e862]:
+          - button "harnessland" [ref=f9e863] [cursor=pointer]
+          - button "Actions" [ref=f9e868] [cursor=pointer]
+          - button "Expand harnessland" [ref=f9e873] [cursor=pointer]
+        - generic [ref=f9e877]:
+          - button "multi" [ref=f9e878] [cursor=pointer]
+          - button "Actions" [ref=f9e883] [cursor=pointer]
+          - button "Expand multi" [ref=f9e888] [cursor=pointer]
+        - generic [ref=f9e892]:
+          - button "net-projects-platform" [ref=f9e893] [cursor=pointer]
+          - button "Actions" [ref=f9e898] [cursor=pointer]
+          - button "Expand net-projects-platform" [ref=f9e903] [cursor=pointer]
+        - generic [ref=f9e907]:
+          - button "nexus" [ref=f9e908] [cursor=pointer]
+          - button "Actions" [ref=f9e913] [cursor=pointer]
+          - button "Expand nexus" [ref=f9e918] [cursor=pointer]
+        - generic [ref=f9e922]:
+          - button "c3-creative-media" [ref=f9e923] [cursor=pointer]
+          - button "Actions" [ref=f9e928] [cursor=pointer]
+          - button "Expand c3-creative-media" [ref=f9e933] [cursor=pointer]
+        - generic [ref=f9e937]:
+          - button "c6-voice-graph" [ref=f9e938] [cursor=pointer]
+          - button "Actions" [ref=f9e943] [cursor=pointer]
+          - button "Expand c6-voice-graph" [ref=f9e948] [cursor=pointer]
+        - generic [ref=f9e952]:
+          - button "c7-live-e2e" [ref=f9e953] [cursor=pointer]
+          - button "Actions" [ref=f9e958] [cursor=pointer]
+          - button "Expand c7-live-e2e" [ref=f9e963] [cursor=pointer]
+        - generic [ref=f9e967]:
+          - button "d1-people" [ref=f9e968] [cursor=pointer]
+          - button "Actions" [ref=f9e973] [cursor=pointer]
+          - button "Expand d1-people" [ref=f9e978] [cursor=pointer]
+        - generic [ref=f9e982]:
+          - button "d2-recent-calls" [ref=f9e983] [cursor=pointer]
+          - button "Actions" [ref=f9e988] [cursor=pointer]
+          - button "Expand d2-recent-calls" [ref=f9e993] [cursor=pointer]
+        - generic [ref=f9e997]:
+          - button "d3-replay" [ref=f9e998] [cursor=pointer]
+          - button "Actions" [ref=f9e1003] [cursor=pointer]
+          - button "Expand d3-replay" [ref=f9e1008] [cursor=pointer]
+        - generic [ref=f9e1012]:
+          - button "d4-stats" [ref=f9e1013] [cursor=pointer]
+          - button "Actions" [ref=f9e1018] [cursor=pointer]
+          - button "Expand d4-stats" [ref=f9e1023] [cursor=pointer]
+        - generic [ref=f9e1027]:
+          - button "d5-mcp-tools" [ref=f9e1028] [cursor=pointer]
+          - button "Actions" [ref=f9e1033] [cursor=pointer]
+          - button "Expand d5-mcp-tools" [ref=f9e1038] [cursor=pointer]
+        - generic [ref=f9e1042]:
+          - button "r6-agent-chat" [ref=f9e1043] [cursor=pointer]
+          - button "Actions" [ref=f9e1048] [cursor=pointer]
+          - button "Expand r6-agent-chat" [ref=f9e1053] [cursor=pointer]
+        - generic [ref=f9e1057]:
+          - button "r7-thin-capabilities" [ref=f9e1058] [cursor=pointer]
+          - button "Actions" [ref=f9e1063] [cursor=pointer]
+          - button "Expand r7-thin-capabilities" [ref=f9e1068] [cursor=pointer]
+        - generic [ref=f9e1072]:
+          - button "nolimit-remote" [ref=f9e1073] [cursor=pointer]
+          - button "Actions" [ref=f9e1078] [cursor=pointer]
+          - button "Expand nolimit-remote" [ref=f9e1083] [cursor=pointer]
+        - generic [ref=f9e1087]:
+          - button "ompweb" [ref=f9e1088] [cursor=pointer]
+          - button "Actions" [ref=f9e1093] [cursor=pointer]
+          - button "Expand ompweb" [ref=f9e1098] [cursor=pointer]
+        - generic [ref=f9e1102]:
+          - button "PinDrip" [ref=f9e1103] [cursor=pointer]
+          - button "Actions" [ref=f9e1108] [cursor=pointer]
+          - button "Expand PinDrip" [ref=f9e1113] [cursor=pointer]
+        - generic [ref=f9e1117]:
+          - button "room-studio" [ref=f9e1118] [cursor=pointer]
+          - button "Actions" [ref=f9e1123] [cursor=pointer]
+          - button "Expand room-studio" [ref=f9e1128] [cursor=pointer]
+        - generic [ref=f9e1132]:
+          - button "simli" [ref=f9e1133] [cursor=pointer]
+          - button "Actions" [ref=f9e1138] [cursor=pointer]
+          - button "Expand simli" [ref=f9e1143] [cursor=pointer]
+        - generic [ref=f9e1147]:
+          - button "simli-nexus" [ref=f9e1148] [cursor=pointer]
+          - button "Actions" [ref=f9e1153] [cursor=pointer]
+          - button "Expand simli-nexus" [ref=f9e1158] [cursor=pointer]
+        - generic [ref=f9e1162]:
+          - button "testflight-crash-triage" [ref=f9e1163] [cursor=pointer]
+          - button "Actions" [ref=f9e1168] [cursor=pointer]
+          - button "Expand testflight-crash-triage" [ref=f9e1173] [cursor=pointer]
+        - generic [ref=f9e1177]:
+          - button "textforge" [ref=f9e1178] [cursor=pointer]
+          - button "Actions" [ref=f9e1183] [cursor=pointer]
+          - button "Expand textforge" [ref=f9e1188] [cursor=pointer]
+        - generic [ref=f9e1192]:
+          - button "winter63" [ref=f9e1193] [cursor=pointer]
+          - button "Actions" [ref=f9e1198] [cursor=pointer]
+          - button "Expand winter63" [ref=f9e1203] [cursor=pointer]
+        - generic [ref=f9e1207]:
+          - button "worldroot" [ref=f9e1208] [cursor=pointer]
+          - button "Actions" [ref=f9e1213] [cursor=pointer]
+          - button "Expand worldroot" [ref=f9e1218] [cursor=pointer]
+        - generic [ref=f9e1222]:
+          - button "ytm" [ref=f9e1223] [cursor=pointer]
+          - button "Actions" [ref=f9e1228] [cursor=pointer]
+          - button "Expand ytm" [ref=f9e1233] [cursor=pointer]
+        - generic [ref=f9e1237]:
+          - button "Unreal Projects" [ref=f9e1238] [cursor=pointer]
+          - button "Actions" [ref=f9e1243] [cursor=pointer]
+          - button "Expand Unreal Projects" [ref=f9e1248] [cursor=pointer]
+        - generic [ref=f9e1252]:
+          - button "vault" [ref=f9e1253] [cursor=pointer]
+          - button "Actions" [ref=f9e1258] [cursor=pointer]
+          - button "Expand vault" [ref=f9e1263] [cursor=pointer]
+        - generic [ref=f9e1267]:
+          - button "mcponly" [ref=f9e1268] [cursor=pointer]
+          - button "Actions" [ref=f9e1273] [cursor=pointer]
+          - button "Expand mcponly" [ref=f9e1278] [cursor=pointer]
+        - generic [ref=f9e1282]:
+          - button "retirement-parity-audit" [ref=f9e1283] [cursor=pointer]
+          - button "Actions" [ref=f9e1288] [cursor=pointer]
+          - button "Expand retirement-parity-audit" [ref=f9e1293] [cursor=pointer]
+        - generic [ref=f9e1297]:
+          - button "fire-audit-review" [ref=f9e1298] [cursor=pointer]
+          - button "Actions" [ref=f9e1303] [cursor=pointer]
+          - button "Expand fire-audit-review" [ref=f9e1308] [cursor=pointer]
+        - generic [ref=f9e1312]:
+          - button "forgepad-backend-connectivity" [ref=f9e1313] [cursor=pointer]
+          - button "Actions" [ref=f9e1318] [cursor=pointer]
+          - button "Expand forgepad-backend-connectivity" [ref=f9e1323] [cursor=pointer]
+        - generic [ref=f9e1327]:
+          - button "forgepad-visionos-native-ui-audit" [ref=f9e1328] [cursor=pointer]
+          - button "Actions" [ref=f9e1333] [cursor=pointer]
+          - button "Expand forgepad-visionos-native-ui-audit" [ref=f9e1338] [cursor=pointer]
+        - generic [ref=f9e1342]:
+          - button "forgepad-visionos-spatial-audit" [ref=f9e1343] [cursor=pointer]
+          - button "Actions" [ref=f9e1348] [cursor=pointer]
+          - button "Expand forgepad-visionos-spatial-audit" [ref=f9e1353] [cursor=pointer]
+        - generic [ref=f9e1357]:
+          - button "forgepad-visionos27-spatial" [ref=f9e1358] [cursor=pointer]
+          - button "Actions" [ref=f9e1363] [cursor=pointer]
+          - button "Expand forgepad-visionos27-spatial" [ref=f9e1368] [cursor=pointer]
+        - generic [ref=f9e1372]:
+          - button "multi-complete-build" [ref=f9e1373] [cursor=pointer]
+          - button "Actions" [ref=f9e1378] [cursor=pointer]
+          - button "Expand multi-complete-build" [ref=f9e1383] [cursor=pointer]
+        - generic [ref=f9e1387]:
+          - button "accessibility" [ref=f9e1388] [cursor=pointer]
+          - button "Actions" [ref=f9e1393] [cursor=pointer]
+          - button "Expand accessibility" [ref=f9e1398] [cursor=pointer]
+        - generic [ref=f9e1402]:
+          - button "audio-ownership" [ref=f9e1403] [cursor=pointer]
+          - button "Actions" [ref=f9e1408] [cursor=pointer]
+          - button "Expand audio-ownership" [ref=f9e1413] [cursor=pointer]
+        - generic [ref=f9e1417]:
+          - button "aura-chat-composer" [ref=f9e1418] [cursor=pointer]
+          - button "Actions" [ref=f9e1423] [cursor=pointer]
+          - button "Expand aura-chat-composer" [ref=f9e1428] [cursor=pointer]
+        - generic [ref=f9e1432]:
+          - button "aura-completeness-credentials-audit" [ref=f9e1433] [cursor=pointer]
+          - button "Actions" [ref=f9e1438] [cursor=pointer]
+          - button "Expand aura-completeness-credentials-audit" [ref=f9e1443] [cursor=pointer]
+        - generic [ref=f9e1447]:
+          - button "aura-core-experience" [ref=f9e1448] [cursor=pointer]
+          - button "Actions" [ref=f9e1453] [cursor=pointer]
+          - button "Expand aura-core-experience" [ref=f9e1458] [cursor=pointer]
+        - generic [ref=f9e1462]:
+          - button "aura-dashboard-workflows" [ref=f9e1463] [cursor=pointer]
+          - button "Actions" [ref=f9e1468] [cursor=pointer]
+          - button "Expand aura-dashboard-workflows" [ref=f9e1473] [cursor=pointer]
+        - generic [ref=f9e1477]:
+          - button "aura-deepseek-water-routing" [ref=f9e1478] [cursor=pointer]
+          - button "Actions" [ref=f9e1483] [cursor=pointer]
+          - button "Expand aura-deepseek-water-routing" [ref=f9e1488] [cursor=pointer]
+        - generic [ref=f9e1492]:
+          - button "aura-fleet-operations" [ref=f9e1493] [cursor=pointer]
+          - button "Actions" [ref=f9e1498] [cursor=pointer]
+          - button "Expand aura-fleet-operations" [ref=f9e1503] [cursor=pointer]
+        - generic [ref=f9e1507]:
+          - button "aura-governance-persona" [ref=f9e1508] [cursor=pointer]
+          - button "Actions" [ref=f9e1513] [cursor=pointer]
+          - button "Expand aura-governance-persona" [ref=f9e1518] [cursor=pointer]
+        - generic [ref=f9e1522]:
+          - button "aura-knowledge-artifacts" [ref=f9e1523] [cursor=pointer]
+          - button "Actions" [ref=f9e1528] [cursor=pointer]
+          - button "Expand aura-knowledge-artifacts" [ref=f9e1533] [cursor=pointer]
+        - generic [ref=f9e1537]:
+          - button "avatar-rig" [ref=f9e1538] [cursor=pointer]
+          - button "Actions" [ref=f9e1543] [cursor=pointer]
+          - button "Expand avatar-rig" [ref=f9e1548] [cursor=pointer]
+        - generic [ref=f9e1552]:
+          - button "chat-decomposition" [ref=f9e1553] [cursor=pointer]
+          - button "Actions" [ref=f9e1558] [cursor=pointer]
+          - button "Expand chat-decomposition" [ref=f9e1563] [cursor=pointer]
+        - generic [ref=f9e1567]:
+          - button "ci-buildgates" [ref=f9e1568] [cursor=pointer]
+          - button "Actions" [ref=f9e1573] [cursor=pointer]
+          - button "Expand ci-buildgates" [ref=f9e1578] [cursor=pointer]
+        - generic [ref=f9e1582]:
+          - button "code-workspace" [ref=f9e1583] [cursor=pointer]
+          - button "Actions" [ref=f9e1588] [cursor=pointer]
+          - button "Expand code-workspace" [ref=f9e1593] [cursor=pointer]
+        - generic [ref=f9e1597]:
+          - button "cowork-openwork" [ref=f9e1598] [cursor=pointer]
+          - button "Actions" [ref=f9e1603] [cursor=pointer]
+          - button "Expand cowork-openwork" [ref=f9e1608] [cursor=pointer]
+        - generic [ref=f9e1612]:
+          - button "data-channel-parity" [ref=f9e1613] [cursor=pointer]
+          - button "Actions" [ref=f9e1618] [cursor=pointer]
+          - button "Expand data-channel-parity" [ref=f9e1623] [cursor=pointer]
+        - generic [ref=f9e1627]:
+          - button "debate-council" [ref=f9e1628] [cursor=pointer]
+          - button "Actions" [ref=f9e1633] [cursor=pointer]
+          - button "Expand debate-council" [ref=f9e1638] [cursor=pointer]
+        - generic [ref=f9e1642]:
+          - button "design-studio" [ref=f9e1643] [cursor=pointer]
+          - button "Actions" [ref=f9e1648] [cursor=pointer]
+          - button "Expand design-studio" [ref=f9e1653] [cursor=pointer]
+        - generic [ref=f9e1657]:
+          - button "docs-reconciliation" [ref=f9e1658] [cursor=pointer]
+          - button "Actions" [ref=f9e1663] [cursor=pointer]
+          - button "Expand docs-reconciliation" [ref=f9e1668] [cursor=pointer]
+        - generic [ref=f9e1672]:
+          - button "imagine-comfyui" [ref=f9e1673] [cursor=pointer]
+          - button "Actions" [ref=f9e1678] [cursor=pointer]
+          - button "Expand imagine-comfyui" [ref=f9e1683] [cursor=pointer]
+        - generic [ref=f9e1687]:
+          - button "intents-entities" [ref=f9e1688] [cursor=pointer]
+          - button "Actions" [ref=f9e1693] [cursor=pointer]
+          - button "Expand intents-entities" [ref=f9e1698] [cursor=pointer]
+        - generic [ref=f9e1702]:
+          - button "ipad-platform" [ref=f9e1703] [cursor=pointer]
+          - button "Actions" [ref=f9e1708] [cursor=pointer]
+          - button "Expand ipad-platform" [ref=f9e1713] [cursor=pointer]
+        - generic [ref=f9e1717]:
+          - button "light-mode" [ref=f9e1718] [cursor=pointer]
+          - button "Actions" [ref=f9e1723] [cursor=pointer]
+          - button "Expand light-mode" [ref=f9e1728] [cursor=pointer]
+        - generic [ref=f9e1732]:
+          - button "livekit-vision" [ref=f9e1733] [cursor=pointer]
+          - button "Actions" [ref=f9e1738] [cursor=pointer]
+          - button "Expand livekit-vision" [ref=f9e1743] [cursor=pointer]
+        - generic [ref=f9e1747]:
+          - button "macos-parity" [ref=f9e1748] [cursor=pointer]
+          - button "Actions" [ref=f9e1753] [cursor=pointer]
+          - button "Expand macos-parity" [ref=f9e1758] [cursor=pointer]
+        - generic [ref=f9e1762]:
+          - button "multi-migration-plan" [ref=f9e1763] [cursor=pointer]
+          - button "Actions" [ref=f9e1768] [cursor=pointer]
+          - button "Expand multi-migration-plan" [ref=f9e1773] [cursor=pointer]
+        - generic [ref=f9e1777]:
+          - button "notification-center" [ref=f9e1778] [cursor=pointer]
+          - button "Actions" [ref=f9e1783] [cursor=pointer]
+          - button "Expand notification-center" [ref=f9e1788] [cursor=pointer]
+        - generic [ref=f9e1792]:
+          - button "object-tracking" [ref=f9e1793] [cursor=pointer]
+          - button "Actions" [ref=f9e1798] [cursor=pointer]
+          - button "Expand object-tracking" [ref=f9e1803] [cursor=pointer]
+        - generic [ref=f9e1807]:
+          - button "orphan-routing" [ref=f9e1808] [cursor=pointer]
+          - button "Actions" [ref=f9e1813] [cursor=pointer]
+          - button "Expand orphan-routing" [ref=f9e1818] [cursor=pointer]
+        - generic [ref=f9e1822]:
+          - button "release-config" [ref=f9e1823] [cursor=pointer]
+          - button "Actions" [ref=f9e1828] [cursor=pointer]
+          - button "Expand release-config" [ref=f9e1833] [cursor=pointer]
+        - generic [ref=f9e1837]:
+          - button "room-anchors" [ref=f9e1838] [cursor=pointer]
+          - button "Actions" [ref=f9e1843] [cursor=pointer]
+          - button "Expand room-anchors" [ref=f9e1848] [cursor=pointer]
+        - generic [ref=f9e1852]:
+          - button "room-avatar" [ref=f9e1853] [cursor=pointer]
+          - button "Actions" [ref=f9e1858] [cursor=pointer]
+          - button "Expand room-avatar" [ref=f9e1863] [cursor=pointer]
+        - generic [ref=f9e1867]:
+          - button "room-mode" [ref=f9e1868] [cursor=pointer]
+          - button "Actions" [ref=f9e1873] [cursor=pointer]
+          - button "Expand room-mode" [ref=f9e1878] [cursor=pointer]
+        - generic [ref=f9e1882]:
+          - button "screen-capture" [ref=f9e1883] [cursor=pointer]
+          - button "Actions" [ref=f9e1888] [cursor=pointer]
+          - button "Expand screen-capture" [ref=f9e1893] [cursor=pointer]
+        - generic [ref=f9e1897]:
+          - button "shareplay" [ref=f9e1898] [cursor=pointer]
+          - button "Actions" [ref=f9e1903] [cursor=pointer]
+          - button "Expand shareplay" [ref=f9e1908] [cursor=pointer]
+        - generic [ref=f9e1912]:
+          - button "spatial-performance" [ref=f9e1913] [cursor=pointer]
+          - button "Actions" [ref=f9e1918] [cursor=pointer]
+          - button "Expand spatial-performance" [ref=f9e1923] [cursor=pointer]
+        - generic [ref=f9e1927]:
+          - button "swarmclaw-plan-chat" [ref=f9e1928] [cursor=pointer]
+          - button "Actions" [ref=f9e1933] [cursor=pointer]
+          - button "Expand swarmclaw-plan-chat" [ref=f9e1938] [cursor=pointer]
+        - generic [ref=f9e1942]:
+          - button "swarmclaw-plan-platform" [ref=f9e1943] [cursor=pointer]
+          - button "Actions" [ref=f9e1948] [cursor=pointer]
+          - button "Expand swarmclaw-plan-platform" [ref=f9e1953] [cursor=pointer]
+        - generic [ref=f9e1957]:
+          - button "toybox" [ref=f9e1958] [cursor=pointer]
+          - button "Actions" [ref=f9e1963] [cursor=pointer]
+          - button "Expand toybox" [ref=f9e1968] [cursor=pointer]
+        - generic [ref=f9e1972]:
+          - button "video-production" [ref=f9e1973] [cursor=pointer]
+          - button "Actions" [ref=f9e1978] [cursor=pointer]
+          - button "Expand video-production" [ref=f9e1983] [cursor=pointer]
+        - generic [ref=f9e1987]:
+          - button "vision-ambient" [ref=f9e1988] [cursor=pointer]
+          - button "Actions" [ref=f9e1993] [cursor=pointer]
+          - button "Expand vision-ambient" [ref=f9e1998] [cursor=pointer]
+        - generic [ref=f9e2002]:
+          - button "vision-constellation" [ref=f9e2003] [cursor=pointer]
+          - button "Actions" [ref=f9e2008] [cursor=pointer]
+          - button "Expand vision-constellation" [ref=f9e2013] [cursor=pointer]
+        - generic [ref=f9e2017]:
+          - button "vision-navigation" [ref=f9e2018] [cursor=pointer]
+          - button "Actions" [ref=f9e2023] [cursor=pointer]
+          - button "Expand vision-navigation" [ref=f9e2028] [cursor=pointer]
+        - generic [ref=f9e2032]:
+          - button "vision-presence" [ref=f9e2033] [cursor=pointer]
+          - button "Actions" [ref=f9e2038] [cursor=pointer]
+          - button "Expand vision-presence" [ref=f9e2043] [cursor=pointer]
+        - generic [ref=f9e2047]:
+          - button "vision-shareplay" [ref=f9e2048] [cursor=pointer]
+          - button "Actions" [ref=f9e2053] [cursor=pointer]
+          - button "Expand vision-shareplay" [ref=f9e2058] [cursor=pointer]
+        - generic [ref=f9e2062]:
+          - button "vision-shell" [ref=f9e2063] [cursor=pointer]
+          - button "Actions" [ref=f9e2068] [cursor=pointer]
+          - button "Expand vision-shell" [ref=f9e2073] [cursor=pointer]
+        - generic [ref=f9e2077]:
+          - button "vision27-capabilities" [ref=f9e2078] [cursor=pointer]
+          - button "Actions" [ref=f9e2083] [cursor=pointer]
+          - button "Expand vision27-capabilities" [ref=f9e2088] [cursor=pointer]
+        - generic [ref=f9e2092]:
+          - button "visionos-target" [ref=f9e2093] [cursor=pointer]
+          - button "Actions" [ref=f9e2098] [cursor=pointer]
+          - button "Expand visionos-target" [ref=f9e2103] [cursor=pointer]
+        - generic [ref=f9e2107]:
+          - button "wake-word" [ref=f9e2108] [cursor=pointer]
+          - button "Actions" [ref=f9e2113] [cursor=pointer]
+          - button "Expand wake-word" [ref=f9e2118] [cursor=pointer]
+        - generic [ref=f9e2122]:
+          - button "w63-bridge" [ref=f9e2123] [cursor=pointer]
+          - button "Actions" [ref=f9e2128] [cursor=pointer]
+          - button "Expand w63-bridge" [ref=f9e2133] [cursor=pointer]
+        - generic [ref=f9e2137]:
+          - button "w63-content" [ref=f9e2138] [cursor=pointer]
+          - button "Actions" [ref=f9e2143] [cursor=pointer]
+          - button "Expand w63-content" [ref=f9e2148] [cursor=pointer]
+        - generic [ref=f9e2152]:
+          - button "w63-districts" [ref=f9e2153] [cursor=pointer]
+          - button "Actions" [ref=f9e2158] [cursor=pointer]
+          - button "Expand w63-districts" [ref=f9e2163] [cursor=pointer]
+        - generic [ref=f9e2167]:
+          - button "w63-docs" [ref=f9e2168] [cursor=pointer]
+          - button "Actions" [ref=f9e2173] [cursor=pointer]
+          - button "Expand w63-docs" [ref=f9e2178] [cursor=pointer]
+        - generic [ref=f9e2182]:
+          - button "w63-platform" [ref=f9e2183] [cursor=pointer]
+          - button "Actions" [ref=f9e2188] [cursor=pointer]
+          - button "Expand w63-platform" [ref=f9e2193] [cursor=pointer]
+        - generic [ref=f9e2197]:
+          - button "w63-splash" [ref=f9e2198] [cursor=pointer]
+          - button "Actions" [ref=f9e2203] [cursor=pointer]
+          - button "Expand w63-splash" [ref=f9e2208] [cursor=pointer]
+        - generic [ref=f9e2212]:
+          - button "main" [ref=f9e2213] [cursor=pointer]
+          - button "Actions" [ref=f9e2218] [cursor=pointer]
+          - button "Expand main" [ref=f9e2223] [cursor=pointer]
+        - generic [ref=f9e2227]:
+          - button "tmp" [ref=f9e2228] [cursor=pointer]
+          - button "Actions" [ref=f9e2233] [cursor=pointer]
+          - button "Expand tmp" [ref=f9e2238] [cursor=pointer]
+        - generic [ref=f9e2242]:
+          - button "SkatingFramework" [ref=f9e2243] [cursor=pointer]
+          - button "Actions" [ref=f9e2248] [cursor=pointer]
+          - button "Expand SkatingFramework" [ref=f9e2253] [cursor=pointer]
+        - generic [ref=f9e2257]:
+          - button "Infinity" [ref=f9e2258] [cursor=pointer]
+          - button "Actions" [ref=f9e2263] [cursor=pointer]
+          - button "Expand Infinity" [ref=f9e2268] [cursor=pointer]
+      - region "Provider Usage" [ref=f9e43]:
+        - button "Provider Usage Highest 86% · 7D" [ref=f9e2271] [cursor=pointer]:
+          - generic [ref=f9e51]: Provider Usage
+          - generic [ref=f9e52]: Highest 86% · 7D
+      - button "Settings" [ref=f9e54] [cursor=pointer]
+    - separator "Resize sidebar" [ref=f9e62]
+    - main [ref=f9e63]:
+      - generic [ref=f9e64]:
+        - generic [ref=f9e65]:
+          - button "Hide sidebar" [ref=f9e66] [cursor=pointer]
+          - group [ref=f9e69]:
+            - generic [ref=f9e70]:
+              - button "Toggle theme" [ref=f9e72] [cursor=pointer]
+              - button "EN" [ref=f9e79] [cursor=pointer]
+              - button "Export session" [ref=f9e2274] [cursor=pointer]
+              - button "Branches" [ref=f9e2279] [cursor=pointer]
+              - button "Split right" [pressed] [ref=f9e2284] [cursor=pointer]
+              - button "System" [ref=f9e2287] [cursor=pointer]
+        - generic [ref=f9e82]:
+          - generic [ref=f9e83]:
+            - button "Notifications (5 unread)" [ref=f9e2290] [cursor=pointer]:
+              - generic [aria-hidden]: "5"
+            - status [ref=f9e88]: 5 new notifications
+          - button "Runs board (0 running)" [ref=f9e89] [cursor=pointer]
+        - generic [ref=f9e2291]:
+          - generic "C:\\tmp\\mcpscratch" [ref=f9e2294]: mcpscratch
+          - generic [ref=f9e2295]: /
+          - 'generic "Spawn ONE subagent via the task tool with agent type ''scout''. Task: read C:/Users/blaze/fire/repos/omp-fire/package.json and yield ONLY the version value. Reply with exactly two lines: L1=status, L2=the FULL verbatim error text if it failed, else the version." [ref=f9e2296]'
+          - button "Generate title" [ref=f9e2297] [cursor=pointer]
+        - 'img "average: 100.0 t/s" [ref=f9e2302]':
+          - generic [aria-hidden] [ref=f9e2303]: ~
+          - generic [ref=f9e2304]:
+            - generic [ref=f9e2305]: "100.0"
+            - generic [ref=f9e2306]: t/s
+      - generic [ref=f9e2307]:
+        - generic "Main pane" [ref=f9e2308]:
+          - generic [ref=f9e2309]:
+            - generic [ref=f9e2310]:
+              - generic:
+                - generic:
+                  - button "1 bookmark" [ref=f9e2311] [cursor=pointer]:
+                    - generic [ref=f9e2314]: "1"
+                  - button "Session insights" [ref=f9e2315] [cursor=pointer]
+              - generic [ref=f9e2320]:
+                - generic [ref=f9e2321]:
+                  - generic [ref=f9e2323]:
+                    - paragraph [ref=f9e2327]: "Spawn ONE subagent via the task tool with agent type 'scout'. Task: read C:/Users/blaze/fire/repos/omp-fire/package.json and yield ONLY the version value. Reply with exactly two lines: L1=status, L2=the FULL verbatim error text if it failed, else the version."
+                    - generic [ref=f9e2328]:
+                      - generic [ref=f9e2329]:
+                        - button "Copy message" [ref=f9e2330] [cursor=pointer]:
+                          - generic [ref=f9e2334]: Copy
+                        - button "Copy as Markdown" [ref=f9e2335] [cursor=pointer]
+                      - generic [ref=f9e2340]: Aug 5 10:08 PM
+                  - button "Bookmark this message" [ref=f9e2341] [cursor=pointer]
+                - button "Process details · 2 messages · 2 tool calls" [ref=f9e2346] [cursor=pointer]
+                - generic [ref=f9e2354]:
+                  - generic [ref=f9e2355]:
+                    - generic [ref=f9e2356]: claude-opus-5
+                    - paragraph [ref=f9e2361]: OK 0.1.0
+                    - generic [ref=f9e2362]:
+                      - generic [ref=f9e2363]:
+                        - generic [ref=f9e2364]:
+                          - button "Copy message" [ref=f9e2365] [cursor=pointer]:
+                            - generic [ref=f9e2369]: Copy
+                          - button "Copy as Markdown" [ref=f9e2370] [cursor=pointer]
+                        - button "Read reply aloud" [ref=f9e2375] [cursor=pointer]
+                        - button "Fork a new session from this point" [ref=f9e2380] [cursor=pointer]: New session
+                      - generic [ref=f9e2386]: Aug 5 10:09 PM
+                  - button "Remove bookmark" [pressed] [ref=f9e2387] [cursor=pointer]
+                - generic [ref=f9e2392]:
+                  - generic [ref=f9e2393]:
+                    - generic [ref=f9e2394]: Advisor
+                    - generic [ref=f9e2395]: Aug 5 10:09 PM
+                  - generic [ref=f9e2396]: "Final response must be exactly two lines per the user: line 1 status, line 2 either the full verbatim error text or the version—don’t include commentary from the 16-line task/hub output."
+                  - generic [ref=f9e2398]:
+                    - button "Copy" [ref=f9e2399] [cursor=pointer]
+                    - button "Show details" [ref=f9e2400] [cursor=pointer]
+              - navigation "Chat context navigation" [ref=f9e2402] [cursor=pointer]:
+                - 'button "Jump to: Spawn ONE subagent via the task tool with agent type ''scou…" [ref=f9e2403]'
+            - generic [ref=f9e2405]:
+              - button "Minimize input" [ref=f9e2408] [cursor=pointer]
+              - region "Subagents" [ref=f9e2414]:
+                - button [ref=f9e2415] [cursor=pointer]:
+                  - strong [ref=f9e2421]: Subagents
+                  - generic "0 running · 1 total" [ref=f9e2422]: 0/1
+              - generic [ref=f9e2429]:
+                - textbox "Message… Type / for commands, @ for files" [ref=f9e2430]
+                - generic [ref=f9e2431]:
+                  - button "More actions" [ref=f9e2433] [cursor=pointer]
+                  - 'button "Change model: claude-opus-5" [ref=f9e2436] [cursor=pointer]':
+                    - generic [ref=f9e2440]: claude-opus-5
+                  - 'button "Change reasoning level: max" [ref=f9e2444] [cursor=pointer]':
+                    - generic [ref=f9e2447]: max
+                  - button "Context" [ref=f9e2451] [cursor=pointer]
+                  - button "Start dictation" [ref=f9e2455] [cursor=pointer]
+                  - button "Send" [disabled] [ref=f9e2459]
+        - separator "Resize split panes" [ref=f9e2462]
+        - generic "Split pane" [ref=f9e2463]:
+          - generic [ref=f9e2464]:
+            - generic [ref=f9e2465]: "Spawn ONE subagent via the task tool with agent type 'scout'. Task: read C:/Users/blaze/fire/repos/omp-fire/package.json and yield ONLY the version value. Reply with exactly two lines: L1=status, L2=the FULL verbatim error text if it failed, else the version."
+            - button "Close split" [ref=f9e2466] [cursor=pointer]
+          - generic [ref=f9e2471]:
+            - generic [ref=f9e2472]:
+              - generic:
+                - generic:
+                  - button "1 bookmark" [ref=f9e2473] [cursor=pointer]:
+                    - generic [ref=f9e2476]: "1"
+                  - button "Session insights" [ref=f9e2477] [cursor=pointer]
+              - generic [ref=f9e2482]:
+                - generic [ref=f9e2483]:
+                  - generic [ref=f9e2485]:
+                    - paragraph [ref=f9e2489]: "Spawn ONE subagent via the task tool with agent type 'scout'. Task: read C:/Users/blaze/fire/repos/omp-fire/package.json and yield ONLY the version value. Reply with exactly two lines: L1=status, L2=the FULL verbatim error text if it failed, else the version."
+                    - generic [ref=f9e2490]:
+                      - generic [ref=f9e2491]:
+                        - button "Copy message" [ref=f9e2492] [cursor=pointer]:
+                          - generic [ref=f9e2496]: Copy
+                        - button "Copy as Markdown" [ref=f9e2497] [cursor=pointer]
+                      - generic [ref=f9e2502]: Aug 5 10:08 PM
+                  - button "Bookmark this message" [ref=f9e2503] [cursor=pointer]
+                - button "Process details · 2 messages · 2 tool calls" [ref=f9e2508] [cursor=pointer]
+                - generic [ref=f9e2516]:
+                  - generic [ref=f9e2517]:
+                    - generic [ref=f9e2518]: claude-opus-5
+                    - paragraph [ref=f9e2523]: OK 0.1.0
+                    - generic [ref=f9e2524]:
+                      - generic [ref=f9e2525]:
+                        - generic [ref=f9e2526]:
+                          - button "Copy message" [ref=f9e2527] [cursor=pointer]:
+                            - generic [ref=f9e2531]: Copy
+                          - button "Copy as Markdown" [ref=f9e2532] [cursor=pointer]
+                        - button "Read reply aloud" [ref=f9e2537] [cursor=pointer]
+                        - button "Fork a new session from this point" [ref=f9e2542] [cursor=pointer]: New session
+                      - generic [ref=f9e2548]: Aug 5 10:09 PM
+                  - button "Remove bookmark" [pressed] [ref=f9e2549] [cursor=pointer]
+                - generic [ref=f9e2554]:
+                  - generic [ref=f9e2555]:
+                    - generic [ref=f9e2556]: Advisor
+                    - generic [ref=f9e2557]: Aug 5 10:09 PM
+                  - generic [ref=f9e2558]: "Final response must be exactly two lines per the user: line 1 status, line 2 either the full verbatim error text or the version—don’t include commentary from the 16-line task/hub output."
+                  - generic [ref=f9e2560]:
+                    - button "Copy" [ref=f9e2561] [cursor=pointer]
+                    - button "Show details" [ref=f9e2562] [cursor=pointer]
+              - navigation "Chat context navigation" [ref=f9e2564] [cursor=pointer]:
+                - 'button "Jump to: Spawn ONE subagent via the task tool with agent type ''scou…" [ref=f9e2565]'
+            - generic [ref=f9e2567]:
+              - button "Minimize input" [ref=f9e2570] [cursor=pointer]
+              - region "Subagents" [ref=f9e2576]:
+                - button [ref=f9e2577] [cursor=pointer]:
+                  - strong [ref=f9e2583]: Subagents
+                  - generic "0 running · 1 total" [ref=f9e2584]: 0/1
+              - generic [ref=f9e2591]:
+                - textbox "Message… Type / for commands, @ for files" [ref=f9e2592]
+                - generic [ref=f9e2593]:
+                  - button "More actions" [ref=f9e2595] [cursor=pointer]
+                  - 'button "Change model: claude-opus-5" [ref=f9e2598] [cursor=pointer]':
+                    - generic [ref=f9e2602]: claude-opus-5
+                  - 'button "Change reasoning level: max" [ref=f9e2606] [cursor=pointer]':
+                    - generic [ref=f9e2609]: max
+                  - button "Context" [ref=f9e2613] [cursor=pointer]
+                  - button "Start dictation" [ref=f9e2617] [cursor=pointer]
+                  - button "Send" [disabled] [ref=f9e2621]
+    - generic:
+      - generic [ref=f9e2624]:
+        - generic:
+          - tablist "Open files":
+            - tab "Explorer" [selected] [ref=f9e2625] [cursor=pointer]
+            - tab "Git" [ref=f9e2631] [cursor=pointer]
+            - tab "Terminal" [ref=f9e2638] [cursor=pointer]
+        - toolbar "Explorer" [ref=f9e2644]:
+          - button "Search files" [ref=f9e2645] [cursor=pointer]
+          - button "Upload files" [ref=f9e2649] [cursor=pointer]
+          - button "Collapse all folders" [ref=f9e2653] [cursor=pointer]
+          - button "Refresh explorer" [ref=f9e2657] [cursor=pointer]
+      - generic:
+        - generic "C:\\tmp\\mcpscratch" [ref=f9e2663]:
+          - generic:
+            - generic: mcpscratch
+            - generic: C:\tmp\mcpscratch
+        - tree "Explorer" [ref=f9e2666]:
+          - generic [ref=f9e2667]: Not found
+  - button "Show file panel" [ref=f9e98] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=f9e2673] [cursor=pointer]
+  - alert [ref=f9e101]
+  - generic:
+    - region "Notifications"

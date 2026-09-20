@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { existsSync, realpathSync } from "fs";
 import { homedir } from "os";
+import { enqueueCheckpointSnapshot } from "./checkpoints/snapshot";
 import { validateAgentImages } from "./image-attachments";
 import { hasVisibleAssistantContent } from "./assistant-response";
 import { invalidateModelsCache } from "./models-cache";
@@ -15,6 +16,7 @@ import {
 import { PRESET_FULL } from "./tool-presets";
 import { comparableProjectPath } from "./comparable-path";
 import { isReservedLaunchArg, loadProjectRegistry } from "./project-registry";
+import { notifyAgentEnd, notifyApprovalNeeded, notifyRpcError, type NotifyEmitContext } from "./notify/emit";
 import type {
   BashResultInfo,
   OmpModel,
@@ -273,6 +275,15 @@ export class AgentSessionWrapper {
   private hostUriSchemes: Map<string, { writable?: boolean }> = new Map();
   /** host_uri_request ids awaiting a host_uri_result from the browser. */
   private pendingHostUris: Map<string, UnsequencedAgentEvent> = new Map();
+  /** Notification feed tokens: one per agent run (agent_end dedup) and one
+   * per unidentifiable RPC failure, so feed rows stay 1:1 with events. */
+  private notifyRunSeq = 0;
+  private notifyErrorSeq = 0;
+  /** Runs-board telemetry (P3, additive): wall-clock of the last frame the
+   * child emitted and of the current run's start. Zero before the first
+   * frame / between runs. Read via the public getters below. */
+  private lastFrameAtMs = 0;
+  private runStartedAtMs = 0;
   /** Resolves once an in-flight destroyAndWait finishes; null when idle. Read
    * by startRpcSession so a replacement spawn awaits the old child's exit. */
   destroyPromise: Promise<void> | null = null;
@@ -313,6 +324,24 @@ export class AgentSessionWrapper {
 
   isRunning(): boolean {
     return this.isAlive() && (this.promptRunning || this.streaming || this.compacting || this.bashRunning);
+  }
+
+  /** Runs board (P3): wall-clock ms of the child's most recent frame — the
+   * honest "still alive" signal for a run that streams nothing for a while. */
+  get lastActivityMs(): number {
+    return this.lastFrameAtMs;
+  }
+
+  /** Runs board (P3): wall-clock ms when the current agent run started,
+   * 0 when no run is active (agent_start … terminal agent_end). */
+  get runStartedMs(): number {
+    return this.runStartedAtMs;
+  }
+
+  /** Runs board (P3): extension UI requests (approve-tool confirms, selects,
+   * inputs) parked until the user answers — the waiting-for-input signal. */
+  pendingUiRequestCount(): number {
+    return this.pendingUiRequests.size;
   }
 
   /** NDJSON messages are fresh snapshots; copy containers, not token payloads. */
@@ -404,17 +433,42 @@ export class AgentSessionWrapper {
       level: "error",
       message: `The omp process for this session exited unexpectedly${detail ? `: ${detail}` : "."}`,
     });
+    this.notifyRpcErrorFeed("process-exit", `The omp process exited unexpectedly${detail ? `: ${detail}` : "."}`);
+    notifyRpcRunFailure(this._sessionId, `The omp process exited unexpectedly${detail ? `: ${detail}` : "."}`);
     // Terminal agent_end so a client mid-stream stops spinning immediately
     // instead of waiting for the reconcile poll.
     if (this.streaming || this.promptRunning) this.emit({ type: "agent_end", isTerminal: true, messages: [] });
     this.destroy();
   }
 
+  /** Feed-row context for the notification emitters: the session identity the
+   * bell can navigate back to, with the cwd basename as title fallback. */
+  private notifyContext(): NotifyEmitContext {
+    const title = this._sessionName || this.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Session";
+    return { sessionId: this._sessionId || this.cwd, sessionTitle: title, projectRoot: this.cwd };
+  }
+
+  /** Central error emit: failed RPC responses / child crashes land as error
+   * feed rows (deduped by kind:sessionId:token). */
+  private notifyRpcErrorFeed(token: string | number, detail: string): void {
+    try {
+      notifyRpcError(this.notifyContext(), token, detail);
+    } catch {
+      // Notification plumbing must never break the RPC path.
+    }
+  }
+
+  /** Dedup token for a failed `response` frame: omp echoes the command id on
+   * async failures; frames without one fall back to a per-wrapper counter. */
+  private rpcErrorToken(event: RpcFrame): string | number {
+    return typeof event.id === "string" && event.id ? event.id : `seq-${++this.notifyErrorSeq}`;
+  }
+
   private handleFrame(frame: RpcFrame): void {
     this.resetIdleTimer();
+    this.lastFrameAtMs = Date.now();
     const event = frame;
     let refreshSessionList = false;
-
     switch (event.type) {
       case "command_output": {
         // `/mcp list` is a local OMP command. Capture its authoritative text for
@@ -432,6 +486,7 @@ export class AgentSessionWrapper {
       case "agent_start":
         this.promptRunning = true;
         this.streaming = true;
+        this.runStartedAtMs = Date.now();
         this.awaitingAgentStart = false;
         this.awaitingAgentStartDeadline = 0;
         this.continuationGraceUntil = 0;
@@ -454,6 +509,7 @@ export class AgentSessionWrapper {
         if (event.isTerminal !== false) {
           this.streaming = false;
           this.promptRunning = false;
+          this.runStartedAtMs = 0;
           this.awaitingAgentStart = false;
           this.awaitingAgentStartDeadline = 0;
           this.continuationGraceUntil = 0;
@@ -465,6 +521,7 @@ export class AgentSessionWrapper {
       case "prompt_result":
         // Local-only prompt (builtin/extension slash command) — no agent run.
         this.promptRunning = false;
+        this.runStartedAtMs = 0;
         this.awaitingAgentStart = false;
         this.awaitingAgentStartDeadline = 0;
         break;
@@ -500,13 +557,16 @@ export class AgentSessionWrapper {
               : "RPC command failed";
           if (!promptFailure) {
             this.emit({ type: "error", error: event.error, message: detail, command: event.command });
+            this.notifyRpcErrorFeed(this.rpcErrorToken(event), detail);
             notifyRunningChange();
             return;
           }
           this.promptRunning = false;
           this.awaitingAgentStart = false;
           this.awaitingAgentStartDeadline = 0;
+          notifyRpcRunFailure(this._sessionId, detail);
           this.emit({ type: "prompt_error", errorMessage: detail, error: event.error, command: event.command });
+          this.notifyRpcErrorFeed(this.rpcErrorToken(event), detail);
           notifyRunningChange();
           return;
         }
@@ -630,6 +690,14 @@ export class AgentSessionWrapper {
         this.uiExpiryTimers.set(id, timer);
       }
       this.pendingUiRequests.set(id, event);
+      // Approval-needed surfaced to the feed/bell: confirm/select/input/
+      // editor/open_url all park until the user answers. The frame id is the
+      // dedup token, so SSE reconnect replays collapse to one row.
+      try {
+        notifyApprovalNeeded(this.notifyContext(), id, typeof event.title === "string" ? event.title : undefined);
+      } catch {
+        // Notification plumbing must never break the RPC path.
+      }
       return false;
     }
     if (method === "setStatus") {
@@ -713,6 +781,7 @@ export class AgentSessionWrapper {
       case "agent_start":
         this.responseObserved = false;
         this.responseRunActive = true;
+        this.notifyRunSeq += 1;
         this.clearLiveSnapshots();
         break;
       case "agent_end":
@@ -722,6 +791,21 @@ export class AgentSessionWrapper {
         this.promptRunning = false;
         this.compacting = false;
         this.clearLiveSnapshots();
+        // Notification feed: one row per completed run, only when the run
+        // actually produced assistant output (suppresses empty runs, local
+        // slash commands, and non-terminal continuation ends). responseObserved
+        // is still this run's verdict at this point — the flags above only
+        // clear run-active bookkeeping.
+        if (this.responseObserved) {
+          try {
+            notifyAgentEnd(this.notifyContext(), this.notifyRunSeq);
+          } catch {
+            // Notification plumbing must never break the RPC path.
+          }
+        }
+        // P5 checkpoints: capture the working tree this run just finished
+        // touching. Async and failure-tolerant by contract — see the method.
+        this.enqueueCheckpointSnapshot();
         break;
       case "prompt_error":
       case "prompt_result":
@@ -773,6 +857,28 @@ export class AgentSessionWrapper {
   }
 
   private sessionFileSignalTimer: NodeJS.Timeout | null = null;
+
+  /** Fire-and-forget git checkpoint after a terminal agent_end (P5): snapshot
+   *  the working tree under refs/ompweb-cp/<sid>/<seq> so any run's file
+   *  damage is rewindable. Never blocks or fails the run: non-git cwds and
+   *  clean trees no-op inside snapshot(), and any git error surfaces as one
+   *  feed row through notifyRpcErrorFeed. */
+  private enqueueCheckpointSnapshot(): void {
+    if (!this._sessionId || !this._sessionFile || !this.cwd) return;
+    const sessionId = this._sessionId;
+    const sessionFile = this._sessionFile;
+    const cwd = this.cwd;
+    let errorSeq = 0;
+    void enqueueCheckpointSnapshot({
+      sessionId,
+      sessionFile,
+      cwd,
+      onFailure: (detail) => {
+        errorSeq += 1;
+        this.notifyRpcErrorFeed(`checkpoint-${sessionId}-${errorSeq}`, `Checkpoint snapshot failed: ${detail}`);
+      },
+    });
+  }
 
   /** Invalidate session-list metadata plus ONLY this session's parse caches
    * when the file path is known, else fall back to the full invalidation.
@@ -1134,6 +1240,9 @@ export class AgentSessionWrapper {
           if (!this.isRunning()) this.clearLiveSnapshots();
           this.streamSequence += 1;
           this.promptRunning = true;
+          // Stamp before agent_start lands so the runs board's elapsed timer
+          // already reflects the dispatch window.
+          this.runStartedAtMs = Date.now();
           this.promptDispatchPendingCount += 1;
           this.awaitingAgentStart = false;
           this.awaitingAgentStartDeadline = 0;
@@ -1537,6 +1646,48 @@ export function subscribeRunningSessions(listener: (update: RunningSessionUpdate
   const listeners = getRunningListeners();
   listeners.add(listener);
   return () => { listeners.delete(listener); };
+}
+
+// ----------------------------------------------------------------------------
+// Run-failure broadcaster (P3, additive)
+//
+// The runs board distinguishes failed runs from finished ones. It must NOT
+// subscribe via wrapper.onEvent — a board listener would make `listeners
+// .length > 0` true and re-route host_tool_call / host_uri_request frames to
+// the board instead of rejecting them while no chat UI is attached. Instead
+// failure sites call notifyRpcRunFailure() explicitly; listeners live on
+// globalThis so they survive hot reload.
+// ----------------------------------------------------------------------------
+
+export interface RpcRunFailure {
+  sessionId: string;
+  detail: string;
+}
+
+type RpcRunFailureListener = (failure: RpcRunFailure) => void;
+
+declare global {
+  var __ompRpcRunFailureListeners: Set<RpcRunFailureListener> | undefined;
+}
+
+function getRunFailureListeners(): Set<RpcRunFailureListener> {
+  if (!globalThis.__ompRpcRunFailureListeners) globalThis.__ompRpcRunFailureListeners = new Set();
+  return globalThis.__ompRpcRunFailureListeners;
+}
+
+/** Subscribe to agent-run failures (failed prompts, child crashes). */
+export function subscribeRpcRunFailures(listener: RpcRunFailureListener): () => void {
+  const listeners = getRunFailureListeners();
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+/** Fire-and-forget failure notice; must never break the RPC path. */
+function notifyRpcRunFailure(sessionId: string, detail: string): void {
+  if (!sessionId) return;
+  for (const listener of getRunFailureListeners()) {
+    try { listener({ sessionId, detail }); } catch { /* listener errors are not ours */ }
+  }
 }
 
 let lastRunningSnapshot = "";

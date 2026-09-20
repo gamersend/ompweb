@@ -265,6 +265,8 @@ interface TextInputProps {
   autoComplete?: string;
   spellCheck?: boolean;
   id?: string;
+  /** Optional ref to the underlying input (focus management from dialogs). */
+  inputRef?: React.Ref<HTMLInputElement>;
 }
 
 export function TextInput({
@@ -280,11 +282,13 @@ export function TextInput({
   autoComplete,
   spellCheck,
   id,
+  inputRef,
 }: TextInputProps) {
   const [focused, setFocused] = useState(false);
   const isInvalid = Boolean(invalid || error);
   return (
     <input
+      ref={inputRef}
       id={id}
       value={value}
       onChange={(e) => onChange(e.target.value)}

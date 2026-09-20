@@ -14,8 +14,12 @@ import { type Tab } from "./TabBar";
 import { type FileExplorerHandle } from "./FileExplorer";
 import type { RightPanelView } from "./RightPanel";
 import { BranchNavigator } from "./BranchNavigator";
+import { SessionExportMenu } from "./SessionExportMenu";
+import { SplitPane, type SplitPaneSide } from "./SplitPane";
+import { useSplitSession } from "@/hooks/useSplitSession";
+import { isEnabled } from "@/lib/feature-flags";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { Check, Ellipsis, Folder, History, Menu, PanelLeft, Terminal, Wand2, Zap } from "lucide-react";
+import { Check, Columns2, Ellipsis, Folder, LayoutGrid, Menu, PanelLeft, Terminal, Wand2, Zap } from "lucide-react";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import { translate, useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
@@ -24,10 +28,12 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { copyText } from "@/lib/clipboard";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
-import { getInitialNavigation } from "@/lib/initial-navigation";
+import { getInitialNavigation, type InitialAnchor } from "@/lib/initial-navigation";
 import { comparableProjectPath } from "@/lib/comparable-path";
 import { clearDraft } from "@/lib/draft-store";
 import { showCompletionNotification } from "@/lib/browser-notifications";
+import { openPalette } from "@/lib/palette-bus";
+import type { SearchResultItem } from "./PaletteSearch";
 import {
   APP_UPDATE_COMPLETED_RELOAD_MS,
   APP_UPDATE_POLL_MS,
@@ -73,6 +79,8 @@ import {
   type AppUpdateStage,
 } from "./AppUpdateDialog";
 import { ArchiveBrowser } from "./ArchiveBrowser";
+import { NotificationsBell } from "./NotificationsBell";
+import { RunsBoard } from "./RunsBoard";
 import { publishSessionsChanged } from "@/lib/session-change-bus";
 // The settings shell is part of the app bundle so opening it does not fetch or compile a modal chunk. The right panel (viewer included) remains on demand.
 const RightPanel = dynamic(() => import("./RightPanel").then((m) => m.RightPanel), {
@@ -118,6 +126,10 @@ export function AppShell() {
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [explorerRefreshing, setExplorerRefreshing] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+  const [runsBoardOpen, setRunsBoardOpen] = useState(false);
+  // Live running-session ids, fed by SessionSidebar's existing
+  // /api/agent/running/events subscription (no second EventSource).
+  const [runningIds, setRunningIds] = useState<string[]>([]);
   const [archiveBrowserOpen, setArchiveBrowserOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -246,6 +258,50 @@ export function AppShell() {
   }, [isMobile]);
   useEffect(() => {
     setMobileSidebarReady(true);
+  }, []);
+  // 6a PWA: register the service worker in production builds only. Dev must
+  // never cache: the SW's cache-first /_next/static rule would pin in-place
+  // dev chunks and corrupt HMR after every restart. When a waiting worker
+  // finishes installing (a new deploy was fetched), offer the reload.
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") return;
+    if (!("serviceWorker" in navigator)) return;
+    let cancelled = false;
+    const swUrl = "/sw.js";
+    navigator.serviceWorker.register(swUrl).then((registration) => {
+      if (cancelled) return;
+      const announce = (worker: ServiceWorker | null) => {
+        if (!worker || worker.state === "activating" || worker.state === "activated") return;
+        toast.info(
+          translate("pwa.updateAvailable"),
+          <button
+            type="button"
+            onClick={() => {
+              toast.close("pwa-update-available");
+              worker.addEventListener("statechange", () => {
+                if (worker.state === "activated") window.location.reload();
+              });
+              worker.postMessage("SKIP_WAITING");
+            }}
+            style={{ marginTop: 6, padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 12 }}
+          >
+            {translate("pwa.reload")}
+          </button>,
+          { id: "pwa-update-available", timeout: 0 },
+        );
+      };
+      if (registration.waiting) announce(registration.waiting);
+      registration.addEventListener("updatefound", () => {
+        const installing = registration.installing;
+        installing?.addEventListener("statechange", () => {
+          if (installing.state === "installed" && navigator.serviceWorker.controller) announce(installing);
+        });
+      });
+    }).catch(() => {
+      // SW registration failures (http:// LAN origins, disabled storage) are
+      // non-fatal: the app keeps working as a normal web page.
+    });
+    return () => { cancelled = true; };
   }, []);
   // Chrome does not blur a focused descendant when a subtree becomes
   // aria-hidden + inert (e.g. tapping a session button closes the mobile
@@ -628,6 +684,72 @@ export function AppShell() {
     branchLeafChangeFnRef.current?.(leafId);
   }, []);
 
+  // ── P12 split view: &split=<sessionId>[&splitLeaf=<leafId>] ─────────────
+  // Desktop-only (SplitPane falls back to single view on mobile anyway) and
+  // flag-gated by `split`. The params mirror the main `session`/`anchor`
+  // conventions so a split URL is shareable and restores on reload.
+  const [splitSessionId, setSplitSessionId] = useState<string | null>(() => searchParams.get("split")?.trim() || null);
+  const [splitLeafId, setSplitLeafId] = useState<string | null>(() => searchParams.get("splitLeaf")?.trim() || null);
+  const [activePane, setActivePane] = useState<SplitPaneSide>("left");
+  const splitEnabled = isEnabled("split") && !isMobile;
+
+  /** Rewrite the split params in place, preserving everything else
+   *  (session/anchor/cwd — same pattern as stripAnchorParams). */
+  const syncSplitParams = useCallback((split: string | null, leaf: string | null) => {
+    const params = new URLSearchParams(window.location.search);
+    if (split) params.set("split", split);
+    else params.delete("split");
+    if (split && leaf) params.set("splitLeaf", leaf);
+    else params.delete("splitLeaf");
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : "/", { scroll: false });
+  }, [router]);
+
+  const openSplit = useCallback((sessionId: string, leafId?: string | null) => {
+    if (!splitEnabled) return;
+    setSplitSessionId(sessionId);
+    setSplitLeafId(leafId ?? null);
+    setActivePane("right");
+    syncSplitParams(sessionId, leafId ?? null);
+  }, [splitEnabled, syncSplitParams]);
+
+  const closeSplit = useCallback(() => {
+    setSplitSessionId(null);
+    setSplitLeafId(null);
+    setActivePane("left");
+    syncSplitParams(null, null);
+  }, [syncSplitParams]);
+
+  const { session: splitSession, anchor: splitAnchor } = useSplitSession({
+    sessionId: splitEnabled ? splitSessionId : null,
+    leafId: splitEnabled ? splitLeafId : null,
+    onClose: closeSplit,
+  });
+  const splitActive = splitEnabled && splitSessionId !== null;
+  const splitTitle = splitSession?.name || splitSession?.firstMessage || t("appShell.newSession");
+
+  /** Chat header button: toggle the split against the open session. */
+  const handleToggleSplit = useCallback(() => {
+    if (splitActive) {
+      closeSplit();
+      return;
+    }
+    if (!selectedSession) return;
+    openSplit(selectedSession.id);
+  }, [closeSplit, openSplit, selectedSession, splitActive]);
+
+  /** Sidebar session row "Split right": open that session in the right pane. */
+  const handleSplitSession = useCallback((session: SessionInfo) => {
+    openSplit(session.id);
+  }, [openSplit]);
+
+  /** Branch navigator "compare": split this session on the picked leaf. */
+  const handleCompareLeaf = useCallback((leafId: string) => {
+    if (!selectedSession) return;
+    openSplit(selectedSession.id, leafId);
+  }, [openSplit, selectedSession]);
+
+
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
   const [systemPromptLoading, setSystemPromptLoading] = useState(false);
   const systemPromptLoaderRef = useRef<(() => Promise<void>) | null>(null);
@@ -930,8 +1052,14 @@ export function AppShell() {
   // Right panel tabs: Explorer | Git changes | open files (Tauri parity).
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  // Tab ids whose FileViewer reports unsaved edits (Phase 10): drives the
+  // TabBar dirty dot + close confirmation.
+  const [dirtyFileTabIds, setDirtyFileTabIds] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [rightView, setRightView] = useState<"explorer" | "git" | "file">("explorer");
+  // Right panel tabs: Explorer | Git changes | Terminal | open files. The
+  // state type is the shared RightPanelView so the P13 terminal view plugs in
+  // without a parallel union.
+  const [rightView, setRightView] = useState<RightPanelView>("explorer");
   // User-chosen pixel width (null = fluid 42% default), persisted.
   const [rightPanelWidth, setRightPanelWidth] = useState<number | null>(null);
   const [rightPanelResizing, setRightPanelResizing] = useState(false);
@@ -986,6 +1114,12 @@ export function AppShell() {
 
   const initialSessionId = initialNavigation.sessionId;
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  // P1 deep links: a pending anchor (palette search result or &anchor= URL
+  // param) forwarded to ChatWindow → useAgentSession once the session opens.
+  const anchorSeqRef = useRef(initialNavigation.anchor ? 1 : 0);
+  const [pendingAnchor, setPendingAnchor] = useState<(InitialAnchor & { seq: number }) | null>(
+    () => initialNavigation.anchor ? { ...initialNavigation.anchor, seq: anchorSeqRef.current } : null,
+  );
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
   // During the initial URL restore the sidebar adopts the restored cwd and
@@ -1094,6 +1228,56 @@ export function AppShell() {
     }
   }, [router, isMobile, selectedSession?.id]);
 
+  // ── P1 anchors: deep-link plumbing ──────────────────────────────────────
+
+  /** Strip anchor/hl params once an anchor has been applied (or given up). */
+  const stripAnchorParams = useCallback(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("anchor") && !params.has("hl")) return;
+    params.delete("anchor");
+    params.delete("hl");
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : "/", { scroll: false });
+  }, [router]);
+
+  const handleAnchorApplied = useCallback(() => {
+    setPendingAnchor(null);
+    stripAnchorParams();
+  }, [stripAnchorParams]);
+
+  /** Palette search result click: open the session, then anchor+highlight. */
+  const handleOpenSearchResult = useCallback((result: SearchResultItem) => {
+    anchorSeqRef.current += 1;
+    setPendingAnchor({ entryId: result.entryId, seq: anchorSeqRef.current });
+    // Reflect in the URL for shareability. hl is text-range data the palette
+    // does not carry; the find bar supplies hl through the anchor API directly.
+    router.replace(`?session=${encodeURIComponent(result.sessionId)}&anchor=${encodeURIComponent(result.entryId)}`, { scroll: false });
+    void fetch("/api/sessions")
+      .then((response) => response.ok ? response.json() as Promise<{ sessions?: SessionInfo[] }> : Promise.reject(new Error("request failed")))
+      .then((data) => {
+        const target = (data.sessions ?? []).find((candidate) => candidate.id === result.sessionId);
+        if (target) handleSelectSession(target);
+      })
+      .catch(() => toast.error(translate("errors.generic")));
+  }, [handleSelectSession, router]);
+
+  // P2 notifications: open a feed row's session by id (same fetch-and-select
+  // hand-off the palette search results use).
+  const handleOpenSessionFromBell = useCallback((sessionId: string) => {
+    void fetch("/api/sessions")
+      .then((response) => (response.ok ? response.json() as Promise<{ sessions?: SessionInfo[] }> : Promise.reject(new Error("request failed"))))
+      .then((data) => {
+        const target = (data.sessions ?? []).find((candidate) => candidate.id === sessionId);
+        if (target) handleSelectSession(target);
+        else router.replace(`?session=${encodeURIComponent(sessionId)}`, { scroll: false });
+      })
+      .catch(() => router.replace(`?session=${encodeURIComponent(sessionId)}`, { scroll: false }));
+  }, [handleSelectSession, router]);
+
+  const handleOpenNotifySettings = useCallback(() => {
+    setSettingsTab("notifications");
+  }, []);
+
   const handleNewSession = useCallback((_sessionId: string, cwd: string) => {
     setSettingsTab(null);
     setSelectedSession(null);
@@ -1108,11 +1292,30 @@ export function AppShell() {
     router.replace("/", { scroll: false });
   }, [router, isMobile]);
 
-  // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
+  // Runs board (P3): toggled from the header button or Ctrl/Cmd+Shift+U.
+  const handleToggleRunsBoard = useCallback(() => {
+    setRunsBoardOpen((open) => !open);
+    setSettingsTab(null);
+  }, []);
+  const handleOpenSessionFromBoard = useCallback((sessionId: string) => {
+    setRunsBoardOpen(false);
+    handleOpenSessionFromBell(sessionId);
+  }, [handleOpenSessionFromBell]);
+  const handleNewSessionFromBoard = useCallback((cwd: string) => {
+    setRunsBoardOpen(false);
+    handleNewSession(`board-${Date.now()}`, cwd);
+  }, [handleNewSession]);
+  const handleRunningIdsChange = useCallback((ids: string[]) => {
+    setRunningIds(ids);
+  }, []);
+
+  // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N, Ctrl/Cmd+Shift+U etc.)
   useGlobalKeyboardShortcuts({
     onNewSession: (cwd: string) => handleNewSession(`kb-${Date.now()}`, cwd),
     activeCwd,
     scopeNativeSelectAll,
+    onToggleRunsBoard: handleToggleRunsBoard,
+    onToggleSplit: splitEnabled && selectedSession ? handleToggleSplit : undefined,
   });
 
   // Client-built transient SessionInfo (new session / fork) lacks the
@@ -1230,6 +1433,8 @@ export function AppShell() {
     // otherwise keep the exit guard armed for unreachable content.
     clearDraft(sessionId);
     setRefreshKey((k) => k + 1);
+    // A deleted split target must not leave a dead pane behind.
+    if (splitSessionId === sessionId) closeSplit();
     if (selectedSession?.id === sessionId) {
       const cwd = selectedSession.cwd;
       setSelectedSession(null);
@@ -1241,7 +1446,7 @@ export function AppShell() {
       setActiveTopPanel(null);
       router.replace("/", { scroll: false });
     }
-  }, [selectedSession, router]);
+  }, [selectedSession, router, splitSessionId, closeSplit]);
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
   }, []);
@@ -1290,6 +1495,12 @@ export function AppShell() {
     // would still have read the pre-close list from the closure).
     const next = fileTabs.filter((t) => t.id !== tabId);
     setFileTabs(next);
+    setDirtyFileTabIds((prev) => {
+      if (!prev.has(tabId)) return prev;
+      const nextDirty = new Set(prev);
+      nextDirty.delete(tabId);
+      return nextDirty;
+    });
     // The panel now hosts the Explorer tab, so it stays open: closing the
     // last file falls back to the explorer instead of hiding the panel.
     if (next.length === 0) setRightView("explorer");
@@ -1298,6 +1509,16 @@ export function AppShell() {
       return next.length > 0 ? next[next.length - 1].id : null;
     });
   }, [fileTabs]);
+
+  const handleFileTabDirtyChange = useCallback((tabId: string, dirty: boolean) => {
+    setDirtyFileTabIds((prev) => {
+      if (prev.has(tabId) === dirty) return prev;
+      const next = new Set(prev);
+      if (dirty) next.add(tabId);
+      else next.delete(tabId);
+      return next;
+    });
+  }, []);
 
   const handleOpenFile = useCallback((filePath: string, fileName: string, sourceSessionId?: string | null) => {
     const tabId = `file:${filePath}`;
@@ -1375,10 +1596,12 @@ export function AppShell() {
   const handleCloseOtherFileTabs = useCallback(() => {
     if (!activeFileTab) return;
     setFileTabs([activeFileTab]);
+    setDirtyFileTabIds((prev) => (prev.has(activeFileTab.id) ? new Set([activeFileTab.id]) : new Set<string>()));
   }, [activeFileTab]);
 
   const handleCloseAllFileTabs = useCallback(() => {
     setFileTabs([]);
+    setDirtyFileTabIds(new Set<string>());
     setActiveFileTabId(null);
     setRightView("explorer");
   }, []);
@@ -1504,6 +1727,77 @@ export function AppShell() {
       onOpenSettings={() => setSettingsTab((prev) => prev ? null : "general")}
       onOpenArchive={() => setArchiveBrowserOpen(true)}
       updateAvailable={Boolean(appUpdate?.updateAvailable) || ompUpdateAvailable}
+      onRunningIdsChange={handleRunningIdsChange}
+      onSplitSession={splitEnabled ? handleSplitSession : undefined}
+    />
+  );
+
+  // The main chat node is hoisted so the split layout can drop it into
+  // SplitPane's left pane without duplicating the (long) prop list.
+  const mainChatNode = (
+    <ChatWindow
+      key={sessionKey}
+      session={selectedSession}
+      newSessionCwd={effectiveNewSessionCwd}
+      newSessionWorkspace={effectiveNewSessionCwd && (
+        <div className="mb-4 flex min-w-0 flex-col gap-2">
+          <label htmlFor="new-session-workspace" style={{ fontSize: 13, fontWeight: 500, color: "var(--text-muted)" }}>
+            {t("settingsConfig.chipWorkspace")}
+          </label>
+          <select
+            id="new-session-workspace"
+            aria-describedby="new-session-workspace-path"
+            value={effectiveNewSessionCwd}
+            onChange={(event) => {
+              const cwd = event.target.value;
+              if (!cwd) {
+                setAddProjectOpen(true);
+                return;
+              }
+              if (cwd === effectiveNewSessionCwd) return;
+              suppressCwdRef.current = cwd;
+              setActiveCwd(cwd);
+              handleNewSession("", cwd);
+            }}
+            style={{ width: "100%", minWidth: 0, minHeight: 44, padding: "8px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg-panel)", color: "var(--text)", fontSize: 16 }}
+          >
+            {!workspaceOptions.projects.some((project) => comparableProjectPath(project.path) === comparableProjectPath(newSessionProject)) && (
+              <option key={effectiveNewSessionCwd} value={effectiveNewSessionCwd}>{projectLabel(effectiveNewSessionCwd)}</option>
+            )}
+            {workspaceOptions.projects.map((project) => {
+              const current = comparableProjectPath(project.path) === comparableProjectPath(newSessionProject);
+              const label = project.alias ?? projectLabel(project.path);
+              const duplicate = workspaceOptions.projects.some((other) => other.path !== project.path && (other.alias ?? projectLabel(other.path)) === label);
+              return (
+                <option key={project.path} value={current ? effectiveNewSessionCwd : project.path}>
+                  {duplicate ? `${label} — ${project.path}` : label}
+                </option>
+              );
+            })}
+            <option value="">+ {t("projects.add")}</option>
+          </select>
+          <div id="new-session-workspace-path" style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }}>
+            {effectiveNewSessionCwd}
+          </div>
+        </div>
+      )}
+      onAgentEnd={handleAgentEnd}
+      onSessionCreated={handleSessionCreated}
+      onSessionForked={handleSessionForked}
+      modelsRefreshKey={modelsRefreshKey}
+      chatInputRef={chatInputRef}
+      onOpenFile={handleOpenLinkedFile}
+      onBranchDataChange={handleBranchDataChange}
+      onSystemPromptChange={handleSystemPromptChange}
+      onSystemPromptLoaderChange={handleSystemPromptLoaderChange}
+      onSessionStatsChange={handleSessionStatsChange}
+      onSessionStatsPanelOpen={openSessionStatsPanel}
+      onGenerationSpeedChange={handleGenerationSpeedChange}
+      onOpenProviders={() => setSettingsTab("providers")}
+      anchorRequest={pendingAnchor}
+      onAnchorApplied={handleAnchorApplied}
+      onOpenSearchPalette={(query) => openPalette({ mode: "search", query })}
+      toolCallsDefaultCollapsed={toolCallsDefaultCollapsed}
     />
   );
 
@@ -1522,6 +1816,7 @@ export function AppShell() {
       />
       <CommandPalette
         onSelectSession={handleSelectSession}
+        onOpenSearchResult={handleOpenSearchResult}
         onNewSession={() => {
           // An empty cwd is truthy, so showChat would render the shell while
           // useAgentSession refuses to start — every send a silent no-op.
@@ -1605,8 +1900,8 @@ export function AppShell() {
       }
     `}</style>
     <div style={{ display: "flex", height: "100%", flex: 1, overflow: "hidden", background: "var(--bg)" }}>
-      {/* Left sidebar: hidden on full-page Settings */}
-      {!settingsTab && (
+      {/* Left sidebar: hidden on full-page Settings and the runs board */}
+      {!settingsTab && !runsBoardOpen && (
         <>
       {/* Mobile overlay backdrop */}
       <div
@@ -1695,6 +1990,14 @@ export function AppShell() {
             onSelectTab={setSettingsTab}
             onClose={() => setSettingsTab(null)}
           />
+        ) : runsBoardOpen ? (
+          <RunsBoard
+            onClose={() => setRunsBoardOpen(false)}
+            onOpenSession={handleOpenSessionFromBoard}
+            onNewSession={handleNewSessionFromBoard}
+            projects={workspaceOptions.projects}
+            activeCwd={activeCwd ?? selectedSession?.cwd ?? newSessionCwd ?? null}
+          />
         ) : (
           <>
         {/* Top bar: 3-zone segmented control bar */}
@@ -1706,6 +2009,10 @@ export function AppShell() {
           minHeight: isMobile ? 44 : 36,
           background: "var(--bg-panel)",
           padding: isMobile ? "0 4px" : "0 8px",
+          // Reserve the fixed show-file-panel toggle's corner (mobile pads via
+          // the ≤640px CSS rule; desktop must too, so no topbar control can
+          // end up underneath the toggle's click area).
+          paddingRight: 44,
           gap: "0 8px",
           minWidth: 0,
         }}>
@@ -1741,15 +2048,11 @@ export function AppShell() {
             {showChat && (
               <>
                 <div className="shell-toolbar-divider" aria-hidden="true" />
-                <button
-                  onClick={handleViewFullHistory}
+                <SessionExportMenu
+                  sessionId={selectedSession?.id ?? null}
+                  onViewHtml={handleViewFullHistory}
                   disabled={!selectedSession}
-                  title={selectedSession ? t("appShell.fullHistory") : t("appShell.fullHistoryUnavailable")}
-                  aria-label={t("appShell.fullHistory")}
-                  className="shell-toolbar-btn ui-focus-ring"
-                >
-                  <History size={16} strokeWidth={1.8} aria-hidden="true" />
-                </button>
+                />
                 <BranchNavigator
                   tree={branchTree}
                   activeLeafId={branchActiveLeafId}
@@ -1759,7 +2062,22 @@ export function AppShell() {
                   open={activeTopPanel === "branches"}
                   onToggle={() => toggleTopPanel("branches")}
                   hasSession
+                  sessionId={selectedSession?.id ?? null}
+                  onCompareLeaf={splitEnabled && selectedSession ? handleCompareLeaf : undefined}
                 />
+                {splitEnabled && (
+                  <button
+                    type="button"
+                    onClick={handleToggleSplit}
+                    disabled={!selectedSession}
+                    title={t("splitView.splitRight")}
+                    aria-label={t("splitView.splitRight")}
+                    aria-pressed={splitActive}
+                    className="shell-toolbar-btn ui-focus-ring"
+                  >
+                    <Columns2 size={16} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                )}
                 <button
                   ref={systemBtnRef}
                   onClick={handleSystemPromptToggle}
@@ -1821,6 +2139,51 @@ export function AppShell() {
           )}
               </div>
             </details>
+          </div>
+
+          {/* Notifications bell: always visible (never folded into the
+              overflow menu) so background run completions stay reachable.
+              Runs board button: same treatment (P3) — a live badge from the
+              sidebar's running-events subscription. */}
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+            <NotificationsBell
+              onOpenSession={handleOpenSessionFromBell}
+              onOpenSettings={handleOpenNotifySettings}
+            />
+            <button
+              type="button"
+              onClick={handleToggleRunsBoard}
+              aria-label={t("runsBoard.button.ariaLabel", { count: runningIds.length })}
+              title={t("runsBoard.button.ariaLabel", { count: runningIds.length })}
+              aria-pressed={runsBoardOpen}
+              className="shell-toolbar-btn ui-focus-ring"
+              style={{ position: "relative" }}
+            >
+              <LayoutGrid size={16} strokeWidth={1.8} aria-hidden="true" />
+              {runningIds.length > 0 && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    top: 2,
+                    right: 1,
+                    minWidth: 14,
+                    height: 14,
+                    padding: "0 3px",
+                    borderRadius: 999,
+                    background: "var(--accent-strong)",
+                    color: "var(--on-accent)",
+                    fontSize: 9,
+                    fontWeight: 700,
+                    lineHeight: "14px",
+                    textAlign: "center",
+                    pointerEvents: "none",
+                  }}
+                >
+                  {runningIds.length > 9 ? "9+" : runningIds.length}
+                </span>
+              )}
+            </button>
           </div>
 
           {/* Center Zone: Workspace & Session Breadcrumb + Auto-name action */}
@@ -2025,70 +2388,30 @@ export function AppShell() {
 
         </div>
 
-        {/* Chat content */}
+        {/* Chat content (P12: when the split is active the main chat moves
+            into SplitPane's left pane and the split session renders right) */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
           {showChat ? (
-            <ChatWindow
-              key={sessionKey}
-              session={selectedSession}
-              newSessionCwd={effectiveNewSessionCwd}
-              newSessionWorkspace={effectiveNewSessionCwd && (
-                <div className="mb-4 flex min-w-0 flex-col gap-2">
-                  <label htmlFor="new-session-workspace" style={{ fontSize: 13, fontWeight: 500, color: "var(--text-muted)" }}>
-                    {t("settingsConfig.chipWorkspace")}
-                  </label>
-                  <select
-                    id="new-session-workspace"
-                    aria-describedby="new-session-workspace-path"
-                    value={effectiveNewSessionCwd}
-                    onChange={(event) => {
-                      const cwd = event.target.value;
-                      if (!cwd) {
-                        setAddProjectOpen(true);
-                        return;
-                      }
-                      if (cwd === effectiveNewSessionCwd) return;
-                      suppressCwdRef.current = cwd;
-                      setActiveCwd(cwd);
-                      handleNewSession("", cwd);
-                    }}
-                    style={{ width: "100%", minWidth: 0, minHeight: 44, padding: "8px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg-panel)", color: "var(--text)", fontSize: 16 }}
-                  >
-                    {!workspaceOptions.projects.some((project) => comparableProjectPath(project.path) === comparableProjectPath(newSessionProject)) && (
-                      <option value={effectiveNewSessionCwd}>{projectLabel(effectiveNewSessionCwd)}</option>
-                    )}
-                    {workspaceOptions.projects.map((project) => {
-                      const current = comparableProjectPath(project.path) === comparableProjectPath(newSessionProject);
-                      const label = project.alias ?? projectLabel(project.path);
-                      const duplicate = workspaceOptions.projects.some((other) => other.path !== project.path && (other.alias ?? projectLabel(other.path)) === label);
-                      return (
-                        <option key={project.path} value={current ? effectiveNewSessionCwd : project.path}>
-                          {duplicate ? `${label} — ${project.path}` : label}
-                        </option>
-                      );
-                    })}
-                    <option value="">+ {t("projects.add")}</option>
-                  </select>
-                  <div id="new-session-workspace-path" style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }}>
-                    {effectiveNewSessionCwd}
-                  </div>
-                </div>
-              )}
-              onAgentEnd={handleAgentEnd}
-              onSessionCreated={handleSessionCreated}
-              onSessionForked={handleSessionForked}
-              modelsRefreshKey={modelsRefreshKey}
-              chatInputRef={chatInputRef}
-              onOpenFile={handleOpenLinkedFile}
-              onBranchDataChange={handleBranchDataChange}
-              onSystemPromptChange={handleSystemPromptChange}
-              onSystemPromptLoaderChange={handleSystemPromptLoaderChange}
-              onSessionStatsChange={handleSessionStatsChange}
-              onSessionStatsPanelOpen={openSessionStatsPanel}
-              onGenerationSpeedChange={handleGenerationSpeedChange}
-              onOpenProviders={() => setSettingsTab("providers")}
-              toolCallsDefaultCollapsed={toolCallsDefaultCollapsed}
-            />
+            splitActive ? (
+              <SplitPane
+                activePane={activePane}
+                onActivePaneChange={setActivePane}
+                rightTitle={splitTitle}
+                onCloseRight={closeSplit}
+                left={mainChatNode}
+                right={
+                  <ChatWindow
+                    key={`split:${splitSessionId ?? ""}`}
+                    session={splitSession}
+                    newSessionCwd={null}
+                    modelsRefreshKey={modelsRefreshKey}
+                    toolCallsDefaultCollapsed={toolCallsDefaultCollapsed}
+                    anchorRequest={splitAnchor}
+                    onOpenFile={handleOpenLinkedFile}
+                  />
+                }
+              />
+            ) : mainChatNode
           ) : initialCwdStatus === "validating" ? (
             <div
               role="status"
@@ -2151,6 +2474,7 @@ export function AppShell() {
       {!settingsTab && (
         <RightPanel
         fileTabs={fileTabs}
+        dirtyFileTabIds={dirtyFileTabIds}
         activeFileTabId={activeFileTabId}
         rightView={rightView}
         onSelectView={handleSelectRightView}
@@ -2187,6 +2511,7 @@ export function AppShell() {
         onAtMention={handleAtMention}
         onAtMentions={handleAtMentions}
         onMentionLines={handleFileLineMention}
+        onFileTabDirtyChange={handleFileTabDirtyChange}
         onExplorerGitStatus={handleExplorerGitStatus}
         onResetRightPanelWidth={resetRightPanelWidth}
         onRightPanelResizeStart={handleRightPanelResizeStart}

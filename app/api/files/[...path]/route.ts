@@ -20,6 +20,7 @@ import {
   getFileExt,
   getImageMime,
   getStreamSecurityHeaders,
+  isEditableTextPath,
 } from "@/lib/file-types";
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
@@ -36,9 +37,13 @@ const IGNORED_NAMES = new Set([
   "target", "vendor", ".DS_Store", ".git",
 ]);
 
+// fs + child-process-free Node route (BUILD-PLAN: routes touching fs declare
+// the Node runtime explicitly).
+export const runtime = "nodejs";
+
 const IGNORED_SUFFIXES = [".pyc"];
 
-const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
+const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch", "edit"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
 const FILE_REQUEST_TYPE_SET = new Set<string>(FILE_REQUEST_TYPES);
 const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
@@ -46,6 +51,12 @@ const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
 // Multipart boundaries and headers are not file bytes, but must be bounded too.
 const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
 const MAX_UPLOAD_CHECK_REQUEST_BYTES = 1024 * 1024;
+// Editor budget (BUILD-PLAN perf table): load/save is capped at 2 MB. The JSON
+// body wrapping the content escapes newlines/quotes, so the wire cap allows
+// headroom for that encoding; the decoded content is re-checked against the
+// real 2 MB limit below before anything touches disk.
+export const EDITOR_MAX_BYTES = 2 * 1024 * 1024;
+const MAX_EDIT_BODY_BYTES = EDITOR_MAX_BYTES * 4 + 64 * 1024;
 
 const EXT_TO_LANGUAGE: Record<string, string> = {
   ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
@@ -250,8 +261,125 @@ export async function POST(
   }
 }
 
-function createFileBodyStream(filePath: string, range?: { start: number; end: number }): ReadableStream<Uint8Array> {
-  const fileStream = fs.createReadStream(filePath, range);
+/**
+ * Resolve the PUT write target with write-specific confinement: allow roots
+ * only (no session-reference escape like reads), the target itself must be an
+ * existing regular file (never a symlink), and the realpathed parent
+ * directory must still land inside the realpathed roots.
+ */
+async function getWriteTarget(segments: string[]): Promise<
+  { filePath: string; directory: string } | { response: NextResponse }
+> {
+  const filePath = filePathFromSegments(segments);
+  const allowedRoots = await getAllowedFileRoots();
+  if (!isFilePathAllowed(filePath, allowedRoots)) {
+    return { response: NextResponse.json({ error: "Access denied", code: "access_denied" }, { status: 403 }) };
+  }
+
+  let stat: fs.Stats;
+  try {
+    // lstat (not stat): a symlink destination is refused outright so a write
+    // can never be redirected through a link to a path outside the roots.
+    stat = fs.lstatSync(filePath);
+  } catch {
+    return { response: NextResponse.json({ error: "Not found", code: "file_not_found" }, { status: 404 }) };
+  }
+  if (stat.isSymbolicLink()) {
+    return { response: NextResponse.json({ error: "Refusing to write through a symbolic link", code: "symlink_not_allowed" }, { status: 403 }) };
+  }
+  if (!stat.isFile()) {
+    return { response: NextResponse.json({ error: "Not a file", code: "not_a_file" }, { status: 400 }) };
+  }
+
+  const directory = path.dirname(filePath);
+  let realDirectory: string;
+  try {
+    realDirectory = fs.realpathSync(directory);
+  } catch {
+    return { response: NextResponse.json({ error: "Not found", code: "file_not_found" }, { status: 404 }) };
+  }
+  // Threat note (BUILD-PLAN § Security additions, Files PUT): the parent is
+  // realpathed so a symlinked directory inside an allowed root cannot
+  // redirect the atomic rename outside the roots it was granted.
+  const realRoots = new Set<string>();
+  for (const root of allowedRoots) {
+    try {
+      realRoots.add(fs.realpathSync(root));
+    } catch {
+      // Ignore stale session roots that no longer exist.
+    }
+  }
+  if (!isFilePathAllowed(realDirectory, realRoots)) {
+    return { response: NextResponse.json({ error: "Access denied", code: "access_denied" }, { status: 403 }) };
+  }
+
+  return { filePath: path.join(realDirectory, path.basename(filePath)), directory: realDirectory };
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  try {
+    const { path: segments } = await params;
+    const target = await getWriteTarget(segments);
+    if ("response" in target) return target.response;
+
+    let body: { content?: unknown } | null;
+    try {
+      body = await parseJsonWithinLimit<{ content?: unknown }>(request, MAX_EDIT_BODY_BYTES);
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        return NextResponse.json({ error: "File too large to edit (over 2MB)", code: "file_too_large_edit" }, { status: 413 });
+      }
+      return NextResponse.json({ error: "Request body must be valid JSON", code: "invalid_body" }, { status: 400 });
+    }
+    if (typeof body?.content !== "string") {
+      return NextResponse.json({ error: "content must be a string", code: "invalid_content" }, { status: 400 });
+    }
+    if (!isEditableTextPath(target.filePath)) {
+      return NextResponse.json({ error: "Not an editable text file", code: "file_not_editable" }, { status: 403 });
+    }
+    // parseJsonWithinLimit bounds the ENCODED body; the decoded content gets
+    // the real 2 MB editor budget check here.
+    const bytes = Buffer.from(body.content, "utf8");
+    if (bytes.byteLength > EDITOR_MAX_BYTES) {
+      return NextResponse.json({ error: "File too large to edit (over 2MB)", code: "file_too_large_edit" }, { status: 413 });
+    }
+
+    // Atomic write: temp file in the target directory, then rename over the
+    // destination. rename(2) replaces rather than follows the destination, and
+    // staying in the same directory keeps the swap atomic on every supported
+    // filesystem. Bytes-as-sent: the buffer is the exact UTF-8 of the
+    // received string — BOM and CRLF are never added, stripped, or converted.
+    const tmpPath = path.join(
+      target.directory,
+      `.${path.basename(target.filePath)}.ompweb-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`,
+    );
+    try {
+      fs.writeFileSync(tmpPath, bytes);
+      fs.renameSync(tmpPath, target.filePath);
+    } catch (error) {
+      try { fs.unlinkSync(tmpPath); } catch { /* temp file never existed */ }
+      return NextResponse.json({ error: error instanceof Error ? error.message : String(error), code: "write_failed" }, { status: 500 });
+    }
+
+    let written: fs.Stats | null = null;
+    try {
+      written = fs.statSync(target.filePath);
+    } catch {
+      // stat after a successful rename is not expected to fail; fall through.
+    }
+    return NextResponse.json({
+      size: written ? written.size : bytes.byteLength,
+      mtime: (written ?? { mtime: new Date() }).mtime.toISOString(),
+    });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+}
+
+function createFileBodyStream(filePath: string, range?: { start: number; end: number }): ReadableStream<Uint8Array> {  const fileStream = fs.createReadStream(filePath, range);
   let closed = false;
 
   return new ReadableStream<Uint8Array>({
@@ -468,7 +596,22 @@ export async function GET(
       }
       const content = fs.readFileSync(filePath, "utf-8");
       const language = getLanguage(filePath);
-      return NextResponse.json({ content, language, size: stat.size });
+      return NextResponse.json({ content, language, size: stat.size, mtime: stat.mtime.toISOString() });
+    }
+
+    if (type === "edit") {
+      if (!stat.isFile()) {
+        return NextResponse.json({ error: "Not a file", code: "not_a_file" }, { status: 400 });
+      }
+      if (!isEditableTextPath(filePath)) {
+        return NextResponse.json({ error: "Not an editable text file", code: "file_not_editable" }, { status: 403 });
+      }
+      if (stat.size > EDITOR_MAX_BYTES) {
+        return NextResponse.json({ error: "File too large to edit (over 2MB)", code: "file_too_large_edit" }, { status: 413 });
+      }
+      const content = fs.readFileSync(filePath, "utf-8");
+      const language = getLanguage(filePath);
+      return NextResponse.json({ content, language, size: stat.size, mtime: stat.mtime.toISOString() });
     }
 
     if (type === "download") {
@@ -488,6 +631,7 @@ export async function GET(
       const documentMime = getDocumentMime(filePath);
       return NextResponse.json({
         size: stat.size,
+        mtime: stat.mtime.toISOString(),
         language: getLanguage(filePath),
         mime: imageMime || audioMime || documentMime || "text/plain",
         previewKind: documentPreviewKind(filePath),

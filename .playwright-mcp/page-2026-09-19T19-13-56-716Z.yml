@@ -1,0 +1,171 @@
+- generic [ref=e1]:
+  - generic [ref=e2395] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=e2396]
+    - generic [ref=e2401]:
+      - button "Open issues overlay" [ref=e2402]:
+        - generic [ref=e7131]:
+          - generic [aria-hidden] [ref=e7132]: "1"
+          - generic [ref=e7133]: "2"
+        - generic [ref=e2406]:
+          - text: Issue
+          - generic [aria-hidden] [ref=e7134]: s
+      - button "Collapse issues badge" [ref=e2407]
+  - alert [ref=e2400]: mcpscratch - omp web
+  - main [ref=e9362]:
+    - region "Settings" [ref=e10012]:
+      - generic [ref=e10013]:
+        - generic [ref=e10014]:
+          - button "Back" [ref=e10015] [cursor=pointer]
+          - heading "Settings" [level=1] [ref=e10020]
+          - generic [ref=e10021]: Auto-saved
+        - generic [ref=e10022]:
+          - textbox "Search settings..." [ref=e10024]
+          - button "Close settings" [ref=e10025] [cursor=pointer]
+      - generic [ref=e10029]:
+        - tablist "Settings sections" [ref=e10030]:
+          - tab "Interface & Behavior UI preferences, completion sound, submission mode" [ref=e10031] [cursor=pointer]:
+            - generic [ref=e10035]:
+              - generic [ref=e10036]: Interface & Behavior
+              - generic [ref=e10037]: UI preferences, completion sound, submission mode
+          - tab "Safety & Approvals Tool safety rules, YOLO mode, terminal permissions" [ref=e10038] [cursor=pointer]:
+            - generic [ref=e10042]:
+              - generic [ref=e10043]: Safety & Approvals
+              - generic [ref=e10044]: Tool safety rules, YOLO mode, terminal permissions
+          - tab "AI Model Defaults Reasoning budget, verbosity, personality, scratchpad" [ref=e10045] [cursor=pointer]:
+            - generic [ref=e10049]:
+              - generic [ref=e10050]: AI Model Defaults
+              - generic [ref=e10051]: Reasoning budget, verbosity, personality, scratchpad
+          - tab "API Keys & Providers Connected OAuth accounts, API keys, and model registry" [ref=e10052] [cursor=pointer]:
+            - generic [ref=e10056]:
+              - generic [ref=e10057]: API Keys & Providers
+              - generic [ref=e10058]: Connected OAuth accounts, API keys, and model registry
+          - tab "Usage Tokens, costs, cache analytics, and model breakdown" [ref=e10059] [cursor=pointer]:
+            - generic [ref=e10062]:
+              - generic [ref=e10063]: Usage
+              - generic [ref=e10064]: Tokens, costs, cache analytics, and model breakdown
+          - tab "Notifications Browser notifications, webhooks, and quiet hours" [active] [selected] [ref=e10065] [cursor=pointer]:
+            - generic [ref=e10069]:
+              - generic [ref=e10070]: Notifications
+              - generic [ref=e10071]: Browser notifications, webhooks, and quiet hours
+          - tab "Scheduled Prompts Recurring agent runs on a weekly clock" [ref=e10072] [cursor=pointer]:
+            - generic [ref=e10080]:
+              - generic [ref=e10081]: Scheduled Prompts
+              - generic [ref=e10082]: Recurring agent runs on a weekly clock
+          - tab "Agent & Intelligence Advisor, memory, autolearn, compaction and retry" [ref=e10083] [cursor=pointer]:
+            - generic [ref=e10087]:
+              - generic [ref=e10088]: Agent & Intelligence
+              - generic [ref=e10089]: Advisor, memory, autolearn, compaction and retry
+          - tab "Agents Task agents, model settings, and tool policy" [ref=e10090] [cursor=pointer]:
+            - generic [ref=e10094]:
+              - generic [ref=e10095]: Agents
+              - generic [ref=e10096]: Task agents, model settings, and tool policy
+          - tab "Extensions & Tools MCP servers, managed skills, and OMP plugins" [ref=e10097] [cursor=pointer]:
+            - generic [ref=e10102]:
+              - generic [ref=e10103]: Extensions & Tools
+              - generic [ref=e10104]: MCP servers, managed skills, and OMP plugins
+          - tab "System & Updates App updates, runtime version, and active session restart" [ref=e10105] [cursor=pointer]:
+            - generic [ref=e10111]:
+              - generic [ref=e10112]: System & Updates
+              - generic [ref=e10113]: App updates, runtime version, and active session restart
+        - tabpanel "Notifications Browser notifications, webhooks, and quiet hours" [ref=e10191]:
+          - generic [ref=e10192]:
+            - generic [ref=e10193]:
+              - heading "Notifications" [level=2] [ref=e10194]
+              - paragraph [ref=e10195]: Get pinged when a run finishes or needs your approval — even when this tab is in the background.
+            - generic [ref=e10196]:
+              - generic [ref=e10197]:
+                - generic [ref=e10198]:
+                  - generic [ref=e10199]: Browser notifications
+                  - generic [ref=e10200]: OS notification for completions and approvals while the tab is hidden. Permission is asked only when you turn this on.
+                - switch [ref=e10201] [cursor=pointer]
+              - generic [ref=e10203]: Permission not requested yet
+            - generic [ref=e10204]:
+              - generic [ref=e10205]:
+                - generic [ref=e10206]: Quiet hours
+                - generic [ref=e10207]: Suppresses the browser ping during this window. The feed and webhooks still record every event.
+              - generic [ref=e10208]:
+                - generic [ref=e10209]:
+                  - text: From
+                  - textbox "From" [ref=e10210]
+                - generic [ref=e10211]:
+                  - text: To
+                  - textbox "To" [ref=e10212]
+                - button "Apply" [disabled] [ref=e10213]
+            - generic [ref=e10217]:
+              - generic [ref=e10218]:
+                - generic [ref=e10219]: Webhook
+                - generic [ref=e10220]: Deliver the same events to ntfy, Discord, Telegram, or any JSON endpoint. Delivery runs in the background; failures appear in the feed.
+              - generic [ref=e10221]:
+                - generic [ref=e10222]:
+                  - generic [ref=e10223]: Enable webhook
+                  - generic [ref=e10224]: Not configured
+                - switch [ref=e10225] [cursor=pointer]
+              - generic [ref=e10228]:
+                - text: Provider
+                - combobox "Provider" [ref=e10229] [cursor=pointer]:
+                  - option "ntfy"
+                  - option "discord"
+                  - option "telegram"
+                  - option "generic" [selected]
+              - generic [ref=e10230]:
+                - generic [ref=e10231]:
+                  - text: URL
+                  - textbox "URL" [ref=e10232]:
+                    - /placeholder: https://ntfy.sh/my-topic
+                - button "Save URL" [disabled] [ref=e10233]
+              - generic [ref=e10234]: "https required (plain http only for localhost). The URL is a credential: it is saved on this machine and never displayed again — only its host."
+              - group "Events" [ref=e10235]:
+                - generic [ref=e10237]:
+                  - generic [ref=e10238] [cursor=pointer]:
+                    - checkbox "Run completed" [checked] [ref=e10239]
+                    - text: Run completed
+                  - generic [ref=e10240] [cursor=pointer]:
+                    - checkbox "Approval needed" [checked] [ref=e10241]
+                    - text: Approval needed
+                  - generic [ref=e10242] [cursor=pointer]:
+                    - checkbox "Error" [checked] [ref=e10243]
+                    - text: Error
+                  - generic [ref=e10244] [cursor=pointer]:
+                    - checkbox "Guardrail" [ref=e10245]
+                    - text: Guardrail
+                  - generic [ref=e10246] [cursor=pointer]:
+                    - checkbox "Scheduled" [ref=e10247]
+                    - text: Scheduled
+              - generic [ref=e10248]:
+                - button "Send test" [ref=e10249] [cursor=pointer]
+                - generic [ref=e10252]: "Deliveries: 0 sent · 0 failed"
+            - generic [ref=e10253]:
+              - generic [ref=e10254]: Recent activity
+              - list [ref=e10255]:
+                - listitem [ref=e10256]:
+                  - generic [ref=e10257]:
+                    - generic [ref=e10258]: Approval needed
+                    - generic [ref=e10259]: ompweb
+                    - generic [ref=e10260]: "{count}h"
+                  - generic [ref=e10261]: ompweb · Value
+                - listitem [ref=e10262]:
+                  - generic [ref=e10263]:
+                    - generic [ref=e10264]: Error
+                    - generic [ref=e10265]: ompweb
+                    - generic [ref=e10266]: "{count}h"
+                  - generic [ref=e10267]: ompweb · provider failed
+                - listitem [ref=e10268]:
+                  - generic [ref=e10269]:
+                    - generic [ref=e10270]: Run completed
+                    - generic [ref=e10271]: ompweb
+                    - generic [ref=e10272]: "{count}h"
+                  - generic [ref=e10273]: ompweb · The agent finished its run.
+                - listitem [ref=e10274]:
+                  - generic [ref=e10275]:
+                    - generic [ref=e10276]: Run completed
+                    - generic [ref=e10277]: ompweb
+                    - generic [ref=e10278]: "{count}h"
+                  - generic [ref=e10279]: ompweb · The agent finished its run.
+                - listitem [ref=e10280]:
+                  - generic [ref=e10281]:
+                    - generic [ref=e10282]: Approval needed
+                    - generic [ref=e10283]: ompweb
+                    - generic [ref=e10284]: "{count}d"
+                  - generic [ref=e10285]: ompweb · Value
+  - generic:
+    - region "Notifications"

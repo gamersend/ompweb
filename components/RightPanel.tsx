@@ -1,6 +1,7 @@
 "use client";
 
-import { memo, type RefObject } from "react";
+import { memo, useEffect, useState, type RefObject } from "react";
+import dynamic from "next/dynamic";
 import {
   AtSign,
   ChevronsDownUp,
@@ -12,6 +13,7 @@ import {
   LocateFixed,
   RefreshCw,
   Search,
+  SquareTerminal,
   Upload,
   X,
 } from "lucide-react";
@@ -22,10 +24,23 @@ import { FileViewer } from "./FileViewer";
 import { useI18n } from "@/lib/i18n";
 import { getFileName } from "@/lib/file-paths";
 
-export type RightPanelView = "explorer" | "git" | "file";
+export type RightPanelView = "explorer" | "git" | "file" | "terminal";
+
+// Phase 13: xterm.js is the heaviest dep in the tree — lazy-mount the whole
+// terminal tab so it never touches the initial bundle (BUILD-PLAN risk #4).
+const TerminalTab = dynamic(() => import("./TerminalTab"), {
+  ssr: false,
+  loading: () => (
+    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
+      …
+    </div>
+  ),
+});
 
 interface Props {
   fileTabs: Tab[];
+  /** Tab ids (not paths) with unsaved editor changes — rendered as dots. */
+  dirtyFileTabIds?: ReadonlySet<string>;
   activeFileTabId: string | null;
   rightView: RightPanelView;
   onSelectView: (view: RightPanelView) => void;
@@ -62,6 +77,8 @@ interface Props {
   onAtMention: (relativePath: string, isDir: boolean) => void;
   onAtMentions: (relativePaths: string[]) => void;
   onMentionLines: (relativePath: string, startLine: number, endLine: number) => void;
+  /** Per-tab editor dirty flips from the mounted FileViewer instances. */
+  onFileTabDirtyChange?: (tabId: string, dirty: boolean) => void;
   onExplorerGitStatus: (changedCount: number, isRepo: boolean) => void;
   onResetRightPanelWidth: () => void;
   onRightPanelResizeStart: (e: React.MouseEvent) => void;
@@ -75,6 +92,7 @@ interface Props {
 // (all callbacks are useCallback-stable in AppShell for the same reason).
 export const RightPanel = memo(function RightPanel({
   fileTabs,
+  dirtyFileTabIds,
   activeFileTabId,
   rightView,
   onSelectView,
@@ -111,6 +129,7 @@ export const RightPanel = memo(function RightPanel({
   onAtMention,
   onAtMentions,
   onMentionLines,
+  onFileTabDirtyChange,
   onExplorerGitStatus,
   onResetRightPanelWidth,
   onRightPanelResizeStart,
@@ -119,6 +138,15 @@ export const RightPanel = memo(function RightPanel({
   const { t } = useI18n();
   const activeFileTab = fileTabs.find((tab) => tab.id === activeFileTabId) ?? null;
   const gitBadge = explorerIsRepo ? explorerGitCount : 0;
+  const tabsWithDirty = dirtyFileTabIds && dirtyFileTabIds.size > 0
+    ? fileTabs.map((tab) => (dirtyFileTabIds.has(tab.id) ? { ...tab, dirty: true } : tab))
+    : fileTabs;
+  // Terminal keeps its shell child alive (idle-disposed server-side) across
+  // tab switches once opened; hidden via display like the other kept views.
+  const [terminalOpened, setTerminalOpened] = useState(false);
+  useEffect(() => {
+    if (rightView === "terminal") setTerminalOpened(true);
+  }, [rightView]);
 
   return (
     <>
@@ -161,11 +189,14 @@ export const RightPanel = memo(function RightPanel({
           ...(!isMobile && rightPanelWidth !== null ? { "--right-panel-width": `${rightPanelWidth}px` } : {}),
         }}
       >
-        {/* Right panel toolbar: tabs + editor integrations (chat, path, explorer) */}
-        <div className="right-panel-toolbar" style={{ display: "flex", alignItems: "center", flexShrink: 0, background: "var(--bg-panel)", borderBottom: "1px solid var(--border)", minHeight: isMobile ? 44 : 36, paddingRight: isMobile ? 44 : 36, flexWrap: "wrap" }}>
+        {/* Right panel toolbar: tabs + editor integrations (chat, path, explorer).
+            The right padding reserves the fixed show-file-panel toggle's corner:
+            it must exceed the toggle's viewport width even when --ui-scale < 1
+            shrinks layout pixels (48 × 0.75 = 36, exactly the toggle's width). */}
+        <div className="right-panel-toolbar" style={{ display: "flex", alignItems: "center", flexShrink: 0, background: "var(--bg-panel)", borderBottom: "1px solid var(--border)", minHeight: isMobile ? 44 : 36, paddingRight: isMobile ? 48 : 48, flexWrap: "wrap" }}>
           <div style={{ flex: isMobile ? "1 0 100%" : "1 1 160px", overflow: "hidden", minWidth: 0 }}>
             <TabBar
-              tabs={fileTabs}
+              tabs={tabsWithDirty}
               activeTabId={rightView === "file" ? activeFileTabId ?? "" : ""}
               onSelectTab={onSelectFileTab}
               onCloseTab={onCloseFileTab}
@@ -175,6 +206,8 @@ export const RightPanel = memo(function RightPanel({
               gitSelected={rightView === "git"}
               onSelectGit={() => onSelectView("git")}
               gitBadge={gitBadge}
+              terminalSelected={rightView === "terminal"}
+              onSelectTerminal={() => onSelectView("terminal")}
             />
           </div>
           {rightView === "explorer" ? (
@@ -240,7 +273,7 @@ export const RightPanel = memo(function RightPanel({
               </button>
             </div>
             )
-          ) : activeFileTab && (
+          ) : rightView === "file" && activeFileTab && (
             <div style={{ display: "flex", alignItems: "center", flexShrink: 0, padding: "0 2px" }} role="toolbar" aria-label={activeFileTab.filePath}>
               <button
                 onClick={onMentionActiveFile}
@@ -396,14 +429,16 @@ export const RightPanel = memo(function RightPanel({
           )}
         </div>
         {/* Keep open viewers mounted so switching tabs preserves scroll and preview state. */}
-        <div style={{ display: rightView === "file" ? "block" : "none", flex: 1, minHeight: 0, overflow: "hidden" }}>
-          {fileTabs.length > 0 ? fileTabs.map((tab) => (
+        <div style={{ display: rightView === "file" ? "block" : "none", flex: 1, minHeight: 0, overflow: "hidden" }}>          {fileTabs.length > 0 ? fileTabs.map((tab) => (
             <div key={tab.id} style={{ display: tab.id === activeFileTabId ? "block" : "none", height: "100%" }}>
               <FileViewer
                 filePath={tab.filePath}
                 cwd={activeCwd ?? undefined}
                 sourceSessionId={tab.sourceSessionId}
                 gitRefreshKey={explorerRefreshKey}
+                onDirtyChange={onFileTabDirtyChange
+                  ? (dirty) => onFileTabDirtyChange(tab.id, dirty)
+                  : undefined}
                 onMentionLines={tab.id === activeFileTabId && rightPanelOpen && rightView === "file" ? onMentionLines : undefined}
                 onOpenFile={(filePath) => onOpenFile(
                   filePath,
@@ -417,6 +452,19 @@ export const RightPanel = memo(function RightPanel({
               <Files size={26} strokeWidth={1.5} aria-hidden="true" style={{ color: "var(--text-dim)" }} />
               <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 600 }}>{t("appShell.noFileOpen")}</div>
               <div style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.6, maxWidth: 260 }}>{t("appShell.noFileOpenHint")}</div>
+            </div>
+          )}
+        </div>
+        {/* Terminal tab view (Phase 13) — lazily mounted on first open; stays
+            mounted afterwards so the shell survives tab switches. */}
+        <div style={{ display: terminalOpened ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
+          {activeCwd ? (
+            <TerminalTab cwd={activeCwd} active={rightView === "terminal" && rightPanelOpen} />
+          ) : (
+            <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, textAlign: "center" }}>
+              <SquareTerminal size={26} strokeWidth={1.5} aria-hidden="true" style={{ color: "var(--text-dim)" }} />
+              <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 600 }}>{t("terminal.tab")}</div>
+              <div style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.6, maxWidth: 260 }}>{t("terminal.noCwd")}</div>
             </div>
           )}
         </div>

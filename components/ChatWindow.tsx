@@ -1,5 +1,5 @@
 "use client";
-import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
+import { registerAbortHandler, registerFindHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { ChevronDown, ChevronUp, Layers, Paperclip, Square } from "lucide-react";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolCallContent, ToolResultMessage } from "@/lib/types";
@@ -8,15 +8,21 @@ import { getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/
 import { isGroupAnchor, planTranscriptRows, type TranscriptRow } from "@/lib/chat-transcript-plan";
 import { resolveForkEntryIds } from "@/lib/chat-fork";
 import { MessageView } from "./MessageView";
-import { ChatInput, type ChatInputHandle } from "./ChatInput";
+import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput";
 import { ExtensionDialog } from "./ExtensionDialog";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
+import { RestoreDialog } from "./RestoreDialog";
+import type { CheckpointPoint } from "@/lib/checkpoints/store";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ComposerPanels } from "./ComposerPanels";
+import { ChatFindBar } from "./ChatFindBar";
+import { useChatFind } from "@/hooks/useChatFind";
 import OmpWebLogo from "./OmpWebLogo";
 import { CHAT_COLUMN_MAX_WIDTH, MINIMAP_WIDTH } from "@/lib/chat-layout";
-import { useAgentSession, type AgentPhase, type NoticeItem, type SubagentInfo } from "@/hooks/useAgentSession";
+import { useAgentSession, type AnchorRequest, type AgentPhase, type NoticeItem, type SubagentInfo } from "@/hooks/useAgentSession";
+import { recordPrompt } from "@/lib/prompt-history";
 import { useAudio } from "@/hooks/useAudio";
+import { speakLatestReply } from "@/hooks/useTts";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo, GenerationSpeedInfo } from "@/lib/pi-types";
@@ -31,6 +37,8 @@ import {
   VISIBLE_PAGE_SIZE,
 } from "@/lib/chat-lazy-load";
 import { getDraftSummary } from "@/lib/draft-store";
+import { BookmarksPopover, MessageBookmarkButton, buildBookmarkPreviews } from "./BookmarksPopover";
+import { SessionInsightsEntry } from "./SessionInsightsDialog";
 
 interface Props {
   session: SessionInfo | null;
@@ -52,6 +60,13 @@ interface Props {
   onGenerationSpeedChange?: (speed: GenerationSpeedInfo | null) => void;
   /** Open Settings → API Keys & Providers (from the model picker). */
   onOpenProviders?: () => void;
+  /** Deep-link anchor (URL &anchor= / palette search result) — see AnchorRequest. */
+  anchorRequest?: AnchorRequest | null;
+  /** Called once an anchor request has been applied (or given up), so the
+   *  owner can clear the URL params / pending state. */
+  onAnchorApplied?: () => void;
+  /** Opens the command palette in Search mode (find-bar hand-off). */
+  onOpenSearchPalette?: (query: string) => void;
 }
 
 function phaseLabel(phase: AgentPhase): string {
@@ -327,6 +342,11 @@ interface CommittedTranscriptProps {
   nearBottom: boolean;
   sentinelRef: React.RefObject<HTMLButtonElement | null>;
   handleLoadMoreClick: () => void;
+  /** P1 anchor highlight ring: the entry currently scroll-targeted. */
+  highlightedEntryId: string | null;
+  /** P5 checkpoints: entry ids that have a checkpoint (null = list loading/unavailable). */
+  checkpointEntryIds: Set<string> | null;
+  onRestoreFiles: (entryId: string) => void;
 }
 
 /**
@@ -338,7 +358,8 @@ interface CommittedTranscriptProps {
 const CommittedTranscript = memo(function CommittedTranscript({
   messages, entryIds, conversationMeta, messageRefs, isStreaming, sessionBusy, isNew, forkingEntryId,
   handleFork, handleNavigate, handleEditContent, modelNames, messageCwd, onOpenFile, sessionId,
-  toolCallsDefaultCollapsed, visibleCount, nearBottom, sentinelRef, handleLoadMoreClick,
+  toolCallsDefaultCollapsed, visibleCount, nearBottom, sentinelRef, handleLoadMoreClick, highlightedEntryId,
+  checkpointEntryIds, onRestoreFiles,
 }: CommittedTranscriptProps) {
   const { t } = useI18n();
   const { toolResultsMap, lastAnchorIdx, visibleRefIndexByMessage } = conversationMeta;
@@ -348,6 +369,20 @@ const CommittedTranscript = memo(function CommittedTranscript({
     () => resolveForkEntryIds(messages.map((message) => message.role), entryIds),
     [messages, entryIds],
   );
+  // P5: a checkpoint exists "at/before the entry" — once the first checkpointed
+  // entry is seen, every later user message qualifies (the server resolves the
+  // exact applicable point via the entry-tree ancestor walk).
+  const checkpointAvailableByIndex = useMemo(() => {
+    const flags: boolean[] = new Array(messages.length).fill(false);
+    if (!checkpointEntryIds) return flags;
+    let available = false;
+    for (let i = 0; i < messages.length; i++) {
+      const entryKey = entryIds[i];
+      if (entryKey && checkpointEntryIds.has(entryKey)) available = true;
+      flags[i] = available;
+    }
+    return flags;
+  }, [messages.length, entryIds, checkpointEntryIds]);
 
   const attachVisibleRef = (idx: number, refIndex: number) => (el: HTMLDivElement | null) => {
     messageRefs.current[refIndex] = el;
@@ -379,6 +414,7 @@ const CommittedTranscript = memo(function CommittedTranscript({
     // Forking needs a branch point omp accepts, and a first user prompt has no
     // earlier context to fork from — that one row keeps no fork action.
     const canOfferFork = !sessionBusy && !isNew && !!forkEntryIds[idx] && !(idx === 0 && msg.role === "user");
+    const canRestore = msg.role === "user" && !sessionBusy && !isNew && !!entryIds[idx] && (checkpointAvailableByIndex[idx] ?? false);
     const view = (
       <MessageView
         key={`${keyPrefix}-view-${idx}`}
@@ -394,16 +430,52 @@ const CommittedTranscript = memo(function CommittedTranscript({
         onNavigate={sessionBusy ? undefined : handleNavigate}
         prevAssistantEntryId={sessionBusy ? undefined : prevAssistantEntryId}
         onEditContent={handleEditContent}
+        checkpointAvailable={canRestore}
+        onRestoreFiles={canRestore ? onRestoreFiles : undefined}
         showTimestamp={showTimestamp}
         prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
         sessionId={sessionId}
         toolCallsDefaultCollapsed={toolCallsDefaultCollapsed}
       />
     );
-    if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
+    if (!isVisible || options.attachRef === false || currentRefIdx === undefined) {
+      // P1 anchors: every message row carries its entry id even when the
+      // minimap ref wrapper is absent (cluster / non-visible rows) so
+      // deep-link + find scrolls can always resolve the element.
+      const entryKey = entryIds[idx];
+      if (!entryKey) return view;
+      return (
+        <div key={`${keyPrefix}-entry-${idx}`} data-entry-id={entryKey}>
+          {view}
+        </div>
+      );
+    }
+    const entryId = entryIds[idx];
+    const highlighted = highlightedEntryId !== null && highlightedEntryId === entryId;
     return (
-      <div key={`${keyPrefix}-${idx}`} data-message-index={idx} ref={attachVisibleRef(idx, currentRefIdx)}>
+      <div
+        key={`${keyPrefix}-${idx}`}
+        data-message-index={idx}
+        {...(entryId ? { "data-entry-id": entryId, id: `m-${entryId}` } : {})}
+        ref={attachVisibleRef(idx, currentRefIdx)}
+        style={highlighted ? {
+          position: "relative",
+          outline: "2px solid var(--accent)",
+          outlineOffset: 2,
+          borderRadius: "var(--radius-control)",
+          background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+          transition: "background var(--dur-slow) var(--ease-out-warm), outline-color var(--dur-slow) var(--ease-out-warm)",
+        } : {
+          position: "relative",
+          transition: "background var(--dur-slow) var(--ease-out-warm)",
+        }}
+      >
         {view}
+        {/* 6d bookmark star: only on the ref'd row of a user/assistant message,
+            so clustered split rows (shared entry id) show exactly one star. */}
+        {isVisible && sessionId && entryId && (
+          <MessageBookmarkButton sessionId={sessionId} entryId={entryId} />
+        )}
       </div>
     );
   };
@@ -518,7 +590,7 @@ const CommittedTranscript = memo(function CommittedTranscript({
   );
 });
 
-export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCallsDefaultCollapsed = true, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onProviderUsageContextChange, onGenerationSpeedChange, onOpenFile, onOpenProviders }: Props) {
+export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCallsDefaultCollapsed = true, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onProviderUsageContextChange, onGenerationSpeedChange, onOpenFile, onOpenProviders, anchorRequest, onAnchorApplied, onOpenSearchPalette }: Props) {
   const { t, tn } = useI18n();
   const { playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
@@ -530,9 +602,20 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
   // checks the sound preference itself.
   const playDoneSoundRef = useRef(playDoneSound);
   playDoneSoundRef.current = playDoneSound;
+  // P5 checkpoints: refreshed from below via ref so this callback's identity
+  // stays stable (useAgentSession syncs the latest onAgentEnd every render).
+  const checkpointsRefreshRef = useRef<() => void>(() => {});
   const wrappedOnAgentEnd = useCallback(() => {
     playDoneSoundRef.current();
+    // 6b TTS replies: auto-speak the newest reply when "Read replies aloud"
+    // is on. Deferred a tick so the just-finished assistant message renders
+    // and registers itself (MessageView → rememberAssistantReply) first.
+    setTimeout(speakLatestReply, 300);
     onAgentEnd?.();
+    // Snapshots land server-side a beat after agent_end (git status + tree
+    // write) — refresh now and once more after a grace period.
+    checkpointsRefreshRef.current();
+    setTimeout(() => checkpointsRefreshRef.current(), 5_000);
   }, [onAgentEnd]);
 
   // Stabilize the onEditContent ref; pairs with React.memo to avoid re-rendering history messages
@@ -555,6 +638,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     subagents, subagentEvents, subagentTranscriptVersions, activeSubagentCount, currentTodoPhase, todoPhases,
     isNew,
     sessionIdRef, messagesEndRef, scrollContainerRef,
+    anchorTarget, anchorTo,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction, handleCompact,
     removeQueuedMessage, promoteQueuedToSteer,
@@ -565,8 +649,19 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
     onOpenFile,
+    anchorRequest,
   });
   const sessionBusy = agentRunning || bashRunning;
+  // 6e: record every SUCCESSFUL send into the global prompt history (the
+  // store handles consecutive-dedupe). `!cmd` sends are shell commands, not
+  // prompts, so they stay out of the list.
+  const handleSendRecorded = useCallback(async (message: string, images?: AttachedImage[]): Promise<boolean> => {
+    const sent = await handleSend(message, images);
+    if (sent && !(images === undefined && message.trimStart().startsWith("!"))) {
+      recordPrompt(message, { sessionId: session?.id ?? null, projectRoot: session?.projectRoot ?? null });
+    }
+    return sent;
+  }, [handleSend, session]);
   const modelCapacity = useMemo(() => {
     if (!displayModelValue) return null;
     const model = modelList.find((entry) => entry.provider === displayModelValue.provider && entry.id === displayModelValue.modelId);
@@ -661,6 +756,35 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     return () => registerAbortHandler(null);
   }, [sessionBusy, handleAbort]);
 
+  // ---------------------------------------------------------------------
+  // In-session find (P1.2) — shares the anchor + highlight infra.
+  // ---------------------------------------------------------------------
+  const chatFind = useChatFind({
+    messages, entryIds, anchorTo,
+    onSearchAllSessions: onOpenSearchPalette,
+  });
+  const chatFindRef = useRef(chatFind);
+  chatFindRef.current = chatFind;
+  // Ctrl/Cmd+F via the global shortcut registry: the handler decides whether
+  // this window handles the key; only then does AppShell stop the browser's
+  // native find (non-chat surfaces keep it).
+  useEffect(() => {
+    registerFindHandler(() => chatFindRef.current.handleFindShortcut());
+    return () => registerFindHandler(null);
+  }, []);
+
+  // ---------------------------------------------------------------------
+  // Anchor highlight ring state (P1). The scroll effect itself lives below,
+  // after the lazy-load window state (`visibleCount`) it may expand.
+  // ---------------------------------------------------------------------
+  const [highlight, setHighlight] = useState<{ entryId: string; key: number } | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const anchorAppliedRef = useRef<(() => void) | null>(null);
+  anchorAppliedRef.current = onAnchorApplied ?? null;
+  useEffect(() => () => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+  }, []);
+
   // Cycle model / thinking level via ⌘/Ctrl+Alt+M and ⌘/Ctrl+Alt+T (RPC
   // cycle_model / cycle_thinking_level). Meta/Alt combos avoid clashing with
   // ordinary typing in the composer.
@@ -693,6 +817,37 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
       setVisibleCount(VISIBLE_PAGE_SIZE);
     }
   }, [sessionKeyForPaging]);
+  // Anchor scroll + highlight ring (P1). `anchorTarget` is published by
+  // useAgentSession once the entry is guaranteed on the active branch (one
+  // findLeafForEntry branch hop when needed). The lazy-load render window
+  // may not include the row yet — expand it once, then scroll.
+  useEffect(() => {
+    if (!anchorTarget || loading) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const el = container.querySelector(`[data-entry-id="${CSS.escape(anchorTarget.entryId)}"]`) as HTMLElement | null;
+    if (!el) {
+      // Outside the lazy-load window: expand once and retry after the
+      // re-render (the effect re-runs on visibleCount change). If the window
+      // is already full and the row still is not in the DOM, give up.
+      if (visibleCount < messages.length) {
+        setVisibleCount(messages.length);
+        return;
+      }
+      anchorAppliedRef.current?.();
+      return;
+    }
+    const containerRect = container.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const target = Math.max(0, container.scrollTop + (elRect.top - containerRect.top) - Math.max(80, container.clientHeight * 0.25));
+    // Instant scroll: deep links + find jumps must land deterministically
+    // (and reduced-motion forbids smooth programmatic scrolling anyway).
+    container.scrollTo({ top: target, behavior: "auto" });
+    setHighlight({ entryId: anchorTarget.entryId, key: anchorTarget.seq });
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlight(null), 2800);
+    anchorAppliedRef.current?.();
+  }, [anchorTarget, loading, entryIds, messages.length, visibleCount, scrollContainerRef]);
   const [selectedSubagent, setSelectedSubagent] = useState<SubagentInfo | null>(null);
   const [composerMinimized, setComposerMinimized] = useState(false);
   const minimizedExpandRef = useRef<HTMLButtonElement | null>(null);
@@ -851,6 +1006,8 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     }
     return history.reverse();
   }, [messages]);
+  // 6d bookmarks: entryId → short preview text for the bookmarks popover.
+  const bookmarkPreviews = useMemo(() => buildBookmarkPreviews(messages, entryIds), [messages, entryIds]);
   const conversationMeta = useMemo(() => {
     const toolResultsMap = new Map<string, ToolResultMessage>();
     let lastAnchorIdx = -1;
@@ -918,6 +1075,51 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
   // never let a pending approval prompt sit hidden behind the minimized pill.
   useEffect(() => { if (extensionDialog) setComposerMinimized(false); }, [extensionDialog]);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
+
+  // ---------------------------------------------------------------------------
+  // P5 checkpoints (git file rewind): lazy per-session list. Fetched once per
+  // session (and refreshed after agent runs / restores); the entry-id set gates
+  // the "Restore files to here" affordance on user messages.
+  // ---------------------------------------------------------------------------
+  const [checkpointPoints, setCheckpointPoints] = useState<CheckpointPoint[] | null>(null);
+  const [restoreTargetEntryId, setRestoreTargetEntryId] = useState<string | null>(null);
+
+  const refreshCheckpoints = useCallback(() => {
+    const currentSessionId = session?.id ?? sessionIdRef.current ?? null;
+    if (!currentSessionId) return;
+    let cancelled = false;
+    fetch(`/api/sessions/${encodeURIComponent(currentSessionId)}/checkpoints`)
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const body = (await response.json()) as { success?: boolean; data?: { points?: CheckpointPoint[] } };
+        return body?.data?.points ?? [];
+      })
+      .then((points) => {
+        if (!cancelled) setCheckpointPoints(points);
+      })
+      .catch(() => { /* checkpoints stay unavailable — non-fatal */ });
+    return () => { cancelled = true; };
+  }, [session?.id, sessionIdRef]);
+  checkpointsRefreshRef.current = refreshCheckpoints;
+
+  // Reset + fetch per session; only real (existing) sessions can have points.
+  useEffect(() => {
+    setCheckpointPoints(null);
+    setRestoreTargetEntryId(null);
+    if (sessionKeyForPaging.startsWith("new:") || sessionKeyForPaging === "empty") return;
+    refreshCheckpoints();
+    // sessionKeyForPaging identity-change is the trigger; refreshCheckpoints is
+    // captured via the ref at call time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKeyForPaging]);
+
+  const checkpointEntryIds = useMemo(
+    () => (checkpointPoints && checkpointPoints.length > 0 ? new Set(checkpointPoints.map((point) => point.entryId)) : null),
+    [checkpointPoints],
+  );
+  const handleRestoreFiles = useCallback((entryId: string) => {
+    setRestoreTargetEntryId(entryId);
+  }, []);
 
   const displayModelKey = displayModelValue ? `${displayModelValue.provider}:${displayModelValue.modelId}` : "";
   const availableThinkingLevels = useMemo(
@@ -1000,7 +1202,8 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
   const chatInputElement = (
     <ChatInput
       ref={chatInputRef}
-      onSend={handleSend}
+      onSend={handleSendRecorded}
+      projectRoot={session?.projectRoot ?? newSessionCwd ?? null}
       onAbort={handleAbort}
       onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
@@ -1127,6 +1330,16 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
         onClose={() => setSelectedSubagent(null)}
       />
 
+      {/* P5 checkpoints: file rewind confirmation for user messages. */}
+      <RestoreDialog
+        open={restoreTargetEntryId !== null}
+        entryId={restoreTargetEntryId}
+        sessionId={session?.id ?? sessionIdRef.current ?? null}
+        cwd={messageCwd ?? null}
+        onOpenChange={(next) => { if (!next) setRestoreTargetEntryId(null); }}
+        onRestored={refreshCheckpoints}
+      />
+
       {extensionCustomUi && (
         <ExtensionCustomPanel
           request={extensionCustomUi}
@@ -1181,10 +1394,43 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
             pointerEvents: "none",
           }}
         >
-          <div style={{ maxWidth: isMobile ? CHAT_COLUMN_MAX_WIDTH : CHAT_COLUMN_MAX_WIDTH_DESKTOP, margin: "0 auto" }}>
+          <div style={{ maxWidth: isMobile ? CHAT_COLUMN_MAX_WIDTH : CHAT_COLUMN_MAX_WIDTH_DESKTOP, margin: "0 auto", display: "flex", alignItems: "flex-start", justifyContent: "flex-end", gap: 8 }}>
+            {/* 6d: header bookmarks pill + popover (hidden until a message is starred). */}
+            <BookmarksPopover
+              sessionId={session?.id ?? sessionIdRef.current ?? null}
+              previewByEntry={bookmarkPreviews}
+              onJump={anchorTo}
+            />
+            {/* P7: session insights (stats.db ∪ entry timeline) dialog pill. */}
+            <SessionInsightsEntry sessionId={session?.id ?? sessionIdRef.current ?? null} />
             <NoticeShelf notices={notices} onDismiss={dismissNotice} floating align="right" />
           </div>
         </div>
+        {chatFind.open && (
+          <ChatFindBar
+            query={chatFind.query}
+            onQueryChange={chatFind.setQuery}
+            matchCount={chatFind.matches.length}
+            activeIndex={chatFind.activeIndex}
+            onNext={chatFind.next}
+            onPrevious={chatFind.previous}
+            onClose={chatFind.close}
+            onSearchAllSessions={chatFind.canSearchAllSessions ? chatFind.searchAllSessions : undefined}
+            onInputKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                chatFind.close();
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                if (event.shiftKey) chatFind.previous();
+                else chatFind.next();
+              }
+            }}
+          />
+        )}
         {/* Hide the Firefox scrollbar on desktop only: ChatMinimap provides the
             position indicator there, but on mobile there is no minimap and
             users need the scrollbar (Chrome's overlay scrollbar still shows). */}
@@ -1238,6 +1484,9 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
               nearBottom={nearBottom}
               sentinelRef={sentinelRef}
               handleLoadMoreClick={handleLoadMoreClick}
+              highlightedEntryId={highlight?.entryId ?? null}
+              checkpointEntryIds={checkpointEntryIds}
+              onRestoreFiles={handleRestoreFiles}
             />
             {streamState.isStreaming && streamState.streamingMessage && (
               <MessageView

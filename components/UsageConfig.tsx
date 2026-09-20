@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, ChevronDown, Database, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type {
   UsageBreakdownView,
@@ -10,6 +10,27 @@ import type {
   UsageReport,
   UsageTimeRange,
 } from "@/lib/usage-types";
+import type { QuotaCardSample, NativeUsageMeta } from "@/lib/usage-native";
+
+/** The usage route response: the base report plus the P7 native union fields. */
+type UsageConfigReport = UsageReport & { native?: NativeUsageMeta; quota?: QuotaCardSample[] };
+
+function NativeBadge({ label }: { label: string }) {
+  return (
+    <span
+      title={label}
+      style={{
+        display: "inline-flex", alignItems: "center", flexShrink: 0,
+        fontSize: 9, fontWeight: 600, letterSpacing: "0.04em",
+        color: "var(--text-muted)", background: "var(--bg-subtle)",
+        border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+        padding: "0 5px", lineHeight: "14px",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
 
 function formatTokens(count: number): string {
   if (count == null || isNaN(count) || count === 0) return "0";
@@ -35,14 +56,17 @@ function formatCurrency(amount: number): string {
 }
 
 export function UsageConfig() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   const [timeRange, setTimeRange] = useState<UsageTimeRange>("30d");
   const [granularity, setGranularity] = useState<UsageGranularity>("daily");
   const [metricView, setMetricView] = useState<UsageMetricView>("cost");
   const [breakdownView, setBreakdownView] = useState<UsageBreakdownView>("model");
+  // P7: union omp's own stats.db (CLI/TUI usage). Default ON; the route also
+  // defaults ON when the param is absent, so first paint already includes it.
+  const [includeNative, setIncludeNative] = useState<boolean>(true);
 
-  const [report, setReport] = useState<UsageReport | null>(null);
+  const [report, setReport] = useState<UsageConfigReport | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +86,7 @@ export function UsageConfig() {
         const params = new URLSearchParams({
           range: timeRange,
           granularity,
+          includeNative: String(includeNative),
         });
         if (isRefresh) params.set("refresh", "true");
 
@@ -69,7 +94,7 @@ export function UsageConfig() {
         if (!res.ok) {
           throw new Error(`Failed to fetch usage: ${res.statusText}`);
         }
-        const data: UsageReport = await res.json();
+        const data: UsageConfigReport = await res.json();
         setReport(data);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
@@ -81,7 +106,7 @@ export function UsageConfig() {
         setRefreshing(false);
       }
     },
-    [timeRange, granularity],
+    [timeRange, granularity, includeNative],
   );
 
   useEffect(() => {
@@ -292,6 +317,9 @@ export function UsageConfig() {
   const dayBreakdown = report?.dayBreakdown || [];
   const projectBreakdown = report?.projectBreakdown || [];
   const scanInfo = report?.scanInfo;
+  const native = report?.native;
+  const nativeAvailable = native?.available === true;
+  const quota: QuotaCardSample[] = report?.quota ?? [];
 
   // Active hover point data
   const activeHoverPoint = hoverIndex != null && chartData ? chartData.coords[hoverIndex]?.point : null;
@@ -378,6 +406,34 @@ export function UsageConfig() {
             })}
           </div>
 
+          {/* P7: native CLI/TUI usage toggle */}
+          <label
+            title={nativeAvailable ? t("usageNative.toggle") : t("usageNative.toggleUnavailable")}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "4px 10px",
+              fontSize: 12,
+              borderRadius: "var(--radius-control)",
+              border: "1px solid var(--border)",
+              background: "var(--bg-panel)",
+              color: nativeAvailable ? "var(--text)" : "var(--text-dim)",
+              cursor: nativeAvailable ? "pointer" : "not-allowed",
+              userSelect: "none",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={includeNative && nativeAvailable}
+              disabled={!nativeAvailable}
+              onChange={(e) => setIncludeNative(e.target.checked)}
+              style={{ accentColor: "var(--accent)", margin: 0, cursor: nativeAvailable ? "pointer" : "not-allowed" }}
+            />
+            <Database size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} aria-hidden="true" />
+            {t("usageNative.toggle")}
+          </label>
+
           {/* Time Range Selector */}
           <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
             <select
@@ -438,6 +494,22 @@ export function UsageConfig() {
         </div>
       </div>
 
+      {/* P7: native degrade notice — the "partial data" badge */}
+      {native?.partial && (
+        <div
+          role="status"
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "7px 10px", border: "1px solid var(--border)",
+            borderRadius: "var(--radius-control)", background: "var(--bg-subtle)",
+            fontSize: 12, color: "var(--text-muted)",
+          }}
+        >
+          <TriangleAlert size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} aria-hidden="true" />
+          {t("usageNative.partial")}
+        </div>
+      )}
+
       {/* 2. Top Row: Raw Token Cost & Chart */}
       <div
         style={{
@@ -472,6 +544,12 @@ export function UsageConfig() {
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
               {t("usageConfig.billedAtFullRate")}
             </div>
+            {native?.included && native.cost > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                <Database size={11} aria-hidden="true" />
+                {t("usageNative.included", { cost: formatCurrency(native.cost) })}
+              </div>
+            )}
           </div>
 
           {/* Proportional Stacked Provider Bar */}
@@ -1045,6 +1123,7 @@ export function UsageConfig() {
                             <span title={m.model} style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {m.model}
                             </span>
+                            {m.source === "native" && <NativeBadge label={t("usageNative.badge")} />}
                           </div>
                         </td>
                         <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text)", fontWeight: 600 }}>
@@ -1071,7 +1150,10 @@ export function UsageConfig() {
                     dayBreakdown.map((d) => (
                       <tr key={d.date} style={{ borderBottom: "1px solid var(--bg-subtle)" }}>
                         <td style={{ padding: "6px 4px", color: "var(--text)", fontWeight: 500 }}>
-                          {d.label}
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            {d.label}
+                            {d.source === "native" && <NativeBadge label={t("usageNative.badge")} />}
+                          </span>
                         </td>
                         <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text)", fontWeight: 600 }}>
                           {formatCurrency(d.cost)}
@@ -1097,7 +1179,10 @@ export function UsageConfig() {
                     projectBreakdown.map((p) => (
                       <tr key={p.project} style={{ borderBottom: "1px solid var(--bg-subtle)" }}>
                         <td style={{ padding: "6px 4px", color: "var(--text)", fontWeight: 500 }}>
-                          <span title={p.project}>{p.projectName}</span>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title={p.project}>
+                            {p.projectName}
+                            {p.source === "native" && <NativeBadge label={t("usageNative.badge")} />}
+                          </span>
                         </td>
                         <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text)", fontWeight: 600 }}>
                           {formatCurrency(p.cost)}
@@ -1169,6 +1254,64 @@ export function UsageConfig() {
             </div>
           </div>
         </div>
+
+        {/* P7 card: provider quota windows (omp agent.db usage_history) */}
+        {quota.length > 0 && (
+          <div
+            style={{
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-card)",
+              padding: "14px 16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Database size={13} style={{ color: "var(--text-dim)" }} aria-hidden="true" />
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+                {t("usageNative.quotaTitle")}
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {quota.map((sample) => (
+                <div key={sample.scope} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, fontSize: 12 }}>
+                    <span style={{ color: "var(--text)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sample.scope}>
+                      {sample.label ?? sample.scope}
+                    </span>
+                    <span style={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                      {sample.usedPct.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div
+                    role="meter"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(sample.usedPct)}
+                    aria-label={`${sample.label ?? sample.scope}: ${sample.usedPct.toFixed(1)}%`}
+                    style={{ height: 6, width: "100%", borderRadius: 3, background: "var(--bg-subtle)", overflow: "hidden" }}
+                  >
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${Math.min(100, Math.max(sample.usedPct, 1))}%`,
+                        background: "var(--accent)",
+                        transition: "width var(--dur-fast) var(--ease-out-warm)",
+                      }}
+                    />
+                  </div>
+                  {sample.resetsAt && (
+                    <div style={{ fontSize: 10, color: "var(--text-dim)" }}>
+                      {t("usageNative.quotaResets", { when: new Date(sample.resetsAt).toLocaleString(locale) })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 5. Footer: Transcript Scan Status */}

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { existsSync } from "fs";
 import { loadSessionFile } from "@/lib/omp/session-files";
-import { buildSessionContext, getSessionContextBoundary, getSessionEntriesForDisplayAsync, getSessionHistoryPage, readSessionHeader, SessionFileTooLargeError } from "@/lib/session-reader";
+import { buildSessionContext, findLeafForEntry, getSessionContextBoundary, getSessionEntriesForDisplayAsync, getSessionHistoryPage, readSessionHeader, SessionFileTooLargeError } from "@/lib/session-reader";
 import { apiErrorResponse, resolveSessionPathOr404 } from "@/lib/api-utils";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { MAX_SYNC_MESSAGES, parseHistoryCursor, selectSessionHistory, type SessionHistoryCursor, type SessionSyncResponse } from "@/lib/session-sync";
@@ -27,6 +27,10 @@ export async function GET(
   const { id } = await params;
   const url = new URL(req.url);
   const leafId = url.searchParams.get("leafId") ?? undefined;
+  // Anchor hop (P1): resolve an entry id to its deepest/latest leaf via
+  // findLeafForEntry and return that leaf's context — the client cannot walk
+  // the entry tree itself without downloading the whole file.
+  const forEntry = url.searchParams.get("forEntry") ?? undefined;
   const deferThinking = url.searchParams.has("deferThinking");
   const deferToolResultImages = url.searchParams.has("deferMedia");
   // Read-only transcript mode: include entries omitted from the active agent context.
@@ -112,13 +116,23 @@ export async function GET(
     }
     // Deduplicated cached read; blob resolution on per-entry deep copies.
     const entries = await getSessionEntriesForDisplayAsync(filePath, { skipToolResultImages: deferToolResultImages });
-    const context = buildSessionContext(entries, leafId, {
+    // Anchor hop: findLeafForEntry picks the branch where the anchored entry
+    // is on screen; an unknown entry is a 404 so the client can give up
+    // instead of silently landing on the tip.
+    let resolvedLeafId: string | null | undefined = leafId;
+    if (forEntry) {
+      resolvedLeafId = findLeafForEntry(entries, forEntry);
+      if (!resolvedLeafId) {
+        return NextResponse.json({ error: "Entry not found in session", code: "entry_not_found" }, { status: 404 });
+      }
+    }
+    const context = buildSessionContext(entries, resolvedLeafId, {
       deferThinking,
       deferToolResultImages,
       includePreCompaction,
     });
 
-    return NextResponse.json({ context });
+    return NextResponse.json({ context, ...(resolvedLeafId ? { leafId: resolvedLeafId } : {}) });
   } catch (error) {
     return contextErrorResponse(error);
   }

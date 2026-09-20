@@ -196,13 +196,29 @@ host (KDE Plasma, and most Wayland/X11 desktops).
 - **Interactive Chat**: Real-time streaming conversation with your local `omp` agent — tool calls, thinking levels, token counts, cost, context gauge, queue controls, and interrupt & retry.
 - **Message Copy**: Copy user messages and completed assistant replies as rendered plain text or original Markdown using the buttons below each message. Thinking, tool output, and message controls are excluded. Oversized messages that use the raw-text viewer copy their full source in either format.
 - **Queue Deletion Confirmation**: Preview and confirm before removing queued follow-ups or steered messages from the queue panel. This does not cancel delivery already queued inside OMP.
+- **Cross-Session Search & Find**: The `⌘K` / `Ctrl+K` palette's Search mode ranks full-text matches across all sessions (redacted snippets, `project:` filters), and the in-session find bar (`Ctrl+F` / `Cmd+F`) steps through matches with wrap-around and deep-link anchors.
 - **Session Management**: Browse past conversations by project, fork sessions, branch within a session, archive/restore, import session files, and deep-link via URL.
+- **Message Bookmarks**: Star any message and jump back from a bookmarks popover with deep links.
+- **Global Prompt History**: Recall and re-run prompts from any past session.
 - **Draft Recovery**: Unsent text stays scoped to its conversation or new-session workspace and is restored after Back/Forward navigation or reload in the same tab when browser storage is available (up to 50 drafts). Images and file attachments remain in memory only.
 - **Live Plans & Subagents**: Collapsible panels pinned above the composer track live todo phases and running subagents (status, tool, retries, tokens/cost, nested tasks) with transcript dialogs and history recovery.
+- **Runs Board**: A live board (`Ctrl+Shift+U` / `Cmd+Shift+U`) of running and finished sessions across projects, with interrupt and jump-to-chat.
+- **Split View**: Open a second chat pane (`Ctrl+\\` / `Cmd+\\`) to compare branches or run two sessions side-by-side.
 - **Tool Preset Picker**: Choose the toolset for new sessions in the composer — `none` / `default` (`read,bash,edit,write`) / `full` (all tools including subagents). Persists to localStorage.
+- **Prompt & Snippet Library**: Save reusable prompts with `$PLACEHOLDER` fill-ins, trigger them from the composer or slash palette, and import/export as JSON.
+- **Scheduled Prompts**: Recurring prompts per project (daily or specific weekdays) with catch-up policies, run-now, and pause-all.
 - **File Explorer & Previews**: Browse workspaces side-by-side with chat; preview code, markdown, Mermaid, images, audio, PDFs, and diffs with allow-listed access.
+- **File Editing**: Edit files directly in the viewer with dirty tracking, `Ctrl+S` save, and diff review.
+- **Markdown Export**: Export any session as Markdown — download or copy — alongside the existing HTML export.
+- **Terminal Tab**: A pinned terminal pane in the right panel: a plain piped shell by default, or attach to a `herdr` pane for full TUI support (opt-in).
 - **Git Worktree Support**: Create, switch, and manage Git worktrees directly from the sidebar; sessions and file roots stay grouped by project.
+- **Git Checkpoints**: Per-message working-tree snapshots with preview and selective file restore — rewind files without touching `HEAD`.
 - **Usage & Analytics**: Dashboard in **Settings → Usage** for tokens, costs, cache savings, and breakdowns by provider / model / day / project with SQLite persistence.
+- **Session Insights**: Per-session time-to-first-token, duration, cost, and tool stats read from omp's native stats database.
+- **Context Inspector**: Browse a session's raw entry tree, preview branches, and jump to any leaf.
+- **Notifications & Webhooks**: Browser notifications plus ntfy / Discord / Telegram webhooks for completions, approvals, and failures, with quiet hours.
+- **TTS Replies**: Optional read-aloud of assistant replies through an OpenAI-compatible speech endpoint.
+- **PWA Install**: Installable progressive web app with an offline-cached shell.
 - **Windows System Tray & Service**: Background service, tray icon, logon autostart, and Desktop/Start Menu shortcuts (Windows).
 - **macOS launchd Service**: LaunchAgent that starts at login, restarts on crash, and logs under `~/Library/Logs/ompweb`.
 - **Linux systemd Service & Tray**: User service that starts at login and restarts on crash, plus a StatusNotifierItem tray icon with service controls (KDE Plasma and compatible desktops).
@@ -223,6 +239,14 @@ host (KDE Plasma, and most Wayland/X11 desktops).
 | `OMP_WEB_STT_ENDPOINT` | OpenAI-compatible transcription endpoint URL | _None (disabled)_ |
 | `OMP_WEB_STT_KEY` | Optional API key for the STT endpoint | _None_ |
 | `OMP_WEB_STT_MODEL` | Optional model name for the STT endpoint | _None_ |
+| `OMP_WEB_TTS_ENDPOINT` | OpenAI-compatible speech endpoint URL for reply read-aloud | _None (disabled)_ |
+| `OMP_WEB_TTS_KEY` | Optional API key for the TTS endpoint | _None_ |
+| `OMP_WEB_TTS_MODEL` | Optional model name for the TTS endpoint | _None_ |
+| `OMP_WEB_TTS_VOICE` | Optional voice for the TTS endpoint | _None_ |
+| `OMP_WEB_HERDR_BIN` | Path to the `herdr` binary; enables terminal pane attach | _None (off)_ |
+| `OMP_WEB_SHELL` | Shell used by the terminal tab | _auto-detected_ |
+| `OMP_WEB_DISABLE_TERMINAL` | Set to `1` to remove the terminal tab | `0` |
+| `OMP_WEB_FLAGS` | Optional comma-separated feature flags | _None_ |
 
 ## Development
 

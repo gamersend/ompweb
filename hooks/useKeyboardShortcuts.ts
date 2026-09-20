@@ -16,6 +16,16 @@ export function registerAbortHandler(handler: (() => void) | null): void {
   globalAbortHandler = handler;
 }
 
+// In-session find (P1.2): ChatWindow registers a Ctrl/Cmd+F handler here so
+// the global shortcut stays in one place. The handler returns true when it
+// handled the key (bar opened/refocused) — only then does the caller stop
+// the browser's native find, so non-chat surfaces keep it.
+let globalFindHandler: (() => boolean) | null = null;
+
+export function registerFindHandler(handler: (() => boolean) | null): void {
+  globalFindHandler = handler;
+}
+
 // ---------------------------------------------------------------------------
 // Hook: global keyboard shortcuts
 // ---------------------------------------------------------------------------
@@ -27,6 +37,14 @@ interface UseGlobalKeyboardShortcutsOptions {
   activeCwd?: string | null;
   /** Best-effort native-menu selection scoping; keyboard scoping is independent. */
   scopeNativeSelectAll?: boolean;
+  /** Called when Ctrl/Cmd+Shift+U is pressed: toggle the runs board.
+   * BUILD-PLAN said ⌘Shift+R, but Ctrl/Cmd+Shift+R is the browser's
+   * hard-reload everywhere, so the board uses Shift+U instead (free in
+   * Chrome, Edge, and Firefox; documented in docs/agent-notes-P3.md). */
+  onToggleRunsBoard?: () => void;
+  /** Called when Ctrl/Cmd+\ is pressed: toggle split view (Phase 12).
+   * Pane switching uses Ctrl/Cmd+[ / Ctrl/Cmd+] inside SplitPane. */
+  onToggleSplit?: () => void;
 }
 
 /**
@@ -45,7 +63,7 @@ interface UseGlobalKeyboardShortcutsOptions {
 export function useGlobalKeyboardShortcuts(
   options: UseGlobalKeyboardShortcutsOptions,
 ): void {
-  const { onNewSession, activeCwd, scopeNativeSelectAll = false } = options;
+  const { onNewSession, activeCwd, scopeNativeSelectAll = false, onToggleRunsBoard, onToggleSplit } = options;
 
   useEffect(() => {
     let interactionTarget: Element | null = null;
@@ -218,10 +236,39 @@ export function useGlobalKeyboardShortcuts(
         if (!activeCwd || !onNewSession) return;
         e.preventDefault();
         onNewSession(activeCwd);
+        return;
+      }
+
+      // ---- Ctrl/Cmd+F: in-session find (P1.2) ----
+      // Only when a chat window registered a handler AND it handled the key;
+      // otherwise the browser's native find stays in charge.
+      if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        if (!globalFindHandler) return;
+        if (!globalFindHandler()) return;
+        e.preventDefault();
+        return;
+      }
+
+      // ---- Ctrl/Cmd+Shift+U: toggle the runs board (P3) ----
+      // Shift+R would be the browser's hard reload; Shift+U is free. Inside
+      // text fields it still fires (an input never legitimately wants this
+      // chord) except during IME composition.
+      if (e.key.toLowerCase() === "u" && (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey) {
+        if (e.isComposing || e.keyCode === 229 || !onToggleRunsBoard) return;
+        e.preventDefault();
+        onToggleRunsBoard();
+        return;
+      }
+
+      // ---- Ctrl/Cmd+\: toggle split view (P12) ----
+      if (e.key === "\\" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        if (e.isComposing || e.keyCode === 229 || !onToggleSplit) return;
+        e.preventDefault();
+        onToggleSplit();
       }
     };
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeCwd, onNewSession]);
+  }, [activeCwd, onNewSession, onToggleRunsBoard, onToggleSplit]);
 }

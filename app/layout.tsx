@@ -45,6 +45,10 @@ const notoSerifSC = Noto_Serif_SC({
 export const metadata: Metadata = {
   title: "omp web",
   description: "Web UI for the oh-my-pi (omp) coding agent",
+  // Static manifest (public/manifest.webmanifest). It replaced app/manifest.ts
+  // in 6a: the metadata route and a public file cannot both own
+  // /manifest.webmanifest, and the SW + config headers target the static file.
+  manifest: "/manifest.webmanifest",
   // PWA-like behavior on iOS: standalone chrome, no telephone autodetect.
   appleWebApp: {
     capable: true,

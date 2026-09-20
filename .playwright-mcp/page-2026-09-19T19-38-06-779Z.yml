@@ -1,0 +1,15 @@
+- generic [active] [ref=f2e1]:
+  - generic [ref=f2e105] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=f2e106]
+    - generic [ref=f2e111]:
+      - button "Open issues overlay" [ref=f2e112]:
+        - generic [ref=f2e113]:
+          - generic [aria-hidden] [ref=f2e114]: "0"
+          - generic [ref=f2e115]: "1"
+        - generic [ref=f2e116]: Issue
+      - button "Collapse issues badge" [ref=f2e117]
+  - alert [ref=f2e110]
+  - generic [ref=f2e120]:
+    - heading "Something went wrong" [level=2] [ref=f2e123]
+    - paragraph [ref=f2e124]: An unexpected error occurred while rendering the interface. You can try again or reload the page.
+    - button "Try again" [ref=f2e125] [cursor=pointer]

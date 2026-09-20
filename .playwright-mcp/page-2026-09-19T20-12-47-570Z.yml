@@ -1,0 +1,901 @@
+- generic [ref=f12e1]:
+  - generic [ref=f12e2]:
+    - generic [ref=f12e4]:
+      - generic [ref=f12e5]:
+        - generic [ref=f12e6]:
+          - button [ref=f12e2568] [cursor=pointer]:
+            - generic [ref=f12e11]: ompweb
+          - generic [ref=f12e12]:
+            - button [ref=f12e2570] [cursor=pointer]
+            - button [ref=f12e2571] [cursor=pointer]
+            - button [ref=f12e2572] [cursor=pointer]
+        - button [ref=f12e2573] [cursor=pointer]:
+          - generic [ref=f12e30]: New Session
+      - generic [ref=f12e31]:
+        - generic [ref=f12e32]: Workspaces
+        - button [ref=f12e2574] [cursor=pointer]
+        - button [ref=f12e2575] [cursor=pointer]
+        - button [ref=f12e2576] [cursor=pointer]
+      - generic [ref=f12e41]:
+        - generic [ref=f12e115]:
+          - generic [ref=f12e116]:
+            - button [ref=f12e2577] [cursor=pointer]:
+              - generic [ref=f12e120]: mcpscratch
+            - button [ref=f12e2578] [cursor=pointer]
+            - button [expanded] [ref=f12e2579] [cursor=pointer]
+          - generic [ref=f12e130]:
+            - generic [ref=f12e133] [cursor=pointer]:
+              - button [ref=f12e2580]:
+                - generic [ref=f12e2581]: Spawn ONE subagent via the task tool with agent ty
+              - generic [ref=f12e2582]: "1"
+              - generic [ref=f12e140]:
+                - generic [ref=f12e141]: 1mo
+                - button [ref=f12e2584]
+            - generic [ref=f12e151] [cursor=pointer]:
+              - button [ref=f12e2585]:
+                - generic [ref=f12e2586]: Spawn ONE subagent via the task tool with agent ty
+              - generic [ref=f12e155]:
+                - generic [ref=f12e156]: 1mo
+                - button [ref=f12e2588]
+        - generic [ref=f12e165]:
+          - button [ref=f12e2589] [cursor=pointer]:
+            - generic [ref=f12e169]: blaze
+          - button [ref=f12e2590] [cursor=pointer]
+          - button [ref=f12e2591] [cursor=pointer]
+        - generic [ref=f12e180]:
+          - button [ref=f12e2592] [cursor=pointer]:
+            - generic [ref=f12e184]: .omp
+          - button [ref=f12e2593] [cursor=pointer]
+          - button [ref=f12e2594] [cursor=pointer]
+        - generic [ref=f12e195]:
+          - button [ref=f12e2595] [cursor=pointer]:
+            - generic [ref=f12e199]: scratchpad
+          - button [ref=f12e2596] [cursor=pointer]
+          - button [ref=f12e2597] [cursor=pointer]
+        - generic [ref=f12e210]:
+          - button [ref=f12e2598] [cursor=pointer]:
+            - generic [ref=f12e214]: Desktop
+          - button [ref=f12e2599] [cursor=pointer]
+          - button [ref=f12e2600] [cursor=pointer]
+        - generic [ref=f12e225]:
+          - button [ref=f12e2601] [cursor=pointer]:
+            - generic [ref=f12e229]: bobbabobba
+          - button [ref=f12e2602] [cursor=pointer]
+          - button [ref=f12e2603] [cursor=pointer]
+        - generic [ref=f12e240]:
+          - button [ref=f12e2604] [cursor=pointer]:
+            - generic [ref=f12e244]: GameCreation
+          - button [ref=f12e2605] [cursor=pointer]
+          - button [ref=f12e2606] [cursor=pointer]
+        - generic [ref=f12e255]:
+          - button [ref=f12e2607] [cursor=pointer]:
+            - generic [ref=f12e259]: Skillshare-water-skills
+          - button [ref=f12e2608] [cursor=pointer]
+          - button [ref=f12e2609] [cursor=pointer]
+        - generic [ref=f12e270]:
+          - button [ref=f12e2610] [cursor=pointer]:
+            - generic [ref=f12e274]: pencil
+          - button [ref=f12e2611] [cursor=pointer]
+          - button [ref=f12e2612] [cursor=pointer]
+        - generic [ref=f12e285]:
+          - button [ref=f12e2613] [cursor=pointer]:
+            - generic [ref=f12e289]: realtime-voice-chat
+          - button [ref=f12e2614] [cursor=pointer]
+          - button [ref=f12e2615] [cursor=pointer]
+        - generic [ref=f12e300]:
+          - button [ref=f12e2616] [cursor=pointer]:
+            - generic [ref=f12e304]: fire
+          - button [ref=f12e2617] [cursor=pointer]
+          - button [ref=f12e2618] [cursor=pointer]
+        - generic [ref=f12e315]:
+          - button [ref=f12e2619] [cursor=pointer]:
+            - generic [ref=f12e319]: GameDEV
+          - button [ref=f12e2620] [cursor=pointer]
+          - button [ref=f12e2621] [cursor=pointer]
+        - generic [ref=f12e330]:
+          - button [ref=f12e2622] [cursor=pointer]:
+            - generic [ref=f12e334]: agent-plugins
+          - button [ref=f12e2623] [cursor=pointer]
+          - button [ref=f12e2624] [cursor=pointer]
+        - generic [ref=f12e345]:
+          - button [ref=f12e2625] [cursor=pointer]:
+            - generic [ref=f12e349]: auraterm
+          - button [ref=f12e2626] [cursor=pointer]
+          - button [ref=f12e2627] [cursor=pointer]
+        - generic [ref=f12e360]:
+          - button [ref=f12e2628] [cursor=pointer]:
+            - generic [ref=f12e364]: benchblazer
+          - button [ref=f12e2629] [cursor=pointer]
+          - button [ref=f12e2630] [cursor=pointer]
+        - generic [ref=f12e375]:
+          - button [ref=f12e2631] [cursor=pointer]:
+            - generic [ref=f12e379]: blaze-command-center
+          - button [ref=f12e2632] [cursor=pointer]
+          - button [ref=f12e2633] [cursor=pointer]
+        - generic [ref=f12e390]:
+          - button [ref=f12e2634] [cursor=pointer]:
+            - generic [ref=f12e394]: blaze-pipecat-test
+          - button [ref=f12e2635] [cursor=pointer]
+          - button [ref=f12e2636] [cursor=pointer]
+        - generic [ref=f12e405]:
+          - button [ref=f12e2637] [cursor=pointer]:
+            - generic [ref=f12e409]: drawland
+          - button [ref=f12e2638] [cursor=pointer]
+          - button [ref=f12e2639] [cursor=pointer]
+        - generic [ref=f12e420]:
+          - button [ref=f12e2640] [cursor=pointer]:
+            - generic [ref=f12e424]: da-android-design
+          - button [ref=f12e2641] [cursor=pointer]
+          - button [ref=f12e2642] [cursor=pointer]
+        - generic [ref=f12e435]:
+          - button [ref=f12e2643] [cursor=pointer]:
+            - generic [ref=f12e439]: dw-windows-design
+          - button [ref=f12e2644] [cursor=pointer]
+          - button [ref=f12e2645] [cursor=pointer]
+        - generic [ref=f12e450]:
+          - button [ref=f12e2646] [cursor=pointer]:
+            - generic [ref=f12e454]: f-relay
+          - button [ref=f12e2647] [cursor=pointer]
+          - button [ref=f12e2648] [cursor=pointer]
+        - generic [ref=f12e465]:
+          - button [ref=f12e2649] [cursor=pointer]:
+            - generic [ref=f12e469]: h-sync
+          - button [ref=f12e2650] [cursor=pointer]
+          - button [ref=f12e2651] [cursor=pointer]
+        - generic [ref=f12e480]:
+          - button [ref=f12e2652] [cursor=pointer]:
+            - generic [ref=f12e484]: m-search
+          - button [ref=f12e2653] [cursor=pointer]
+          - button [ref=f12e2654] [cursor=pointer]
+        - generic [ref=f12e495]:
+          - button [ref=f12e2655] [cursor=pointer]:
+            - generic [ref=f12e499]: n-capture
+          - button [ref=f12e2656] [cursor=pointer]
+          - button [ref=f12e2657] [cursor=pointer]
+        - generic [ref=f12e510]:
+          - button [ref=f12e2658] [cursor=pointer]:
+            - generic [ref=f12e514]: o-relay
+          - button [ref=f12e2659] [cursor=pointer]
+          - button [ref=f12e2660] [cursor=pointer]
+        - generic [ref=f12e525]:
+          - button [ref=f12e2661] [cursor=pointer]:
+            - generic [ref=f12e529]: p-cli
+          - button [ref=f12e2662] [cursor=pointer]
+          - button [ref=f12e2663] [cursor=pointer]
+        - generic [ref=f12e540]:
+          - button [ref=f12e2664] [cursor=pointer]:
+            - generic [ref=f12e544]: r6-abi
+          - button [ref=f12e2665] [cursor=pointer]
+          - button [ref=f12e2666] [cursor=pointer]
+        - generic [ref=f12e555]:
+          - button [ref=f12e2667] [cursor=pointer]:
+            - generic [ref=f12e559]: r6-android
+          - button [ref=f12e2668] [cursor=pointer]
+          - button [ref=f12e2669] [cursor=pointer]
+        - generic [ref=f12e570]:
+          - button [ref=f12e2670] [cursor=pointer]:
+            - generic [ref=f12e574]: r6-bindings
+          - button [ref=f12e2671] [cursor=pointer]
+          - button [ref=f12e2672] [cursor=pointer]
+        - generic [ref=f12e585]:
+          - button [ref=f12e2673] [cursor=pointer]:
+            - generic [ref=f12e589]: r6-core
+          - button [ref=f12e2674] [cursor=pointer]
+          - button [ref=f12e2675] [cursor=pointer]
+        - generic [ref=f12e600]:
+          - button [ref=f12e2676] [cursor=pointer]:
+            - generic [ref=f12e604]: r6-daemon
+          - button [ref=f12e2677] [cursor=pointer]
+          - button [ref=f12e2678] [cursor=pointer]
+        - generic [ref=f12e615]:
+          - button [ref=f12e2679] [cursor=pointer]:
+            - generic [ref=f12e619]: r6-proof
+          - button [ref=f12e2680] [cursor=pointer]
+          - button [ref=f12e2681] [cursor=pointer]
+        - generic [ref=f12e630]:
+          - button [ref=f12e2682] [cursor=pointer]:
+            - generic [ref=f12e634]: r6-windows
+          - button [ref=f12e2683] [cursor=pointer]
+          - button [ref=f12e2684] [cursor=pointer]
+        - generic [ref=f12e645]:
+          - button [ref=f12e2685] [cursor=pointer]:
+            - generic [ref=f12e649]: s-windows
+          - button [ref=f12e2686] [cursor=pointer]
+          - button [ref=f12e2687] [cursor=pointer]
+        - generic [ref=f12e660]:
+          - button [ref=f12e2688] [cursor=pointer]:
+            - generic [ref=f12e664]: t-android
+          - button [ref=f12e2689] [cursor=pointer]
+          - button [ref=f12e2690] [cursor=pointer]
+        - generic [ref=f12e675]:
+          - button [ref=f12e2691] [cursor=pointer]:
+            - generic [ref=f12e679]: u-ai
+          - button [ref=f12e2692] [cursor=pointer]
+          - button [ref=f12e2693] [cursor=pointer]
+        - generic [ref=f12e690]:
+          - button [ref=f12e2694] [cursor=pointer]:
+            - generic [ref=f12e694]: v-extensions
+          - button [ref=f12e2695] [cursor=pointer]
+          - button [ref=f12e2696] [cursor=pointer]
+        - generic [ref=f12e705]:
+          - button [ref=f12e2697] [cursor=pointer]:
+            - generic [ref=f12e709]: w-hardening
+          - button [ref=f12e2698] [cursor=pointer]
+          - button [ref=f12e2699] [cursor=pointer]
+        - generic [ref=f12e720]:
+          - button [ref=f12e2700] [cursor=pointer]:
+            - generic [ref=f12e724]: z-android-engine
+          - button [ref=f12e2701] [cursor=pointer]
+          - button [ref=f12e2702] [cursor=pointer]
+        - generic [ref=f12e735]:
+          - button [ref=f12e2703] [cursor=pointer]:
+            - generic [ref=f12e739]: fableforge
+          - button [ref=f12e2704] [cursor=pointer]
+          - button [ref=f12e2705] [cursor=pointer]
+        - generic [ref=f12e750]:
+          - button [ref=f12e2706] [cursor=pointer]:
+            - generic [ref=f12e754]: ff-cliff-observatory
+          - button [ref=f12e2707] [cursor=pointer]
+          - button [ref=f12e2708] [cursor=pointer]
+        - generic [ref=f12e765]:
+          - button [ref=f12e2709] [cursor=pointer]:
+            - generic [ref=f12e769]: ff-the-foundry
+          - button [ref=f12e2710] [cursor=pointer]
+          - button [ref=f12e2711] [cursor=pointer]
+        - generic [ref=f12e780]:
+          - button [ref=f12e2712] [cursor=pointer]:
+            - generic [ref=f12e784]: ff-the-glasshouse
+          - button [ref=f12e2713] [cursor=pointer]
+          - button [ref=f12e2714] [cursor=pointer]
+        - generic [ref=f12e795]:
+          - button [ref=f12e2715] [cursor=pointer]:
+            - generic [ref=f12e799]: ff-the-interchange
+          - button [ref=f12e2716] [cursor=pointer]
+          - button [ref=f12e2717] [cursor=pointer]
+        - generic [ref=f12e810]:
+          - button [ref=f12e2718] [cursor=pointer]:
+            - generic [ref=f12e814]: firedeck
+          - button [ref=f12e2719] [cursor=pointer]
+          - button [ref=f12e2720] [cursor=pointer]
+        - generic [ref=f12e825]:
+          - button [ref=f12e2721] [cursor=pointer]:
+            - generic [ref=f12e829]: server
+          - button [ref=f12e2722] [cursor=pointer]
+          - button [ref=f12e2723] [cursor=pointer]
+        - generic [ref=f12e840]:
+          - button [ref=f12e2724] [cursor=pointer]:
+            - generic [ref=f12e844]: fleetdeck
+          - button [ref=f12e2725] [cursor=pointer]
+          - button [ref=f12e2726] [cursor=pointer]
+        - generic [ref=f12e855]:
+          - button [ref=f12e2727] [cursor=pointer]:
+            - generic [ref=f12e859]: ForgePad
+          - button [ref=f12e2728] [cursor=pointer]
+          - button [ref=f12e2729] [cursor=pointer]
+        - generic [ref=f12e870]:
+          - button [ref=f12e2730] [cursor=pointer]:
+            - generic [ref=f12e874]: harnessland
+          - button [ref=f12e2731] [cursor=pointer]
+          - button [ref=f12e2732] [cursor=pointer]
+        - generic [ref=f12e885]:
+          - button [ref=f12e2733] [cursor=pointer]:
+            - generic [ref=f12e889]: multi
+          - button [ref=f12e2734] [cursor=pointer]
+          - button [ref=f12e2735] [cursor=pointer]
+        - generic [ref=f12e900]:
+          - button [ref=f12e2736] [cursor=pointer]:
+            - generic [ref=f12e904]: net-projects-platform
+          - button [ref=f12e2737] [cursor=pointer]
+          - button [ref=f12e2738] [cursor=pointer]
+        - generic [ref=f12e915]:
+          - button [ref=f12e2739] [cursor=pointer]:
+            - generic [ref=f12e919]: nexus
+          - button [ref=f12e2740] [cursor=pointer]
+          - button [ref=f12e2741] [cursor=pointer]
+        - generic [ref=f12e930]:
+          - button [ref=f12e2742] [cursor=pointer]:
+            - generic [ref=f12e934]: c3-creative-media
+          - button [ref=f12e2743] [cursor=pointer]
+          - button [ref=f12e2744] [cursor=pointer]
+        - generic [ref=f12e945]:
+          - button [ref=f12e2745] [cursor=pointer]:
+            - generic [ref=f12e949]: c6-voice-graph
+          - button [ref=f12e2746] [cursor=pointer]
+          - button [ref=f12e2747] [cursor=pointer]
+        - generic [ref=f12e960]:
+          - button [ref=f12e2748] [cursor=pointer]:
+            - generic [ref=f12e964]: c7-live-e2e
+          - button [ref=f12e2749] [cursor=pointer]
+          - button [ref=f12e2750] [cursor=pointer]
+        - generic [ref=f12e975]:
+          - button [ref=f12e2751] [cursor=pointer]:
+            - generic [ref=f12e979]: d1-people
+          - button [ref=f12e2752] [cursor=pointer]
+          - button [ref=f12e2753] [cursor=pointer]
+        - generic [ref=f12e990]:
+          - button [ref=f12e2754] [cursor=pointer]:
+            - generic [ref=f12e994]: d2-recent-calls
+          - button [ref=f12e2755] [cursor=pointer]
+          - button [ref=f12e2756] [cursor=pointer]
+        - generic [ref=f12e1005]:
+          - button [ref=f12e2757] [cursor=pointer]:
+            - generic [ref=f12e1009]: d3-replay
+          - button [ref=f12e2758] [cursor=pointer]
+          - button [ref=f12e2759] [cursor=pointer]
+        - generic [ref=f12e1020]:
+          - button [ref=f12e2760] [cursor=pointer]:
+            - generic [ref=f12e1024]: d4-stats
+          - button [ref=f12e2761] [cursor=pointer]
+          - button [ref=f12e2762] [cursor=pointer]
+        - generic [ref=f12e1035]:
+          - button [ref=f12e2763] [cursor=pointer]:
+            - generic [ref=f12e1039]: d5-mcp-tools
+          - button [ref=f12e2764] [cursor=pointer]
+          - button [ref=f12e2765] [cursor=pointer]
+        - generic [ref=f12e1050]:
+          - button [ref=f12e2766] [cursor=pointer]:
+            - generic [ref=f12e1054]: r6-agent-chat
+          - button [ref=f12e2767] [cursor=pointer]
+          - button [ref=f12e2768] [cursor=pointer]
+        - generic [ref=f12e1065]:
+          - button [ref=f12e2769] [cursor=pointer]:
+            - generic [ref=f12e1069]: r7-thin-capabilities
+          - button [ref=f12e2770] [cursor=pointer]
+          - button [ref=f12e2771] [cursor=pointer]
+        - generic [ref=f12e1080]:
+          - button [ref=f12e2772] [cursor=pointer]:
+            - generic [ref=f12e1084]: nolimit-remote
+          - button [ref=f12e2773] [cursor=pointer]
+          - button [ref=f12e2774] [cursor=pointer]
+        - generic [ref=f12e1095]:
+          - button [ref=f12e2775] [cursor=pointer]:
+            - generic [ref=f12e1099]: ompweb
+          - button [ref=f12e2776] [cursor=pointer]
+          - button [ref=f12e2777] [cursor=pointer]
+        - generic [ref=f12e1110]:
+          - button [ref=f12e2778] [cursor=pointer]:
+            - generic [ref=f12e1114]: PinDrip
+          - button [ref=f12e2779] [cursor=pointer]
+          - button [ref=f12e2780] [cursor=pointer]
+        - generic [ref=f12e1125]:
+          - button [ref=f12e2781] [cursor=pointer]:
+            - generic [ref=f12e1129]: room-studio
+          - button [ref=f12e2782] [cursor=pointer]
+          - button [ref=f12e2783] [cursor=pointer]
+        - generic [ref=f12e1140]:
+          - button [ref=f12e2784] [cursor=pointer]:
+            - generic [ref=f12e1144]: simli
+          - button [ref=f12e2785] [cursor=pointer]
+          - button [ref=f12e2786] [cursor=pointer]
+        - generic [ref=f12e1155]:
+          - button [ref=f12e2787] [cursor=pointer]:
+            - generic [ref=f12e1159]: simli-nexus
+          - button [ref=f12e2788] [cursor=pointer]
+          - button [ref=f12e2789] [cursor=pointer]
+        - generic [ref=f12e1170]:
+          - button [ref=f12e2790] [cursor=pointer]:
+            - generic [ref=f12e1174]: testflight-crash-triage
+          - button [ref=f12e2791] [cursor=pointer]
+          - button [ref=f12e2792] [cursor=pointer]
+        - generic [ref=f12e1185]:
+          - button [ref=f12e2793] [cursor=pointer]:
+            - generic [ref=f12e1189]: textforge
+          - button [ref=f12e2794] [cursor=pointer]
+          - button [ref=f12e2795] [cursor=pointer]
+        - generic [ref=f12e1200]:
+          - button [ref=f12e2796] [cursor=pointer]:
+            - generic [ref=f12e1204]: winter63
+          - button [ref=f12e2797] [cursor=pointer]
+          - button [ref=f12e2798] [cursor=pointer]
+        - generic [ref=f12e1215]:
+          - button [ref=f12e2799] [cursor=pointer]:
+            - generic [ref=f12e1219]: worldroot
+          - button [ref=f12e2800] [cursor=pointer]
+          - button [ref=f12e2801] [cursor=pointer]
+        - generic [ref=f12e1230]:
+          - button [ref=f12e2802] [cursor=pointer]:
+            - generic [ref=f12e1234]: ytm
+          - button [ref=f12e2803] [cursor=pointer]
+          - button [ref=f12e2804] [cursor=pointer]
+        - generic [ref=f12e1245]:
+          - button [ref=f12e2805] [cursor=pointer]:
+            - generic [ref=f12e1249]: Unreal Projects
+          - button [ref=f12e2806] [cursor=pointer]
+          - button [ref=f12e2807] [cursor=pointer]
+        - generic [ref=f12e1260]:
+          - button [ref=f12e2808] [cursor=pointer]:
+            - generic [ref=f12e1264]: vault
+          - button [ref=f12e2809] [cursor=pointer]
+          - button [ref=f12e2810] [cursor=pointer]
+        - generic [ref=f12e1275]:
+          - button [ref=f12e2811] [cursor=pointer]:
+            - generic [ref=f12e1279]: mcponly
+          - button [ref=f12e2812] [cursor=pointer]
+          - button [ref=f12e2813] [cursor=pointer]
+        - generic [ref=f12e1290]:
+          - button [ref=f12e2814] [cursor=pointer]:
+            - generic [ref=f12e1294]: retirement-parity-audit
+          - button [ref=f12e2815] [cursor=pointer]
+          - button [ref=f12e2816] [cursor=pointer]
+        - generic [ref=f12e1305]:
+          - button [ref=f12e2817] [cursor=pointer]:
+            - generic [ref=f12e1309]: fire-audit-review
+          - button [ref=f12e2818] [cursor=pointer]
+          - button [ref=f12e2819] [cursor=pointer]
+        - generic [ref=f12e1320]:
+          - button [ref=f12e2820] [cursor=pointer]:
+            - generic [ref=f12e1324]: forgepad-backend-connectivity
+          - button [ref=f12e2821] [cursor=pointer]
+          - button [ref=f12e2822] [cursor=pointer]
+        - generic [ref=f12e1335]:
+          - button [ref=f12e2823] [cursor=pointer]:
+            - generic [ref=f12e1339]: forgepad-visionos-native-ui-audit
+          - button [ref=f12e2824] [cursor=pointer]
+          - button [ref=f12e2825] [cursor=pointer]
+        - generic [ref=f12e1350]:
+          - button [ref=f12e2826] [cursor=pointer]:
+            - generic [ref=f12e1354]: forgepad-visionos-spatial-audit
+          - button [ref=f12e2827] [cursor=pointer]
+          - button [ref=f12e2828] [cursor=pointer]
+        - generic [ref=f12e1365]:
+          - button [ref=f12e2829] [cursor=pointer]:
+            - generic [ref=f12e1369]: forgepad-visionos27-spatial
+          - button [ref=f12e2830] [cursor=pointer]
+          - button [ref=f12e2831] [cursor=pointer]
+        - generic [ref=f12e1380]:
+          - button [ref=f12e2832] [cursor=pointer]:
+            - generic [ref=f12e1384]: multi-complete-build
+          - button [ref=f12e2833] [cursor=pointer]
+          - button [ref=f12e2834] [cursor=pointer]
+        - generic [ref=f12e1395]:
+          - button [ref=f12e2835] [cursor=pointer]:
+            - generic [ref=f12e1399]: accessibility
+          - button [ref=f12e2836] [cursor=pointer]
+          - button [ref=f12e2837] [cursor=pointer]
+        - generic [ref=f12e1410]:
+          - button [ref=f12e2838] [cursor=pointer]:
+            - generic [ref=f12e1414]: audio-ownership
+          - button [ref=f12e2839] [cursor=pointer]
+          - button [ref=f12e2840] [cursor=pointer]
+        - generic [ref=f12e1425]:
+          - button [ref=f12e2841] [cursor=pointer]:
+            - generic [ref=f12e1429]: aura-chat-composer
+          - button [ref=f12e2842] [cursor=pointer]
+          - button [ref=f12e2843] [cursor=pointer]
+        - generic [ref=f12e1440]:
+          - button [ref=f12e2844] [cursor=pointer]:
+            - generic [ref=f12e1444]: aura-completeness-credentials-audit
+          - button [ref=f12e2845] [cursor=pointer]
+          - button [ref=f12e2846] [cursor=pointer]
+        - generic [ref=f12e1455]:
+          - button [ref=f12e2847] [cursor=pointer]:
+            - generic [ref=f12e1459]: aura-core-experience
+          - button [ref=f12e2848] [cursor=pointer]
+          - button [ref=f12e2849] [cursor=pointer]
+        - generic [ref=f12e1470]:
+          - button [ref=f12e2850] [cursor=pointer]:
+            - generic [ref=f12e1474]: aura-dashboard-workflows
+          - button [ref=f12e2851] [cursor=pointer]
+          - button [ref=f12e2852] [cursor=pointer]
+        - generic [ref=f12e1485]:
+          - button [ref=f12e2853] [cursor=pointer]:
+            - generic [ref=f12e1489]: aura-deepseek-water-routing
+          - button [ref=f12e2854] [cursor=pointer]
+          - button [ref=f12e2855] [cursor=pointer]
+        - generic [ref=f12e1500]:
+          - button [ref=f12e2856] [cursor=pointer]:
+            - generic [ref=f12e1504]: aura-fleet-operations
+          - button [ref=f12e2857] [cursor=pointer]
+          - button [ref=f12e2858] [cursor=pointer]
+        - generic [ref=f12e1515]:
+          - button [ref=f12e2859] [cursor=pointer]:
+            - generic [ref=f12e1519]: aura-governance-persona
+          - button [ref=f12e2860] [cursor=pointer]
+          - button [ref=f12e2861] [cursor=pointer]
+        - generic [ref=f12e1530]:
+          - button [ref=f12e2862] [cursor=pointer]:
+            - generic [ref=f12e1534]: aura-knowledge-artifacts
+          - button [ref=f12e2863] [cursor=pointer]
+          - button [ref=f12e2864] [cursor=pointer]
+        - generic [ref=f12e1545]:
+          - button [ref=f12e2865] [cursor=pointer]:
+            - generic [ref=f12e1549]: avatar-rig
+          - button [ref=f12e2866] [cursor=pointer]
+          - button [ref=f12e2867] [cursor=pointer]
+        - generic [ref=f12e1560]:
+          - button [ref=f12e2868] [cursor=pointer]:
+            - generic [ref=f12e1564]: chat-decomposition
+          - button [ref=f12e2869] [cursor=pointer]
+          - button [ref=f12e2870] [cursor=pointer]
+        - generic [ref=f12e1575]:
+          - button [ref=f12e2871] [cursor=pointer]:
+            - generic [ref=f12e1579]: ci-buildgates
+          - button [ref=f12e2872] [cursor=pointer]
+          - button [ref=f12e2873] [cursor=pointer]
+        - generic [ref=f12e1590]:
+          - button [ref=f12e2874] [cursor=pointer]:
+            - generic [ref=f12e1594]: code-workspace
+          - button [ref=f12e2875] [cursor=pointer]
+          - button [ref=f12e2876] [cursor=pointer]
+        - generic [ref=f12e1605]:
+          - button [ref=f12e2877] [cursor=pointer]:
+            - generic [ref=f12e1609]: cowork-openwork
+          - button [ref=f12e2878] [cursor=pointer]
+          - button [ref=f12e2879] [cursor=pointer]
+        - generic [ref=f12e1620]:
+          - button [ref=f12e2880] [cursor=pointer]:
+            - generic [ref=f12e1624]: data-channel-parity
+          - button [ref=f12e2881] [cursor=pointer]
+          - button [ref=f12e2882] [cursor=pointer]
+        - generic [ref=f12e1635]:
+          - button [ref=f12e2883] [cursor=pointer]:
+            - generic [ref=f12e1639]: debate-council
+          - button [ref=f12e2884] [cursor=pointer]
+          - button [ref=f12e2885] [cursor=pointer]
+        - generic [ref=f12e1650]:
+          - button [ref=f12e2886] [cursor=pointer]:
+            - generic [ref=f12e1654]: design-studio
+          - button [ref=f12e2887] [cursor=pointer]
+          - button [ref=f12e2888] [cursor=pointer]
+        - generic [ref=f12e1665]:
+          - button [ref=f12e2889] [cursor=pointer]:
+            - generic [ref=f12e1669]: docs-reconciliation
+          - button [ref=f12e2890] [cursor=pointer]
+          - button [ref=f12e2891] [cursor=pointer]
+        - generic [ref=f12e1680]:
+          - button [ref=f12e2892] [cursor=pointer]:
+            - generic [ref=f12e1684]: imagine-comfyui
+          - button [ref=f12e2893] [cursor=pointer]
+          - button [ref=f12e2894] [cursor=pointer]
+        - generic [ref=f12e1695]:
+          - button [ref=f12e2895] [cursor=pointer]:
+            - generic [ref=f12e1699]: intents-entities
+          - button [ref=f12e2896] [cursor=pointer]
+          - button [ref=f12e2897] [cursor=pointer]
+        - generic [ref=f12e1710]:
+          - button [ref=f12e2898] [cursor=pointer]:
+            - generic [ref=f12e1714]: ipad-platform
+          - button [ref=f12e2899] [cursor=pointer]
+          - button [ref=f12e2900] [cursor=pointer]
+        - generic [ref=f12e1725]:
+          - button [ref=f12e2901] [cursor=pointer]:
+            - generic [ref=f12e1729]: light-mode
+          - button [ref=f12e2902] [cursor=pointer]
+          - button [ref=f12e2903] [cursor=pointer]
+        - generic [ref=f12e1740]:
+          - button [ref=f12e2904] [cursor=pointer]:
+            - generic [ref=f12e1744]: livekit-vision
+          - button [ref=f12e2905] [cursor=pointer]
+          - button [ref=f12e2906] [cursor=pointer]
+        - generic [ref=f12e1755]:
+          - button [ref=f12e2907] [cursor=pointer]:
+            - generic [ref=f12e1759]: macos-parity
+          - button [ref=f12e2908] [cursor=pointer]
+          - button [ref=f12e2909] [cursor=pointer]
+        - generic [ref=f12e1770]:
+          - button [ref=f12e2910] [cursor=pointer]:
+            - generic [ref=f12e1774]: multi-migration-plan
+          - button [ref=f12e2911] [cursor=pointer]
+          - button [ref=f12e2912] [cursor=pointer]
+        - generic [ref=f12e1785]:
+          - button [ref=f12e2913] [cursor=pointer]:
+            - generic [ref=f12e1789]: notification-center
+          - button [ref=f12e2914] [cursor=pointer]
+          - button [ref=f12e2915] [cursor=pointer]
+        - generic [ref=f12e1800]:
+          - button [ref=f12e2916] [cursor=pointer]:
+            - generic [ref=f12e1804]: object-tracking
+          - button [ref=f12e2917] [cursor=pointer]
+          - button [ref=f12e2918] [cursor=pointer]
+        - generic [ref=f12e1815]:
+          - button [ref=f12e2919] [cursor=pointer]:
+            - generic [ref=f12e1819]: orphan-routing
+          - button [ref=f12e2920] [cursor=pointer]
+          - button [ref=f12e2921] [cursor=pointer]
+        - generic [ref=f12e1830]:
+          - button [ref=f12e2922] [cursor=pointer]:
+            - generic [ref=f12e1834]: release-config
+          - button [ref=f12e2923] [cursor=pointer]
+          - button [ref=f12e2924] [cursor=pointer]
+        - generic [ref=f12e1845]:
+          - button [ref=f12e2925] [cursor=pointer]:
+            - generic [ref=f12e1849]: room-anchors
+          - button [ref=f12e2926] [cursor=pointer]
+          - button [ref=f12e2927] [cursor=pointer]
+        - generic [ref=f12e1860]:
+          - button [ref=f12e2928] [cursor=pointer]:
+            - generic [ref=f12e1864]: room-avatar
+          - button [ref=f12e2929] [cursor=pointer]
+          - button [ref=f12e2930] [cursor=pointer]
+        - generic [ref=f12e1875]:
+          - button [ref=f12e2931] [cursor=pointer]:
+            - generic [ref=f12e1879]: room-mode
+          - button [ref=f12e2932] [cursor=pointer]
+          - button [ref=f12e2933] [cursor=pointer]
+        - generic [ref=f12e1890]:
+          - button [ref=f12e2934] [cursor=pointer]:
+            - generic [ref=f12e1894]: screen-capture
+          - button [ref=f12e2935] [cursor=pointer]
+          - button [ref=f12e2936] [cursor=pointer]
+        - generic [ref=f12e1905]:
+          - button [ref=f12e2937] [cursor=pointer]:
+            - generic [ref=f12e1909]: shareplay
+          - button [ref=f12e2938] [cursor=pointer]
+          - button [ref=f12e2939] [cursor=pointer]
+        - generic [ref=f12e1920]:
+          - button [ref=f12e2940] [cursor=pointer]:
+            - generic [ref=f12e1924]: spatial-performance
+          - button [ref=f12e2941] [cursor=pointer]
+          - button [ref=f12e2942] [cursor=pointer]
+        - generic [ref=f12e1935]:
+          - button [ref=f12e2943] [cursor=pointer]:
+            - generic [ref=f12e1939]: swarmclaw-plan-chat
+          - button [ref=f12e2944] [cursor=pointer]
+          - button [ref=f12e2945] [cursor=pointer]
+        - generic [ref=f12e1950]:
+          - button [ref=f12e2946] [cursor=pointer]:
+            - generic [ref=f12e1954]: swarmclaw-plan-platform
+          - button [ref=f12e2947] [cursor=pointer]
+          - button [ref=f12e2948] [cursor=pointer]
+        - generic [ref=f12e1965]:
+          - button [ref=f12e2949] [cursor=pointer]:
+            - generic [ref=f12e1969]: toybox
+          - button [ref=f12e2950] [cursor=pointer]
+          - button [ref=f12e2951] [cursor=pointer]
+        - generic [ref=f12e1980]:
+          - button [ref=f12e2952] [cursor=pointer]:
+            - generic [ref=f12e1984]: video-production
+          - button [ref=f12e2953] [cursor=pointer]
+          - button [ref=f12e2954] [cursor=pointer]
+        - generic [ref=f12e1995]:
+          - button [ref=f12e2955] [cursor=pointer]:
+            - generic [ref=f12e1999]: vision-ambient
+          - button [ref=f12e2956] [cursor=pointer]
+          - button [ref=f12e2957] [cursor=pointer]
+        - generic [ref=f12e2010]:
+          - button [ref=f12e2958] [cursor=pointer]:
+            - generic [ref=f12e2014]: vision-constellation
+          - button [ref=f12e2959] [cursor=pointer]
+          - button [ref=f12e2960] [cursor=pointer]
+        - generic [ref=f12e2025]:
+          - button [ref=f12e2961] [cursor=pointer]:
+            - generic [ref=f12e2029]: vision-navigation
+          - button [ref=f12e2962] [cursor=pointer]
+          - button [ref=f12e2963] [cursor=pointer]
+        - generic [ref=f12e2040]:
+          - button [ref=f12e2964] [cursor=pointer]:
+            - generic [ref=f12e2044]: vision-presence
+          - button [ref=f12e2965] [cursor=pointer]
+          - button [ref=f12e2966] [cursor=pointer]
+        - generic [ref=f12e2055]:
+          - button [ref=f12e2967] [cursor=pointer]:
+            - generic [ref=f12e2059]: vision-shareplay
+          - button [ref=f12e2968] [cursor=pointer]
+          - button [ref=f12e2969] [cursor=pointer]
+        - generic [ref=f12e2070]:
+          - button [ref=f12e2970] [cursor=pointer]:
+            - generic [ref=f12e2074]: vision-shell
+          - button [ref=f12e2971] [cursor=pointer]
+          - button [ref=f12e2972] [cursor=pointer]
+        - generic [ref=f12e2085]:
+          - button [ref=f12e2973] [cursor=pointer]:
+            - generic [ref=f12e2089]: vision27-capabilities
+          - button [ref=f12e2974] [cursor=pointer]
+          - button [ref=f12e2975] [cursor=pointer]
+        - generic [ref=f12e2100]:
+          - button [ref=f12e2976] [cursor=pointer]:
+            - generic [ref=f12e2104]: visionos-target
+          - button [ref=f12e2977] [cursor=pointer]
+          - button [ref=f12e2978] [cursor=pointer]
+        - generic [ref=f12e2115]:
+          - button [ref=f12e2979] [cursor=pointer]:
+            - generic [ref=f12e2119]: wake-word
+          - button [ref=f12e2980] [cursor=pointer]
+          - button [ref=f12e2981] [cursor=pointer]
+        - generic [ref=f12e2130]:
+          - button [ref=f12e2982] [cursor=pointer]:
+            - generic [ref=f12e2134]: w63-bridge
+          - button [ref=f12e2983] [cursor=pointer]
+          - button [ref=f12e2984] [cursor=pointer]
+        - generic [ref=f12e2145]:
+          - button [ref=f12e2985] [cursor=pointer]:
+            - generic [ref=f12e2149]: w63-content
+          - button [ref=f12e2986] [cursor=pointer]
+          - button [ref=f12e2987] [cursor=pointer]
+        - generic [ref=f12e2160]:
+          - button [ref=f12e2988] [cursor=pointer]:
+            - generic [ref=f12e2164]: w63-districts
+          - button [ref=f12e2989] [cursor=pointer]
+          - button [ref=f12e2990] [cursor=pointer]
+        - generic [ref=f12e2175]:
+          - button [ref=f12e2991] [cursor=pointer]:
+            - generic [ref=f12e2179]: w63-docs
+          - button [ref=f12e2992] [cursor=pointer]
+          - button [ref=f12e2993] [cursor=pointer]
+        - generic [ref=f12e2190]:
+          - button [ref=f12e2994] [cursor=pointer]:
+            - generic [ref=f12e2194]: w63-platform
+          - button [ref=f12e2995] [cursor=pointer]
+          - button [ref=f12e2996] [cursor=pointer]
+        - generic [ref=f12e2205]:
+          - button [ref=f12e2997] [cursor=pointer]:
+            - generic [ref=f12e2209]: w63-splash
+          - button [ref=f12e2998] [cursor=pointer]
+          - button [ref=f12e2999] [cursor=pointer]
+        - generic [ref=f12e2220]:
+          - button [ref=f12e3000] [cursor=pointer]:
+            - generic [ref=f12e2224]: main
+          - button [ref=f12e3001] [cursor=pointer]
+          - button [ref=f12e3002] [cursor=pointer]
+        - generic [ref=f12e2235]:
+          - button [ref=f12e3003] [cursor=pointer]:
+            - generic [ref=f12e2239]: tmp
+          - button [ref=f12e3004] [cursor=pointer]
+          - button [ref=f12e3005] [cursor=pointer]
+        - generic [ref=f12e2250]:
+          - button [ref=f12e3006] [cursor=pointer]:
+            - generic [ref=f12e2254]: SkatingFramework
+          - button [ref=f12e3007] [cursor=pointer]
+          - button [ref=f12e3008] [cursor=pointer]
+        - generic [ref=f12e2265]:
+          - button [ref=f12e3009] [cursor=pointer]:
+            - generic [ref=f12e2269]: "Infinity"
+          - button [ref=f12e3010] [cursor=pointer]
+          - button [ref=f12e3011] [cursor=pointer]
+      - region [ref=f12e3012]:
+        - button [ref=f12e3013] [cursor=pointer]:
+          - generic [ref=f12e51]: Provider Usage
+          - generic [ref=f12e52]: Highest 86% · 7D
+      - button [ref=f12e3014] [cursor=pointer]:
+        - generic [ref=f12e59]: Settings
+    - separator [aria-hidden] [ref=f12e3015]
+    - main [ref=f12e63]:
+      - generic [ref=f12e64]:
+        - generic [aria-hidden] [ref=f12e65]:
+          - button [ref=f12e3016] [cursor=pointer]
+          - group [ref=f12e69]:
+            - generic [ref=f12e70]:
+              - button [ref=f12e3017] [cursor=pointer]
+              - button [ref=f12e3018] [cursor=pointer]: EN
+              - button [ref=f12e3019] [cursor=pointer]
+              - button [ref=f12e3020] [cursor=pointer]
+              - button [ref=f12e3021] [cursor=pointer]
+              - button [ref=f12e3022] [cursor=pointer]
+        - generic [ref=f12e82]:
+          - generic [ref=f12e83]:
+            - button [aria-hidden] [ref=f12e3023] [cursor=pointer]:
+              - generic [aria-hidden]: "5"
+            - status [ref=f12e88]: 5 new notifications
+          - button [aria-hidden] [ref=f12e3024] [cursor=pointer]
+        - generic [ref=f12e2299]:
+          - generic [ref=f12e3025]: mcpscratch
+          - generic [ref=f12e2303]: /
+          - generic [ref=f12e3026]: "Spawn ONE subagent via the task tool with agent type 'scout'. Task: read C:/Users/blaze/fire/repos/omp-fire/package.json and yield ONLY the version value. Reply with exactly two lines: L1=status, L2=the FULL verbatim error text if it failed, else the version."
+          - button [ref=f12e3027] [cursor=pointer]
+        - img [ref=f12e3028]:
+          - generic [aria-hidden] [ref=f12e2411]: ~
+          - generic [ref=f12e2412]:
+            - generic [ref=f12e2413]: "100.0"
+            - generic [ref=f12e2414]: t/s
+      - generic [ref=f12e2415]:
+        - generic [ref=f12e2416]:
+          - generic [aria-hidden]:
+            - generic:
+              - button [ref=f12e3029] [cursor=pointer]:
+                - generic [ref=f12e2420]: "1"
+              - button [ref=f12e3030] [cursor=pointer]
+          - generic [ref=f12e2426]:
+            - generic [ref=f12e2427]:
+              - generic [ref=f12e2429]:
+                - paragraph [ref=f12e2433]: "Spawn ONE subagent via the task tool with agent type 'scout'. Task: read C:/Users/blaze/fire/repos/omp-fire/package.json and yield ONLY the version value. Reply with exactly two lines: L1=status, L2=the FULL verbatim error text if it failed, else the version."
+                - generic [ref=f12e2434]:
+                  - generic [ref=f12e2435]:
+                    - button "Copy message" [ref=f12e2436] [cursor=pointer]:
+                      - generic [ref=f12e2440]: Copy
+                    - button "Copy as Markdown" [ref=f12e2441] [cursor=pointer]
+                  - generic [aria-hidden] [ref=f12e2446]: Aug 5 10:08 PM
+              - button [aria-hidden] [ref=f12e3031] [cursor=pointer]
+            - button [ref=f12e3032] [cursor=pointer]:
+              - generic [ref=f12e2459]: Process details · 2 messages · 2 tool calls
+            - generic [ref=f12e2460]:
+              - generic [ref=f12e2461]:
+                - generic [ref=f12e2463]: claude-opus-5
+                - paragraph [ref=f12e2467]: OK 0.1.0
+                - generic [ref=f12e2468]:
+                  - generic [ref=f12e2469]:
+                    - generic [ref=f12e2470]:
+                      - button "Copy message" [ref=f12e2471] [cursor=pointer]:
+                        - generic [ref=f12e2475]: Copy
+                      - button "Copy as Markdown" [ref=f12e2476] [cursor=pointer]
+                    - button [aria-hidden] [ref=f12e3033] [cursor=pointer]
+                    - button [aria-hidden] [ref=f12e3034] [cursor=pointer]: New session
+                  - generic [aria-hidden] [ref=f12e2492]: Aug 5 10:09 PM
+              - button [pressed] [aria-hidden] [ref=f12e3035] [cursor=pointer]
+            - generic [ref=f12e2498]:
+              - generic [ref=f12e2499]:
+                - generic [ref=f12e2500]: Advisor
+                - generic [ref=f12e2501]: Aug 5 10:09 PM
+              - generic [ref=f12e2502]: "Final response must be exactly two lines per the user: line 1 status, line 2 either the full verbatim error text or the version—don’t include commentary from the 16-line task/hub output."
+              - generic [ref=f12e2504]:
+                - button [ref=f12e3036] [cursor=pointer]: Copy
+                - button [ref=f12e3037] [cursor=pointer]: Show details
+          - navigation [ref=f12e3038] [cursor=pointer]:
+            - button [ref=f12e3039]
+        - generic [aria-hidden] [ref=f12e2511]:
+          - button [ref=f12e3040] [cursor=pointer]
+          - region [ref=f12e3041]:
+            - button [ref=f12e3042] [cursor=pointer]:
+              - strong [ref=f12e2527]: Subagents
+              - generic [ref=f12e3043]: 0/1
+          - generic [ref=f12e2535]:
+            - textbox [ref=f12e3044]:
+              - /placeholder: Message… Type / for commands, @ for files
+            - generic [ref=f12e2537]:
+              - button [ref=f12e3045] [cursor=pointer]
+              - button [ref=f12e3046] [cursor=pointer]:
+                - generic [ref=f12e2546]: claude-opus-5
+              - button [ref=f12e3047] [cursor=pointer]:
+                - generic [ref=f12e2553]: max
+              - button [ref=f12e3048] [cursor=pointer]
+              - button [ref=f12e3049] [cursor=pointer]
+              - button [disabled] [ref=f12e3050]: Send
+    - generic:
+      - generic [aria-hidden] [ref=f12e2360]:
+        - tab [selected] [ref=f12e3051] [cursor=pointer]:
+          - generic [ref=f12e2366]: Explorer
+        - tab [ref=f12e3052] [cursor=pointer]:
+          - generic [ref=f12e2373]: Git
+        - tab [ref=f12e3053] [cursor=pointer]:
+          - generic [ref=f12e2379]: Terminal
+        - toolbar [ref=f12e3054]:
+          - button [ref=f12e3055] [cursor=pointer]
+          - button [ref=f12e3056] [cursor=pointer]
+          - button [ref=f12e3057] [cursor=pointer]
+          - button [ref=f12e3058] [cursor=pointer]
+      - tree [ref=f12e3060]:
+        - generic [ref=f12e2403]: Not found
+  - button [aria-hidden] [ref=f12e3061] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=f12e105] [cursor=pointer]
+  - alert [ref=f12e109]: mcpscratch - omp web
+  - generic:
+    - region "Notifications"
+  - dialog [ref=f12e3065]:
+    - generic [ref=f12e3066]:
+      - generic [ref=f12e3067]:
+        - heading "Session insights" [level=2] [ref=f12e3068]
+        - generic "Partial data — some omp stats were unavailable" [ref=f12e3070]
+      - button "Refresh insights" [ref=f12e3073] [cursor=pointer]
+      - button "Close insights" [active] [ref=f12e3079] [cursor=pointer]: ×
+    - generic [ref=f12e3080]:
+      - generic [ref=f12e3081]:
+        - generic [ref=f12e3082]:
+          - generic [ref=f12e3083]: "0"
+          - generic [ref=f12e3084]: Messages
+        - generic [ref=f12e3085]:
+          - generic [ref=f12e3086]: "0"
+          - generic [ref=f12e3087]: Tokens in
+        - generic [ref=f12e3088]:
+          - generic [ref=f12e3089]: "0"
+          - generic [ref=f12e3090]: Tokens out
+        - generic [ref=f12e3091]:
+          - generic [ref=f12e3092]: "0"
+          - generic [ref=f12e3093]: Cache read
+        - generic [ref=f12e3094]:
+          - generic [ref=f12e3095]: "0"
+          - generic [ref=f12e3096]: Cache write
+        - generic [ref=f12e3097]:
+          - generic [ref=f12e3098]: $0.00
+          - generic [ref=f12e3099]: Cost
+        - generic [ref=f12e3100]:
+          - generic [ref=f12e3101]: —
+          - generic [ref=f12e3102]: Duration
+        - generic [ref=f12e3103]:
+          - generic [ref=f12e3104]: —
+          - generic [ref=f12e3105]: Avg TTFT
+      - generic [ref=f12e3106]:
+        - generic [ref=f12e3107]: Token timeline
+        - generic [ref=f12e3108]: No token activity recorded
+      - generic [ref=f12e3109]:
+        - generic [ref=f12e3110]: Tools
+        - generic [ref=f12e3111]: No tool calls in this session
+      - generic [ref=f12e3112]: 1 ms

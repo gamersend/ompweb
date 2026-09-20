@@ -161,6 +161,15 @@ function readTerminalAgentError(event: AgentEvent): string | null {
   return null;
 }
 
+/** A scroll+highlight request for one message entry (P1 anchor infra).
+ *  `seq` is monotonic so re-anchoring the SAME entry re-triggers the scroll. */
+export interface AnchorRequest {
+  entryId: string;
+  /** Optional [start, end) character range into the entry's plain text. */
+  hl?: [number, number];
+  seq: number;
+}
+
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
   newSessionCwd: string | null;
@@ -178,13 +187,15 @@ export interface UseAgentSessionOptions {
   setToolPreset?: (preset: "none" | "default" | "full") => void;
   /** Opens a file in the web UI's file viewer (used by the open_file host tool). */
   onOpenFile?: (filePath: string, name: string, sessionId?: string) => void;
+  /** URL/palette-driven anchor: deep-link to one message (see AnchorRequest). */
+  anchorRequest?: AnchorRequest | null;
 }
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
     session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
-    onOpenFile,
+    onOpenFile, anchorRequest,
   } = opts;
   const reducedMotion = usePrefersReducedMotion();
   const isNew = session === null && newSessionCwd !== null;
@@ -860,6 +871,98 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     return true;
   }, [catchUp, eventCoalescer]);
+
+  // ---------------------------------------------------------------------
+  // Anchor infrastructure (P1 — reused by in-session find, deep links, and
+  // later bookmarks/inspector). An anchor names an ENTRY id; the hook makes
+  // sure that entry is on the active branch (one ?forEntry= branch hop via
+  // the context route's findLeafForEntry resolution) and then publishes an
+  // `anchorTarget` for ChatWindow to scroll to + highlight.
+  // ---------------------------------------------------------------------
+  const [anchorTarget, setAnchorTarget] = useState<AnchorRequest | null>(null);
+  const [pendingAnchor, setPendingAnchor] = useState<AnchorRequest | null>(null);
+  const anchorSeqRef = useRef(0);
+  // One ?forEntry= hop attempt per anchor request: a second pass that still
+  // cannot find the entry (deleted, foreign session) gives up instead of
+  // looping on the context route.
+  const anchorHopTriedRef = useRef<number | null>(null);
+
+  /** Request a scroll+highlight to a message entry. The find bar and the URL
+   *  anchor param both drive this single API. */
+  const anchorTo = useCallback((entryId: string, options?: { hl?: [number, number] }) => {
+    if (!entryId) return;
+    // The anchor scroll must win over the stream-follow: park the follower
+    // until the next prompt.
+    completionScrollAllowedRef.current = false;
+    pendingScrollToUserRef.current = false;
+    anchorSeqRef.current += 1;
+    setAnchorTarget(null);
+    setPendingAnchor({ entryId, ...(options?.hl ? { hl: options.hl } : {}), seq: anchorSeqRef.current });
+  }, []);
+
+  /** Branch hop: load the context of the leaf that contains `entryId`
+   *  (resolved server-side by findLeafForEntry). Modeled on loadContext. */
+  const loadContextForEntry = useCallback(async (sid: string, entryId: string): Promise<boolean> => {
+    const seq = ++contextRequestSeqRef.current;
+    const runId = promptRunIdRef.current;
+    eventCoalescer.reset();
+    dispatch({ type: "reset" });
+    try {
+      const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1", forEntry: entryId });
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}/context?${params}`);
+      if (!res.ok) return false;
+      const d = await res.json() as { context: SessionContext; leafId?: string | null };
+      if (!hookAliveRef.current || sessionIdRef.current !== sid || contextRequestSeqRef.current !== seq || promptRunIdRef.current !== runId) return false;
+      catchUp.select({ leafId: d.leafId ?? null, includePreCompaction: false });
+      const position = catchUp.position();
+      catchUp.seed(d.context, position);
+      setShowPreCompactionHistory(false);
+      setActiveLeafId(d.leafId ?? null);
+      void catchUp.request();
+      return true;
+    } catch (e) {
+      console.warn("Anchor branch hop failed:", e);
+      return false;
+    }
+  }, [catchUp, eventCoalescer]);
+
+  // Anchor resolution: waits for hydration, hops branches once when the entry
+  // is not on the active leaf, then publishes the scroll target.
+  useEffect(() => {
+    if (!pendingAnchor) return;
+    if (loading) return;
+    const sid = sessionIdRef.current;
+    if (!sid) {
+      setPendingAnchor(null);
+      return;
+    }
+    if (entryIds.includes(pendingAnchor.entryId)) {
+      setAnchorTarget(pendingAnchor);
+      setPendingAnchor(null);
+      return;
+    }
+    if (anchorHopTriedRef.current === pendingAnchor.seq) {
+      // Hop already attempted and the entry is still absent — give up.
+      setPendingAnchor(null);
+      return;
+    }
+    anchorHopTriedRef.current = pendingAnchor.seq;
+    const requested = pendingAnchor;
+    void loadContextForEntry(sid, requested.entryId).then((ok) => {
+      // A failed hop must not leave the anchor pending forever; on success the
+      // entryIds update re-runs this effect and publishes the target.
+      if (!ok) setPendingAnchor((current) => (current?.seq === requested.seq ? null : current));
+    });
+  }, [pendingAnchor, loading, entryIds, loadContextForEntry]);
+
+  // External anchors (URL &anchor= param, palette deep-link): forward each
+  // request exactly once, gated by its monotonic seq.
+  const lastExternalAnchorSeqRef = useRef(0);
+  useEffect(() => {
+    if (!anchorRequest || lastExternalAnchorSeqRef.current >= anchorRequest.seq) return;
+    lastExternalAnchorSeqRef.current = anchorRequest.seq;
+    anchorTo(anchorRequest.entryId, { hl: anchorRequest.hl });
+  }, [anchorRequest, anchorTo]);
 
   const togglePreCompactionHistory = useCallback(() => {
     const sid = sessionIdRef.current;
@@ -3385,6 +3488,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       initialScrollDoneRef.current = false;
       completionScrollAllowedRef.current = true;
       pendingScrollToUserRef.current = false;
+      // Drop any in-flight anchor from the previous session.
+      setAnchorTarget(null);
+      setPendingAnchor(null);
+      anchorHopTriedRef.current = null;
       if (followScrollFrameRef.current !== null) {
         cancelAnimationFrame(followScrollFrameRef.current);
         followScrollFrameRef.current = null;
@@ -3493,6 +3600,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleBuiltinSlashCommand, togglePreCompactionHistory,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, setActiveLeafId, setData, setMessages,
     dispatch, setAgentRunning, setForkingEntryId,
+    anchorTarget, anchorTo,
     bashRunning, pendingBash,
     liveToolResults,
     // Subscriptions

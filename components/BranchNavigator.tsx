@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useCallback, useMemo, memo, useRef, useEffect } from "react";
-import { GitBranch } from "lucide-react";
+import { Columns2, GitBranch, GitGraph } from "lucide-react";
 import { translate, useI18n } from "@/lib/i18n";
 import type { BranchPreview, SessionEntry, SessionTreeNode } from "@/lib/types";
+import { ContextInspector } from "./ContextInspector";
 
 interface Props {
   tree: SessionTreeNode[];
@@ -19,6 +20,10 @@ interface Props {
   onToggle?: () => void;
   /** Whether a session is currently active (used to show appropriate empty reason) */
   hasSession?: boolean;
+  /** Session id for the context inspector (P9 "open tree" affordance). */
+  sessionId?: string | null;
+  /** P12 compare: open the split pane on this leaf (button per tree node). */
+  onCompareLeaf?: (leafId: string) => void;
 }
 
 // Find the visible entry IDs on the path from root to activeLeafId.
@@ -99,9 +104,11 @@ interface TreeNodeProps {
   isLast: boolean;
   parentLines: boolean[]; // whether ancestor at each depth has more siblings after
   onSelect: (id: string) => void;
+  /** P12 compare affordance: split this leaf into the right pane. */
+  onCompare?: (id: string) => void;
 }
 
-const TreeNodeView = memo(function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelect }: TreeNodeProps) {
+const TreeNodeView = memo(function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelect, onCompare }: TreeNodeProps) {
   const { t } = useI18n();
   const { node: rep, skipped, branchPreview, labelEntry } = useMemo(() => compress(node), [node]);
   const repId = rep.entry.id;
@@ -222,6 +229,23 @@ const TreeNodeView = memo(function TreeNodeView({ node, activePathIds, depth, is
         }}>
           {label}
         </span>
+
+        {/* P12 compare: open this leaf in the split pane (kept out of the row's
+            select handler via stopPropagation; the keydown guard stops the
+            row's Enter/Space from ALSO navigating when the button is focused). */}
+        {onCompare && (
+          <button
+            type="button"
+            className="ui-focus-ring"
+            onClick={(event) => { event.stopPropagation(); onCompare(rep.entry.id); }}
+            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); }}
+            title={t("splitView.compareLeaf")}
+            aria-label={`${t("splitView.compareLeaf")}: ${label}`}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, padding: 0, flexShrink: 0, marginLeft: 4, border: "none", borderRadius: "var(--radius-control)", background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}
+          >
+            <Columns2 size={11} strokeWidth={2} aria-hidden="true" />
+          </button>
+        )}
       </div>
 
       {/* Children */}
@@ -234,16 +258,19 @@ const TreeNodeView = memo(function TreeNodeView({ node, activePathIds, depth, is
           isLast={idx === rep.children.length - 1}
           parentLines={[...parentLines, !isLast]}
           onSelect={onSelect}
+          onCompare={onCompare}
         />
       ))}
     </div>
   );
 }, (prev, next) => {
-  // Re-render only when this node, its compressed representative, or its
-  // active-path membership changed. parentLines/depth/isLast are positional
-  // and stable for a given node so they're intentionally ignored.
+  // Re-render only when this node, its compressed representative, its
+  // active-path membership, or the compare affordance changed. parentLines/
+  // depth/isLast are positional and stable for a given node so they're
+  // intentionally ignored.
   if (prev.node !== next.node) return false;
   if (prev.onSelect !== next.onSelect) return false;
+  if (prev.onCompare !== next.onCompare) return false;
   if (prev.activePathIds === next.activePathIds) return true;
   // node is unchanged here, so the compressed representative id is stable —
   // compute it once and check membership against both Set identities.
@@ -254,12 +281,14 @@ const TreeNodeView = memo(function TreeNodeView({ node, activePathIds, depth, is
   return true;
 });
 
-export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession }: Props) {
+export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, sessionId, onCompareLeaf }: Props) {
   const { t } = useI18n();
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
   const btnRef = useRef<HTMLButtonElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  // P9: the context inspector dialog, opened from the panel footer's tree icon.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
 
   useEffect(() => {
     if (!open || !inline) return;
@@ -323,6 +352,14 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
     if (openProp === undefined) setOpenInternal(false);
   }, [onLeafChange, openProp]);
 
+  // P12 compare: hand the leaf to the split view and close the dropdown
+  // (same dismissal rules as handleSelect in both modes).
+  const handleCompare = useCallback((id: string) => {
+    onCompareLeaf?.(id);
+    if (openProp === undefined) setOpenInternal(false);
+    else if (onToggle) onToggle();
+  }, [onCompareLeaf, openProp, onToggle]);
+
   const noBranchReason = useMemo(() => !hasSession
     ? t("branchNavigator.noActiveSession")
     : !hasBranch(tree)
@@ -339,6 +376,47 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
     return firstNode && firstNode.children.length > 1 ? firstNode.children : [];
   }, [firstNode, tree]);
   const hasContent = !noBranchReason && topLevelBranches.length > 0;
+
+  // P9 "open tree" affordance: opens the context inspector dialog. The
+  // dropdown closes as the dialog opens (inline panels toggle via onToggle,
+  // the non-inline one via its internal state); node clicks inside the
+  // dialog navigate through the same handleSelect leaf-change path.
+  const openInspector = useCallback(() => {
+    setInspectorOpen(true);
+    if (inline) {
+      if (onToggle) onToggle();
+    } else {
+      setOpenInternal(false);
+    }
+  }, [inline, onToggle]);
+
+  const inspectorFooter = (
+    <button
+      type="button"
+      className="ui-focus-ring"
+      onClick={openInspector}
+      disabled={!sessionId}
+      title={t("inspector.openTree")}
+      aria-label={t("inspector.openTree")}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        width: "100%",
+        padding: "7px 12px",
+        border: "none",
+        borderTop: "1px solid var(--border)",
+        background: "none",
+        cursor: sessionId ? "pointer" : "default",
+        color: "var(--text-muted)",
+        fontSize: 11,
+        textAlign: "left",
+      }}
+    >
+      <GitGraph size={13} strokeWidth={1.8} aria-hidden="true" style={{ color: "var(--accent)", flexShrink: 0 }} />
+      <span>{t("inspector.openTree")}</span>
+    </button>
+  );
 
   const branchIcon = (
     <GitBranch size={16} strokeWidth={1.8} aria-hidden="true" style={{ color: hasContent ? "var(--accent)" : undefined, flexShrink: 0 }} />
@@ -390,6 +468,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
                     isLast={idx === topLevelBranches.length - 1}
                     parentLines={[]}
                     onSelect={handleSelect}
+                    onCompare={handleCompare}
                   />
                 ))}
               </div>
@@ -398,8 +477,15 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
                 {noBranchReason}
               </div>
             )}
+            {inspectorFooter}
           </div>
         )}
+        <ContextInspector
+          sessionId={sessionId ?? null}
+          open={inspectorOpen}
+          onClose={() => setInspectorOpen(false)}
+          onNavigate={handleSelect}
+        />
       </div>
     );
   }
@@ -451,6 +537,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
                   isLast={idx === topLevelBranches.length - 1}
                   parentLines={[]}
                   onSelect={handleSelect}
+                  onCompare={handleCompare}
                 />
               ))}
             </div>
@@ -459,8 +546,16 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
               {noBranchReason ?? t("branchNavigator.noBranches")}
             </div>
           )}
+          {inspectorFooter}
         </div>
       )}
+
+      <ContextInspector
+        sessionId={sessionId ?? null}
+        open={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        onNavigate={handleSelect}
+      />
     </div>
   );
 }

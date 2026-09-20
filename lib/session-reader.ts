@@ -30,6 +30,10 @@ import type { TodoPhase } from "./pi-types";
 import { projectIdentityKey, sessionPathKey } from "./paths";
 import { resolveProject, type ProjectInfo } from "./worktree";
 import { selectHistoryRange, type SessionHistoryCursor, type SessionHistoryPage } from "./session-sync";
+// P1 search: the index shares this invalidation path so no session-mutation
+// site can forget it. session-index imports this module only dynamically at
+// call time, so the reference stays one-directional at module init.
+import { invalidateSearchIndex } from "./search/session-index";
 
 export { getAgentDir };
 
@@ -194,6 +198,10 @@ export function invalidateSessionListCache(): void {
   // an unknown same-size + same-mtime rewrite would keep serving the OLD list
   // summary (stale title/parent) from __ompSessionScanCache.
   invalidateAllSessionScanCaches();
+  // P1: the full-text index re-checks file stats per query, but a mutation
+  // that preserves both size and mtime would slip past it — drop the index
+  // here so every mutation path (existing and future) invalidates search.
+  invalidateSearchIndex();
 }
 
 /** Invalidate session-list metadata plus ONLY the given file's parse caches
@@ -1266,4 +1274,65 @@ export function entryToUiMessage(
       // session_info: metadata entries with no chat rendering.
       return null;
   }
+}
+
+// ============================================================================
+// Search + anchor support (P1)
+// ============================================================================
+
+/**
+ * The text of a user/assistant message entry — what full-text search indexes
+ * and what snippets are built from. Tool results, thinking blocks, images and
+ * metadata entries deliberately yield "" (never indexed, never searched).
+ * Tolerates shape-malformed entries the same way entryToUiMessage does.
+ */
+export function readEntryText(entry: SessionEntry): string {
+  if (entry.type !== "message" || !isRecord(entry.message)) return "";
+  const role = (entry.message as { role?: unknown }).role;
+  if (role !== "user" && role !== "assistant") return "";
+  const content = (entry.message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (isRecord(block) && block.type === "text" && typeof block.text === "string") parts.push(block.text);
+  }
+  return parts.join("\n");
+}
+
+/**
+ * The deepest, latest leaf reachable FROM `entryId` — the branch the UI must
+ * hop to so an anchored entry (search deep-link, find jump) is actually on
+ * screen. An entry may sit on several leaves' root paths; the latest child is
+ * followed at every fork so the reader lands on the most recent continuation,
+ * matching omp's leaf semantics (last appended entry wins). Returns null when
+ * the id is unknown. Cycle-safe like the context path walk.
+ */
+export function findLeafForEntry(entries: SessionEntry[], entryId: string): string | null {
+  const byParent = new Map<string, SessionEntry[]>();
+  for (const entry of entries) {
+    if (entry.parentId === null || entry.parentId === undefined) continue;
+    const siblings = byParent.get(entry.parentId);
+    if (siblings) siblings.push(entry);
+    else byParent.set(entry.parentId, [entry]);
+  }
+  const timestamp = (entry: SessionEntry): number => {
+    const parsed = Date.parse(entry.timestamp ?? "");
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+  let leaf = entries.find((entry) => entry.id === entryId);
+  if (!leaf) return null;
+  const seen = new Set<string>([leaf.id]);
+  for (;;) {
+    const children = byParent.get(leaf.id);
+    if (!children || children.length === 0) break;
+    const latest = children.reduce((best, child) => {
+      if (seen.has(child.id)) return best;
+      return timestamp(child) >= timestamp(best) ? child : best;
+    }, children[0]);
+    if (!latest || seen.has(latest.id)) break;
+    seen.add(latest.id);
+    leaf = latest;
+  }
+  return leaf.id;
 }

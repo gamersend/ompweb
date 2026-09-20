@@ -46,6 +46,23 @@ export async function register(): Promise<void> {
     }
   })();
 
+  // Phase 11 scheduler: arm the scheduled-prompt engine exactly once per
+  // server process (globalThis singleton — hot reload cannot double-fire).
+  // This is THE boot point: it runs for `next dev` and for the `next start`
+  // child that bin/omp-web.js spawns. The bin launcher itself must NOT arm
+  // the engine — it is a different process, so a per-process singleton cannot
+  // dedupe the two, and a launcher-armed copy would double-fire schedules.
+  void (async () => {
+    try {
+      const { ensureSchedulerStarted } = await import("@/lib/scheduler/engine");
+      ensureSchedulerStarted();
+    } catch (error) {
+      // Boot hooks must never block or crash startup; the settings surface
+      // and run-now still work without the ticker.
+      console.warn(`[omp-web] scheduler boot failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  })();
+
   // Crash/stall journal: a long-running server that dies or wedges while the
   // user is away leaves no trace in a terminal that no longer exists (CLI runs
   // are killed with their terminal; pages then show endless loading until the

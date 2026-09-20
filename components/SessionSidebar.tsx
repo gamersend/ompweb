@@ -71,6 +71,12 @@ interface Props {
   onOpenArchive?: () => void;
   /** True when settings full-page view is currently open. */
   settingsOpen?: boolean;
+  /** Runs board badge (P3): every running-session id change is reported up so
+   * AppShell's header button can show a live count without a second
+   * /api/agent/running/events subscription. */
+  onRunningIdsChange?: (ids: string[]) => void;
+  /** P12 split view: open a session in the right pane (row action menu). */
+  onSplitSession?: (session: SessionInfo) => void;
 }
 
 
@@ -78,7 +84,7 @@ interface Props {
 
 
 
-export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onWorkspaceOptionsChange, addProjectOpen, setAddProjectOpen, usageVisible = true, onOpenSettings, onOpenArchive, updateAvailable, settingsOpen = false }: Props) {
+export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onWorkspaceOptionsChange, addProjectOpen, setAddProjectOpen, usageVisible = true, onOpenSettings, onOpenArchive, updateAvailable, settingsOpen = false, onRunningIdsChange, onSplitSession }: Props) {
 
 
   const { t } = useI18n();
@@ -131,6 +137,13 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   // Once the SSE stream has delivered a frame it is the source of truth for
   // running state; late /api/sessions responses must not overwrite it.
   const sseAuthoritativeRef = useRef(false);
+  // Runs-board badge feed (P3): a ref keeps the latest callback so neither
+  // loadSessions nor the SSE effect below needs the parent's identity.
+  const onRunningIdsChangeRef = useRef(onRunningIdsChange);
+  useEffect(() => { onRunningIdsChangeRef.current = onRunningIdsChange; }, [onRunningIdsChange]);
+  const reportRunningIds = useCallback((ids: Set<string>) => {
+    onRunningIdsChangeRef.current?.([...ids]);
+  }, []);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sessionsEtagRef = useRef<string | null>(null);
@@ -167,7 +180,9 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       // Treat the fetched running set as an initial fallback only. Once SSE is
       // live it owns this state, so a slow fetch can't revive a stale snapshot.
       if (!sseAuthoritativeRef.current) {
-        setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+        const fetchedIds = new Set(data.runningSessionIds ?? []);
+        setRunningSessionIds(fetchedIds);
+        reportRunningIds(fetchedIds);
         if (data.runningSessions) {
           const nextCwds: Record<string, string> = {};
           for (const rs of data.runningSessions) {
@@ -197,7 +212,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       initialLoadedRef.current = true;
       if (showLoading) setLoading(false);
     }
-  }, [t]);
+  }, [t, reportRunningIds]);
 
   const initialLoadDone = useRef(false);
   useEffect(() => {
@@ -277,7 +292,9 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         };
         if (data.type === "running") {
           sseAuthoritativeRef.current = true;
-          setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+          const nextIds = new Set(data.runningSessionIds ?? []);
+          setRunningSessionIds(nextIds);
+          reportRunningIds(nextIds);
           if (data.runningSessions) {
             const nextCwds: Record<string, string> = {};
             for (const rs of data.runningSessions) {
@@ -308,7 +325,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       if (pendingRefreshRef.current) clearTimeout(pendingRefreshRef.current);
       source.close();
     };
-  }, [loadSessions, scheduleRefresh]);
+  }, [loadSessions, scheduleRefresh, reportRunningIds]);
   // Long-idle recovery: while the tab is hidden the SSE connection can die
   // (laptop sleep, network change, tab freeze) and its EventSource reconnect
   // carries no list invalidation. Refresh whenever the user actually comes
@@ -1107,6 +1124,12 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     loadSessions();
   }, [allSessions, onSessionDeleted, loadSessions]);
 
+  // P12 split view: forwarded as-is; stable identity keeps the row memo
+  // comparators from re-rendering the whole tree on unrelated changes.
+  const handleSplitSession = useCallback((session: SessionInfo) => {
+    onSplitSession?.(session);
+  }, [onSplitSession]);
+
   useEffect(() => {
     const selected = allSessions.find((session) => session.id === selectedSessionId);
     if (selected) setLastOpenSession(workspaceKeyOf(selected), selected.id);
@@ -1415,6 +1438,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
                 onSelectSession={handleSelectSessionFromList}
                 onRenamed={loadSessions}
                 onSessionDeleted={handleSessionDeleted}
+                onSplitSession={handleSplitSession}
                 activeWorktreeSwitcher={isActive ? activeProjectSwitcher : null}
                 worktreeBranch={projectBranch}
                 worktreeToggleRef={isActive && projectBranch ? wtToggleRef : undefined}

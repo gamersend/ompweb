@@ -2,6 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { getSubmitDuringRunBehavior, setSubmitDuringRunBehavior, type SubmitDuringRunBehavior } from "@/lib/composer-prefs";
+import { clearPromptHistory, promptHistoryCount as promptHistoryCountStored } from "@/lib/prompt-history";
+import { readTtsEnabled, unlockSharedTtsAudio, writeTtsEnabled } from "@/hooks/useTts";
 import dynamic from "next/dynamic";
 import { ArrowLeft, Copy, Download, ExternalLink, RefreshCw, RotateCcw, Search, Monitor, Play, Square, Trash2, X } from "lucide-react";
 import { Alert } from "@/components/ui/field";
@@ -23,6 +25,8 @@ const PluginsConfig = dynamic(() => import("./PluginsConfig").then((module) => m
 const McpConfig = dynamic(() => import("./McpConfig").then((module) => module.McpConfig), { loading: SettingsTabLoading, ssr: false });
 const AgentsConfig = dynamic(() => import("./AgentsConfig").then((module) => module.AgentsConfig), { loading: SettingsTabLoading, ssr: false });
 const UsageConfig = dynamic(() => import("./UsageConfig").then((module) => module.UsageConfig), { loading: SettingsTabLoading, ssr: false });
+const NotificationsConfig = dynamic(() => import("./NotificationsConfig").then((module) => module.NotificationsConfig), { loading: SettingsTabLoading, ssr: false });
+const SchedulesConfig = dynamic(() => import("./SchedulesConfig").then((module) => module.SchedulesConfig), { loading: SettingsTabLoading, ssr: false });
 
 type UpdateState = AppUpdateInfo;
 type WindowsServiceStatus = {
@@ -129,12 +133,14 @@ type SettingIndexEntry = {
 const SETTING_INDEX: SettingIndexEntry[] = [
   // Interface & Behavior
   { id: "completion-sound", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.completionSound", descKey: "settingsConfig.completionSoundDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Completion sound", fallbackDesc: "Play a tone when the agent completes a run.", scope: "UI" },
+  { id: "read-replies-aloud", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.readRepliesAloud", descKey: "settingsConfig.readRepliesAloudDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Read replies aloud", fallbackDesc: "Auto-play each finished reply as speech. Requires OMP_WEB_TTS_ENDPOINT on the server.", scope: "UI" },
   { id: "keep-tool-calls-collapsed", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.keepToolCallsCollapsed", descKey: "settingsConfig.keepToolCallsCollapsedDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Keep tool calls collapsed", fallbackDesc: "Show only compact headers while tools execute.", scope: "UI" },
   { id: "scope-native-select-all", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.scopeNativeSelectAll", descKey: "settingsConfig.scopeNativeSelectAllDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Scope native Select All (experimental)", fallbackDesc: "Limit whole-page selections from browser or touch menus to the active message, chat, or file. May also narrow deliberate whole-page selections. Turn off if selection handles or menus misbehave. Keyboard shortcuts are unaffected.", scope: "UI" },
   { id: "provider-usage", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.providerUsage", descKey: "settingsConfig.providerUsageDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Provider usage limits", fallbackDesc: "Show provider usage in the sidebar, above Settings.", scope: "UI" },
   { id: "chat-font-size", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.chatFontSize", descKey: "settingsConfig.chatFontSizeDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Chat Font Size", fallbackDesc: "Adjust text size for conversation messages, code blocks, and markdown output.", scope: "UI" },
   { id: "ui-scale", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.uiScale", descKey: "settingsConfig.uiScaleDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Interface Scale", fallbackDesc: "Adjust overall UI zoom and display density across sidebars, dialogs, buttons, and toolbars.", scope: "UI" },
   { id: "message-during-active-run", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.messageDuringActiveRun", descKey: "settingsConfig.messageDuringActiveRunDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Message during active run", fallbackDesc: "What composer does on submit while agent runs. Steer interrupts; Queue follow-up delivers after finish.", scope: "UI" },
+  { id: "clear-prompt-history", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.promptHistory", descKey: "settingsConfig.promptHistoryDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Global prompt history", fallbackDesc: "Composer recall across sessions. Clearing removes every stored prompt.", scope: "UI" },
   // Tool Safety & Approvals
   { id: "approval-mode", tab: "safety", sectionKey: "settingsConfig.toolSafetyApprovals", labelKey: "settingsConfig.approvalMode", descKey: "settingsConfig.approvalModeDesc", fallbackSection: "Tool Safety & Approvals", fallbackLabel: "Approval Mode", fallbackDesc: "Choose when OMP asks before tool calls.", scope: "Native OMP" },
   { id: "bash-override", tab: "safety", sectionKey: "settingsConfig.toolSafetyApprovals", labelKey: "settingsConfig.bashOverride", descKey: "settingsConfig.bashOverrideDesc", fallbackSection: "Tool Safety & Approvals", fallbackLabel: "Bash Override", fallbackDesc: "Override default approval policy specifically for terminal commands.", scope: "Native OMP" },
@@ -383,6 +389,8 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [submitBehavior, setSubmitBehavior] = useState<SubmitDuringRunBehavior>(() => getSubmitDuringRunBehavior());
+  // 6e global prompt history: live entry count for the clear-history row.
+  const [promptHistoryCount, setPromptHistoryCount] = useState<number>(() => promptHistoryCountStored());
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     try {
@@ -392,6 +400,8 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
       return true;
     }
   });
+  // 6b TTS replies: auto-speak finished replies (requires OMP_WEB_TTS_ENDPOINT).
+  const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => readTtsEnabled());
   const [update, setUpdate] = useState<UpdateState | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkingAppUpdate, setCheckingAppUpdate] = useState(false);
@@ -776,6 +786,19 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
                       }}
                     />
                   </NativeSetting>
+                  <NativeSetting searchId="read-replies-aloud" label={t("settingsConfig.readRepliesAloud")} description={t("settingsConfig.readRepliesAloudDesc")} scope="UI">
+                    <ToggleSwitch
+                      checked={ttsEnabled}
+                      onChange={(next) => {
+                        setTtsEnabled(next);
+                        writeTtsEnabled(next);
+                        // Toggling on is a user gesture — prime the shared
+                        // audio element so later auto-play may start
+                        // (useAudio's unlock discipline).
+                        if (next) unlockSharedTtsAudio();
+                      }}
+                    />
+                  </NativeSetting>
                   <NativeSetting searchId="provider-usage" label={t("settingsConfig.providerUsage")} description={t("settingsConfig.providerUsageDesc")} scope="UI">
                     <ToggleSwitch checked={providerUsageVisible} onChange={onProviderUsageVisibleChange} />
                   </NativeSetting>
@@ -816,6 +839,21 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
                       <option value="steer" style={nativeOptionStyle}>{t("settingsConfig.steerCurrentRun")}</option>
                       <option value="queue" style={nativeOptionStyle}>{t("settingsConfig.queueFollowUp")}</option>
                     </select>
+                  </NativeSetting>
+                  <NativeSetting searchId="clear-prompt-history" label={t("settingsConfig.promptHistory")} description={t("settingsConfig.promptHistoryDescCount", { count: promptHistoryCount })} scope="UI">
+                    <button
+                      type="button"
+                      disabled={promptHistoryCount === 0}
+                      onClick={() => {
+                        clearPromptHistory();
+                        setPromptHistoryCount(0);
+                        toast.success(t("promptHistory.cleared"));
+                      }}
+                      style={{ padding: "6px 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "transparent", color: "var(--text)", cursor: promptHistoryCount === 0 ? "default" : "pointer", fontSize: 12, opacity: promptHistoryCount === 0 ? 0.55 : 1, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
+                    >
+                      <Trash2 size={13} strokeWidth={1.8} aria-hidden="true" />
+                      {t("promptHistory.clear")}
+                    </button>
                   </NativeSetting>
                 </div>
               </div>
@@ -1400,6 +1438,20 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
                     </div>
                   </section>
                 )}
+              </div>
+            )}
+
+            {/* NOTIFICATIONS TAB (P2): browser ping + webhook + quiet hours */}
+            {currentTab === "notifications" && (
+              <div role="tabpanel" id="settings-panel-notifications" aria-labelledby="settings-tab-notifications" className="settings-panel-inner" style={{ padding: isMobile ? "16px 14px 32px" : "32px 24px 64px", display: "flex", flexDirection: "column", gap: 18, maxWidth: 940 }}>
+                <NotificationsConfig />
+              </div>
+            )}
+
+            {/* SCHEDULED PROMPTS TAB (P11): recurring agent runs */}
+            {currentTab === "scheduler" && (
+              <div role="tabpanel" id="settings-panel-scheduler" aria-labelledby="settings-tab-scheduler" className="settings-panel-inner" style={{ padding: isMobile ? "16px 14px 32px" : "32px 24px 64px", display: "flex", flexDirection: "column", gap: 18, maxWidth: 940 }}>
+                <SchedulesConfig />
               </div>
             )}
               </div>

@@ -1,0 +1,50 @@
+- generic [active] [ref=f12e1]:
+  - generic [ref=f12e2]:
+    - generic [ref=f12e4]:
+      - generic [ref=f12e5]:
+        - generic [ref=f12e6]:
+          - button "omp logo ompweb" [ref=f12e7] [cursor=pointer]:
+            - img "omp logo" [ref=f12e8]
+            - generic [ref=f12e11]: ompweb
+          - generic [ref=f12e12]:
+            - button "Archived Sessions" [ref=f12e13] [cursor=pointer]
+            - button "Import session" [ref=f12e17] [cursor=pointer]
+            - button "Refresh" [ref=f12e22] [cursor=pointer]
+        - button "New Session" [disabled] [ref=f12e28]
+      - generic [ref=f12e31]:
+        - generic [ref=f12e32]: Workspaces
+        - button "Search sessions" [ref=f12e33] [cursor=pointer]
+        - button "Show running sessions only" [ref=f12e37] [cursor=pointer]
+        - button "Add workspace" [ref=f12e39] [cursor=pointer]
+      - generic [ref=f12e41]: Loading...
+      - region "Provider Usage" [ref=f12e43]:
+        - button "Provider Usage No provider limits reported" [ref=f12e44] [cursor=pointer]:
+          - generic [ref=f12e51]: Provider Usage
+          - generic [ref=f12e52]: No provider limits reported
+      - button "Settings" [ref=f12e54] [cursor=pointer]
+    - separator "Resize sidebar" [ref=f12e62]
+    - main [ref=f12e63]:
+      - generic [ref=f12e64]:
+        - generic [ref=f12e65]:
+          - button "Hide sidebar" [ref=f12e66] [cursor=pointer]
+          - group [ref=f12e69]:
+            - generic [ref=f12e70]:
+              - button "Toggle theme" [ref=f12e72] [cursor=pointer]
+              - button "EN" [ref=f12e79] [cursor=pointer]
+        - generic [ref=f12e82]:
+          - generic [ref=f12e83]:
+            - button "Notifications (0 unread)" [ref=f12e84] [cursor=pointer]
+            - status [ref=f12e88]
+          - button "Runs board (0 running)" [ref=f12e89] [cursor=pointer]
+      - generic [ref=f12e95]:
+        - generic:
+          - generic:
+            - generic: Get Started
+            - generic:
+              - text: 1.Select a project directory from the sidebar2.Add models via the
+              - strong: Models
+              - text: button at the bottom
+    - status [ref=f12e96]: Loading…
+  - button "Show file panel" [ref=f12e97] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=f12e105] [cursor=pointer]
+  - alert [ref=f12e109]

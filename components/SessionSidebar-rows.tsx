@@ -1,13 +1,14 @@
 "use client";
 
-import { memo, useCallback, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
 import type { AgentMessage, ManagedProject, ProjectLaunchConfig, SessionInfo } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
 import { comparableProjectPath } from "@/lib/comparable-path";
-import { Check, ChevronDown, ChevronRight, Folder, GitBranch, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Folder, GitBranch, MoreHorizontal, Plus, Star, Trash2 } from "lucide-react";
 import { Tooltip } from "./ui/primitives";
 import { ConfirmDialog } from "./ui/field";
 import { copyText } from "@/lib/clipboard";
+import { bookmarkCountFor, subscribeBookmarks } from "@/lib/bookmarks";
 import { transcriptToMarkdown } from "@/lib/transcript";
 import { toast } from "./ui/toast";
 import {
@@ -60,6 +61,8 @@ interface ProjectRowProps {
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
+  /** P12 split view: open a session in the right pane (row action menu). */
+  onSplitSession?: (s: SessionInfo) => void;
   activeWorktreeSwitcher?: ReactNode;
   /** Active worktree/branch label shown inline beside the workspace name. */
   worktreeBranch?: string | null;
@@ -97,6 +100,7 @@ function ProjectRow({
   onSelectSession,
   onRenamed,
   onSessionDeleted,
+  onSplitSession,
   activeWorktreeSwitcher,
   worktreeBranch,
   worktreeToggleRef,
@@ -423,6 +427,7 @@ function ProjectRow({
                   onSelectSession={onSelectSession}
                   onRenamed={onRenamed}
                   onSessionDeleted={onSessionDeleted}
+                  onSplitSession={onSplitSession}
                   depth={0}
                 />
               ))}
@@ -727,6 +732,7 @@ const SessionTreeItem = memo(function SessionTreeItem({
   onSelectSession,
   onRenamed,
   onSessionDeleted,
+  onSplitSession,
   depth,
 }: {
   node: SessionTreeNode;
@@ -737,6 +743,8 @@ const SessionTreeItem = memo(function SessionTreeItem({
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
+  /** P12 split view: open this session in the right pane (row action menu). */
+  onSplitSession?: (s: SessionInfo) => void;
   depth: number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -757,6 +765,9 @@ const SessionTreeItem = memo(function SessionTreeItem({
   const handleDeleted = useCallback((id: string) => {
     onSessionDeleted?.(id);
   }, [onSessionDeleted]);
+  const handleSplit = useCallback(() => {
+    onSplitSession?.(node.session);
+  }, [onSplitSession, node.session]);
   const handleToggleCollapse = useCallback(() => {
     setCollapsed((v) => !v);
   }, []);
@@ -784,6 +795,7 @@ const SessionTreeItem = memo(function SessionTreeItem({
           onClick={handleClick}
           onRenamed={onRenamed}
           onDeleted={handleDeleted}
+          onSplitSession={handleSplit}
           depth={depth}
           hasChildren={hasChildren}
           collapsed={collapsed}
@@ -803,6 +815,7 @@ const SessionTreeItem = memo(function SessionTreeItem({
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
+              onSplitSession={onSplitSession}
               depth={depth + 1}
             />
           ))}
@@ -829,7 +842,8 @@ const SessionTreeItem = memo(function SessionTreeItem({
   if (prev.relativeTimeNow !== next.relativeTimeNow) return false;
   if (prev.onSelectSession !== next.onSelectSession
     || prev.onRenamed !== next.onRenamed
-    || prev.onSessionDeleted !== next.onSessionDeleted) return false;
+    || prev.onSessionDeleted !== next.onSessionDeleted
+    || prev.onSplitSession !== next.onSplitSession) return false;
   return true;
 });
 const SessionItem = memo(function SessionItem({
@@ -840,6 +854,7 @@ const SessionItem = memo(function SessionItem({
   onClick,
   onRenamed,
   onDeleted,
+  onSplitSession,
   depth = 0,
   hasChildren = false,
   collapsed = false,
@@ -853,14 +868,26 @@ const SessionItem = memo(function SessionItem({
   onClick: () => void;
   onRenamed?: () => void;
   onDeleted?: (id: string) => void;
+  onSplitSession?: () => void;
   depth?: number;
   hasChildren?: boolean;
   relativeTimeNow: number;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }) {
-  const { t, locale } = useI18n();
+  const { t, tn, locale } = useI18n();
   const [hovered, setHovered] = useState(false);
+  // 6d: live star-count badge. The subscription is per-row and only touches
+  // this row's state when its own session's bookmarks change — typing in the
+  // composer or hovering other rows never re-renders it.
+  const [bookmarkCount, setBookmarkCount] = useState(() => bookmarkCountFor(session.id));
+  useEffect(() => {
+    setBookmarkCount(bookmarkCountFor(session.id));
+    return subscribeBookmarks((changed) => {
+      if (changed !== session.id) return;
+      setBookmarkCount(bookmarkCountFor(session.id));
+    });
+  }, [session.id]);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const renameCancelRef = useRef(false);
@@ -1007,6 +1034,16 @@ const SessionItem = memo(function SessionItem({
               {title}
             </span>
           </button>
+          {bookmarkCount > 0 && (
+            <span
+              title={tn("bookmarks.count", bookmarkCount)}
+              aria-label={tn("bookmarks.count", bookmarkCount)}
+              style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, color: "var(--accent)", fontSize: 10, fontWeight: 600, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}
+            >
+              <Star size={10} strokeWidth={0} fill="currentColor" aria-hidden="true" />
+              {bookmarkCount}
+            </span>
+          )}
           {session.worktreeBranch && <span title={t("sessionSidebar.worktreeTitle", { path: session.cwd })} style={{ display: "flex", alignItems: "center", gap: 3, maxWidth: 56, minWidth: 0, overflow: "hidden", color: "var(--text-dim)", fontSize: 10, flexShrink: 1 }}><GitBranch size={10} strokeWidth={2.4} aria-hidden="true" /><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session.worktreeBranch}</span></span>}
           {hasChildren && <button className="session-item-icon-button" onClick={(event) => { event.stopPropagation(); onToggleCollapse?.(); }} title={collapsed ? t("sessionSidebar.expandForks") : t("sessionSidebar.collapseForks")} aria-label={collapsed ? t("sessionSidebar.expandForks") : t("sessionSidebar.collapseForks")} aria-expanded={!collapsed} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, padding: 0, flexShrink: 0, border: "none", background: "none", color: "var(--text-dim)", cursor: "pointer", transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform var(--dur-fast) var(--ease-out-warm)" }}><ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" /></button>}
           <div style={{ display: "flex", alignItems: "center", gap: SIDEBAR_STATUS_GAP, flexShrink: 0 }}>
@@ -1024,6 +1061,9 @@ const SessionItem = memo(function SessionItem({
                   <MoreHorizontal size={14} strokeWidth={2} aria-hidden="true" />
                 </button>
                 <SidebarPortalMenu anchor={menuButtonRef} open={actionMenuOpen} onClose={() => setActionMenuOpen(false)} placement="below" minWidth={128}>
+                  {onSplitSession && (
+                    <button type="button" role="menuitem" className="sidebar-menu-item" onClick={(event) => { event.stopPropagation(); setActionMenuOpen(false); onSplitSession(); }} style={{ display: "block", width: "100%", padding: "6px 9px", border: "none", borderRadius: 6, background: "transparent", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", fontSize: 11 }}>{t("splitView.splitRight")}</button>
+                  )}
  <button type="button" role="menuitem" className="sidebar-menu-item" onClick={(event) => { event.stopPropagation(); setActionMenuOpen(false); void handleArchive(); }} disabled={hasChildren} title={hasChildren ? t("sessionSidebar.archiveLeafOnly") : t("sessionSidebar.archive")} style={{ display: "block", width: "100%", padding: "6px 9px", border: "none", borderRadius: 6, background: "transparent", color: hasChildren ? "var(--text-dim)" : "var(--text-muted)", cursor: hasChildren ? "not-allowed" : "pointer", textAlign: "left", fontSize: 11, opacity: hasChildren ? 0.55 : 1 }}>{t("sessionSidebar.archive")}</button>
                   <button type="button" role="menuitem" className="sidebar-menu-item" onClick={(event) => { startRename(event); setActionMenuOpen(false); }} style={{ display: "block", width: "100%", padding: "6px 9px", border: "none", borderRadius: 6, background: "transparent", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", fontSize: 11 }}>{t("sessionSidebar.rename")}</button>
                   <button type="button" role="menuitem" className="sidebar-menu-item" onClick={(event) => { event.stopPropagation(); setActionMenuOpen(false); void handleCopyTranscript(); }} disabled={copyingTranscript} style={{ display: "block", width: "100%", padding: "6px 9px", border: "none", borderRadius: 6, background: "transparent", color: "var(--text-muted)", cursor: copyingTranscript ? "default" : "pointer", textAlign: "left", fontSize: 11, opacity: copyingTranscript ? 0.55 : 1 }}>{t("sessionSidebar.copyTranscript")}</button>

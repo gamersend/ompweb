@@ -53,6 +53,34 @@ export function loadRightPanelWidth(): number | null {
   }
 }
 
+// Split view (Phase 12): the right chat pane's pixel width, persisted between
+// sessions. null = the fluid 50/50 default; the divider drag pattern matches
+// the right panel above. Double-clicking the divider resets to the default.
+export const SPLIT_WIDTH_STORAGE_KEY = "omp-web:split-width";
+export const SPLIT_MIN_WIDTH = 280;
+
+export function clampSplitWidth(width: number, containerWidth: number): number {
+  // No measurable container (jsdom, pre-layout): only the minimum applies —
+  // the container-derived maximum must not collapse the width.
+  if (!Number.isFinite(containerWidth) || containerWidth <= 0) {
+    return Math.max(SPLIT_MIN_WIDTH, Math.round(width));
+  }
+  const max = Math.max(SPLIT_MIN_WIDTH, Math.round(containerWidth) - SPLIT_MIN_WIDTH);
+  return Math.min(max, Math.max(SPLIT_MIN_WIDTH, Math.round(width)));
+}
+
+export function loadSplitWidth(): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(SPLIT_WIDTH_STORAGE_KEY);
+    if (!raw) return null;
+    const width = Number(raw);
+    return Number.isFinite(width) && width > 0 ? width : null;
+  } catch {
+    return null;
+  }
+}
+
 export function PanelLoadingFallback() {
   const { t } = useI18n();
   return (

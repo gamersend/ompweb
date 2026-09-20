@@ -1,7 +1,8 @@
 "use client";
 
 import { useI18n } from "@/lib/i18n";
-import { BarChart3, Bot, Cable, Cpu, KeyRound, RefreshCw, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import { isEnabled } from "@/lib/feature-flags";
+import { AlarmClock, BarChart3, Bell, Bot, Cable, Cpu, KeyRound, RefreshCw, Settings2, ShieldCheck, Sparkles } from "lucide-react";
 import type { ComponentType, CSSProperties } from "react";
 
 export type SettingsTab =
@@ -10,6 +11,8 @@ export type SettingsTab =
   | "models"
   | "providers"
   | "usage"
+  | "notifications"
+  | "scheduler"
   | "intelligence"
   | "agents"
   | "extensions"
@@ -32,11 +35,19 @@ export const SETTINGS_CATEGORIES: TabItem[] = [
   { id: "models", label: "AI Model Defaults", description: "Reasoning budget, verbosity, personality, scratchpad", Icon: Cpu },
   { id: "providers", label: "API Keys & Providers", description: "Connected OAuth accounts, API keys, and model registry", Icon: KeyRound },
   { id: "usage", label: "Usage", description: "Tokens, costs, cache analytics, and model breakdown", Icon: BarChart3 },
+  { id: "notifications", label: "Notifications", description: "Browser notifications, webhooks, and quiet hours", Icon: Bell },
+  { id: "scheduler", label: "Scheduled Prompts", description: "Recurring agent runs on a weekly clock", Icon: AlarmClock },
   { id: "intelligence", label: "Agent & Intelligence", description: "Advisor, memory, autolearn, compaction and retry", Icon: Sparkles },
   { id: "agents", label: "Agents", description: "Task agents, model settings, and tool policy", Icon: Bot },
   { id: "mcp", label: "Extensions & Tools", description: "MCP servers, managed skills, and OMP plugins", Icon: Cable },
   { id: "system", label: "System & Updates", description: "App updates, runtime version, and active session restart", Icon: RefreshCw },
 ];
+
+/** Feature-flagged tabs (§ BUILD-PLAN cross-cutting): hidden features must not
+ *  appear in settings at all, so the entry is filtered at the source. */
+function visibleCategories(): TabItem[] {
+  return SETTINGS_CATEGORIES.filter((tab) => tab.id !== "scheduler" || isEnabled("scheduler"));
+}
 
 export const getNormalizedActive = (tab: SettingsTab): SettingsTab => {
   if (tab === "skills" || tab === "plugins" || tab === "extensions") return "mcp";
@@ -58,7 +69,7 @@ export function SettingsTabs({
   const currentActive = getNormalizedActive(active);
 
   const onKeyDown = (event: React.KeyboardEvent, index: number) => {
-    const enabled = SETTINGS_CATEGORIES.filter((tab) => !(tab.needsWorkspace && !workspaceReady));
+    const enabled = visibleCategories().filter((tab) => !(tab.needsWorkspace && !workspaceReady));
     let nextIndex: number | null = null;
     if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = index + 1;
     if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = index - 1;
@@ -83,7 +94,7 @@ export function SettingsTabs({
         aria-orientation="vertical"
         className="settings-nav"
       >
-        {SETTINGS_CATEGORIES.map(({ id, label, description, Icon, needsWorkspace }, index) => {
+        {visibleCategories().map(({ id, label, description, Icon, needsWorkspace }, index) => {
           const labelKey = `settingsTabs.${id}.label`;
           const descKey = `settingsTabs.${id}.description`;
           const trLabel = t(labelKey);
@@ -128,7 +139,7 @@ export function SettingsTabs({
 
   return (
     <nav aria-label={t("settingsTabs.ariaLabel")} role="tablist" style={{ display: "flex", gap: 3, padding: "7px 12px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)", flexShrink: 0, overflowX: "auto" }}>
-      {SETTINGS_CATEGORIES.map(({ id, label, description, Icon, needsWorkspace }, index) => {
+      {visibleCategories().map(({ id, label, description, Icon, needsWorkspace }, index) => {
         const labelKey = `settingsTabs.${id}.label`;
         const descKey = `settingsTabs.${id}.description`;
         const trLabel = t(labelKey);

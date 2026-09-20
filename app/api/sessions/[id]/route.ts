@@ -28,6 +28,8 @@ import { resolveSessionPathOr404 } from "@/lib/api-utils";
 import { parseJsonWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { sessionPathKey } from "@/lib/paths";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { deleteCheckpointStore } from "@/lib/checkpoints/store";
+import { deleteCheckpointRefs } from "@/lib/checkpoints/snapshot";
 
 /** Stable, client-safe error body for catch-all handlers: details go to the
  *  server log only, never to the browser. */
@@ -422,6 +424,13 @@ export async function DELETE(
     // shutdown and would recreate the file if it were still running.
     await getRpcSession(id)?.destroyAndWait?.();
     deleteSessionFileWithArtifacts(filePath);
+    // P5 checkpoints: the deleted session's snapshot store and its git refs
+    // die with it (forks keep their own independent stores). Best-effort — a
+    // vanished repo must never block a session deletion.
+    try {
+      deleteCheckpointStore(deletedSessionId);
+      if (deletedHeader?.cwd) await deleteCheckpointRefs(deletedHeader.cwd, deletedSessionId);
+    } catch { /* pruning is best-effort */ }
     invalidateSessionPathCache(id);
     invalidateSessionCaches(); // deletion drops the file: full flush is correct
     return NextResponse.json({

@@ -55,82 +55,346 @@ Shared foundations in `lib/omp/`:
 
 ## File Map
 
+Colocated `*.test.mjs` files are omitted below (every module listed has one
+unless noted). Counts: 70 API routes, 77 components, 22 hooks, 112 lib modules
+plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/checkpoints/`
++ `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/`, 13 `bin/` scripts.
+
 ```
+root/
+  proxy.ts             Next edge middleware: web-auth session gate + cross-origin API check
+  instrumentation.ts   boot: HTTP(S)_PROXY wiring, agent-dir diagnostic, warm utility omp process
+
 app/api/
-  sessions/route.ts               GET  list all sessions
-  sessions/[id]/route.ts          GET/PATCH/DELETE session
+  sessions/route.ts               GET list all sessions (ETag/304, never proxy-cached)
+  sessions/[id]/route.ts          GET/PATCH(rename via live RPC)/DELETE session
   sessions/[id]/context/route.ts  GET ?leafId= — context for a specific leaf
+  sessions/[id]/state/route.ts    GET live running flag + get_state (reconcile poll)
+  sessions/[id]/checkpoints/route.ts GET checkpoint points | POST preview/restore files (409 dirty unless force)
   sessions/[id]/export/route.ts   GET exported HTML for a session
+  sessions/[id]/insights/route.ts GET per-session insights (ttft/duration/cost/tool facts)
+  sessions/[id]/tree/route.ts     GET flattened entry tree for the context inspector (?leafId= previews a branch)
+  sessions/[id]/auto-name/route.ts POST returns omp's own auto-generated title (no LLM)
+  sessions/[id]/archive/route.ts  POST stop the live child, then archive native JSONL (omp gc layout)
+  sessions/[id]/entries/[entryId]/thinking/route.ts
+                                  GET one raw thinking block by entryId + blockIndex
+  sessions/[id]/subagents/route.ts        GET on-disk subagent roster (survives reloads)
+  sessions/[id]/subagents/[subagentId]/route.ts
+                                  GET paged subagent transcript | ?mode=completion final .md
+  sessions/archive/route.ts       GET archived sessions | POST restore one
+  sessions/import/route.ts        POST import a native omp .jsonl (allow-root gated, 10 MB)
   agent/new/route.ts              POST { cwd, message, toolNames?, provider?, modelId? }
-  agent/[id]/route.ts             GET state | POST any RPC command
+  agent/[id]/route.ts             GET state | POST any RPC command (stable error codes)
   agent/[id]/events/route.ts      GET SSE stream
-  agent/running/events/route.ts   GET SSE stream of currently-running session ids
-  auth/**                         provider list, login/logout, API keys (via RPC)
+  agent/[id]/bash-output/route.ts GET a bash tool's temp output file (?download=1)
+  agent/running/events/route.ts   GET SSE of running ids + sidebar refresh hints
+  runs/route.ts                   GET runs board snapshot ({runs, revision, watchers})
+  runs/events/route.ts            GET SSE runs board stream (?watch=1 = refcounted watch)
+  schedules/route.ts              GET jobs (+recomputed nextRunAt) | POST create/run-now/pause-all | PUT ?id= | DELETE ?id=
+  notify/route.ts                 GET feed rows + config (URL masked) | PUT config | POST test/delivered/seed-row
+  agents/route.ts                 GET/POST/PUT/DELETE agent definition markdown (user/project/bundled)
+  auth/providers/route.ts         GET login-capable providers via RPC get_login_providers
+  auth/all-providers/route.ts     GET providers that currently resolve models (configured only)
+  auth/login/[provider]/route.ts  POST interactive OAuth login over a dedicated rpc-ui process
+  auth/logout/[provider]/route.ts POST 501 — omp exposes no logout RPC/CLI
+  auth/api-key/[provider]/route.ts GET key status (never the raw key); POST/DELETE 501
   cwd/validate/route.ts           POST validate/select a cwd
+  cwd/browse/route.ts             GET list subdirectories for the picker (Windows drive root)
   default-cwd/route.ts            POST create ~/omp-cwd-YYYYMMDD
-  files/[...path]/route.ts        GET file contents for viewer
+  file-index/route.ts             GET file list for @ autocomplete (git ls-files / capped readdir, ?q=)
+  files/[...path]/route.ts        GET file contents (incl. ?type=edit) | PUT editor saves | POST upload (+upload-check)
+  git/status/route.ts             GET git status for an allowed cwd
+  git/diff/route.ts               GET working-tree diff for one file
   home/route.ts                   GET user home directory
-  models/route.ts                 GET { models, modelList, defaultModel }
+  models/route.ts                 GET { models, modelList, defaultModel } (global registry cache)
+  model-roles/route.ts            GET/PUT native role→model selectors in config.yml
+  providers/enable/route.ts       POST enable a provider (invalidates model caches)
   models-config/route.ts          GET/PUT — read/write ~/.omp/agent/models.yml
   models-config/test/route.ts     POST test a configured model/provider
-  omp-settings/route.ts           GET/PUT native config.yml settings (allow-listed)
+  models-config/catalog/route.ts  GET models.dev catalog for "add model" presets (1 h cache)
+  usage/route.ts                  GET usage report (range/granularity/project/from/to/refresh)
+  provider-usage/route.ts         GET provider rate-limit windows (omp usage --json --redact)
+  stt/route.ts                    POST audio → transcription via env-configured endpoint
+  tts/route.ts                    POST text → speech via env-configured endpoint (audio/mpeg)
+  terminal/route.ts               POST spawn a shell child in {cwd} | GET ?id= info | DELETE ?id= dispose
+  terminal/[id]/events/route.ts   GET terminal SSE ({t:"d",b:<base64>} output / {t:"exit",code}, 30 s heartbeat)
+  terminal/[id]/input/route.ts    POST {data} stdin write (≤64 KB; audit row appended before delivery)
+  terminal/herdr/route.ts         herdr panes: GET list / ?paneId= read | POST claim/release/send-text/send-keys/resize
   mcp/route.ts                    GET/POST/PUT/DELETE project MCP servers
+  omp-settings/route.ts           GET/PUT native config.yml settings (allow-listed)
+  omp-version/route.ts            GET runtime probe of the installed omp binary
+  omp-update/route.ts             POST check / restart sessions after a manual CLI update
+  app-update/route.ts             GET/POST ompweb self-update status (npm registry)
+  app-update/notes/route.ts       GET GitHub release notes for a pending update (204 if none)
+  windows-service/route.ts        GET service status | POST install/uninstall/autostart/tray control
   plugins/route.ts                GET/POST plugin management (shells out to `omp plugin`)
-  projects/route.ts               GET registered+discovered projects | POST add | DELETE hide
+  projects/route.ts               GET/POST/PATCH/DELETE managed projects (add/hide/reorder/rename)
+  snippets/route.ts               GET list / ?export=1 download | POST create/import/duplicate | PUT/DELETE ?id=
   skills/route.ts                 GET/PATCH loaded skills and disable-model-invocation
   skills/install/route.ts         POST install skills through npx skills add
-  skills/search/route.ts          GET/POST skills.sh search
+  skills/search/route.ts          POST skills.sh search
+  skills/check/route.ts           POST check for skill package updates
+  skills/update/route.ts          POST update an installed skill package
+  web-auth/session/route.ts       POST password → HMAC-signed session cookie (disabled w/o password)
   worktrees/route.ts              GET/POST/DELETE git worktrees
 
 lib/
-  omp/                 shared omp foundations (paths, CLI probe, RpcProcess)
-  agent-client.ts      typed fetch helper for /api/agent commands
-  draft-store.ts       local draft persistence helpers
-  file-access.ts       allowed file roots for /api/files and worktrees
-  file-paths.ts        client/server path encoding helpers
-  markdown.ts          shared markdown helpers
-  npx.ts               npx runner used by skill install
-  pi-types.ts          local structural types for agent/RPC objects
-  project-ordering.ts  pure project sort/group/activity helpers (client + tests)
-  project-registry.ts  on-disk managed-project registry (~/.omp/agent/projects.json)
-  rpc-manager.ts       session registry + startRpcSession over RpcProcess
-  session-reader.ts    session .jsonl parsing + path cache + buildSessionContext
-  skills-service.ts    pure-Node skill discovery mirroring omp's providers
-  tool-presets.ts      PRESET_NONE/DEFAULT/FULL + getToolNamesForPreset()
-  types.ts             shared TypeScript types
-  normalize.ts         normalizeToolCalls() — field name mismatch between file format and our types
-  worktree.ts          project/worktree resolution and git worktree operations
+  omp/paths.ts            Node port of omp's directory resolution (~/.omp/agent, XDG, session slugs)
+  omp/omp-cli.ts          locate/probe the installed omp binary (resolveOmpBin, getOmpVersion)
+  omp/rpc-process.ts      process + NDJSON protocol layer (RpcProcess)
+  omp/rpc-frame.ts        NDJSON frame encode/parse primitives
+  omp/rpc-utility.ts      shared short-lived utility omp process for non-session commands
+  omp/session-files.ts    mtime-keyed session directory walk (listSessionFiles) + line streaming
+  omp/archive.ts          omp gc-layout archives: list/restore/delete archived sessions
+  omp/agents-service.ts   agent definition markdown discovery/validation/write (user/project/bundled)
+  omp/mcp-config.ts       project MCP server config read/validate/atomic-write
+  omp/model-roles.ts      native role selectors read/write in config.yml
+  omp/models-config.ts    models.yml parse/serialize/validate
+  omp/settings-config.ts  native config.yml allow-listed settings read/write
+  omp/updates.ts          raw `omp update` runs + cached check parsing
+  i18n/index.tsx          useI18n()/t()/tn() + locale state (globalThis-backed)
+  i18n/api-error.ts       localized rendering of API error payloads (errors.<code>)
+  i18n/locales/           flat key→string dictionaries: en.json, zh-CN.json, ja.json
+  types.ts                shared TypeScript types for omp-web
+  pi-types.ts             local structural mirrors of omp/SDK shapes (Bun-only upstream)
+  api-types.ts            API wire types (skills search/install scopes, …)
+  type-guards.ts          defensive guards for untrusted/upstream JSON
+  normalize.ts            normalizeToolCalls() — file format vs ToolCallContent field mismatch
+  paths.ts                Windows absolute-path checks + session path keying
+  file-paths.ts           client/server path encoding helpers
+  comparable-path.ts      case/separator-normalized path comparison (Windows-safe)
+  safe-url.ts             external URL allow-check before rendering links
+  content-disposition.ts  RFC-safe Content-Disposition header building
+  api-utils.ts            session-id → 404 resolution + error envelope responses
+  request-security.ts     cross-site browser API request rejection (origin/sec-fetch-site)
+  bounded-form-data.ts    JSON body parsing with hard byte caps (chunked-encoding safe)
+  http-dispatcher.ts      undici dispatcher honoring HTTP(S)_PROXY/NO_PROXY env
+  pwa-cache-rules.ts      service-worker fetch rules — tested source of truth (sw.js keeps an inline copy)
+  directory-browser.ts    safe directory listing for the cwd picker + Windows drive root
+  session-reader.ts       session .jsonl parsing + path cache + buildSessionContext
+  session-watcher.ts      debounced fs.watch over the sessions tree → changed session ids
+  session-change-bus.ts   in-process pub/sub bridging watcher events to SSE subscribers
+  session-sync.ts         durable per-session display cursors (history/stream/live-tool)
+  session-tree.ts         buildEntryTree() entry-tree flatten + livePathIds + node cap (P9 context inspector)
+  session-title.ts        title sanitize/derive-from-first-message helpers
+  session-file-references.ts  which files a session references (upload/bash-output guards)
+  session-file-references-core.ts  pure entry-walk core shared by the reference checks
+  transcript.ts           markdown export of a session (ported from the Tauri app, capped)
+  session-markdown.ts     pure sessionToMarkdown() behind ?format=md (fenced tool calls, <details>, entry anchors)
+  compaction-summary.ts   parse structured compaction summaries
+  task-result-details.ts  task toolResult extraction (cost, retries, structured output)
+  rpc-manager.ts          session registry + startRpcSession over RpcProcess (globalThis keyed)
+  spawn-session.ts        session-creation core extracted from /api/agent/new (cwd checks → startRpcSession → prompt)
+  runs-board.ts           runs board aggregator over rpc-manager (refcounted poll, 15-min terminal linger)
+  agent-client.ts         typed fetch helper for /api/agent commands
+  assistant-response.ts   "does this assistant message carry visible content" logic
+  message-update-coalescer.ts   coalesce message_update/tool frames to display rate
+  reconcile-guard.ts      in-flight dedup for the agent-state reconcile poll
+  initial-navigation.ts   parse URL params into the first session/tab to open
+  web-mode-state.ts       sessionStorage-backed active goal/plan state (safe parse)
+  chat-fork.ts            entry-id resolution for forking from a message
+  bash-output.ts          bash temp-output path resolution + no-follow file open
+  chat-attachments.ts     text file attachment limits/reading for the composer
+  image-attachments.ts    image attachment caps + request-size math (8 MB command cap)
+  chat-layout.ts          centered chat column width math
+  chat-lazy-load.ts       windowed rendering of long histories (page size, grow-on-scroll)
+  chat-transcript-plan.ts plan which transcript rows render (grouping, final-answer detect)
+  draft-store.ts          local draft persistence helpers
+  prompt-history.ts       global prompt history in localStorage (cap 200, project-filtered recall)
+  bookmarks.ts            per-session localStorage bookmarks (cap 200, notes, cross-tab sync)
+  composer-prefs.ts       submit-during-run behavior (steer/queue) preference
+  message-display.ts      which assistant blocks are visible (empty thinking collapse etc.)
+  markdown.ts             shared markdown helpers (math detection, plugin assembly)
+  frontmatter.ts          markdown frontmatter parse (agent/skill files)
+  clipboard.ts            copyText with fallbacks
+  format.ts               compact number/percent formatters shared across UI
+  generation-speed.ts     token-rate display formatting (value + SI unit)
+  ansi.ts                 ANSI/OSC escape stripping + segmentation
+  patch.ts                split-diff cell/row types for diff views
+  search-results.ts       FileExplorer in-tree search row building
+  syntax-highlight.ts     curated Prism grammar registration (lazy, not full bundle)
+  file-links.ts           local file href resolution for markdown links
+  file-dirent.ts          dirent isDirectory resolution with symlink fallback
+  file-types.ts           text/image preview caps + binary detection
+  file-access.ts          allowed file roots for /api/files and worktrees (globalThis)
+  file-upload.ts          upload conflict strategy + target inspection
+  file-fuzzy.ts           @ autocomplete trigger/ranking mirroring the omp TUI
+  project-ordering.ts     pure project sort/group/activity helpers (client + tests)
+  project-registry.ts     on-disk managed-project registry (~/.omp/agent/projects.json)
+  project-command-env.ts  sanitized env for project-defined commands
+  worktree.ts             project/worktree resolution and git worktree operations
+  git-changes.ts          git status + per-file diff (porcelain parsing)
+  git-status.ts           lightweight git status probe
+  git-types.ts            shared git wire types
+  checkpoints/store.ts    pure store for ~/.omp/agent/checkpoints/<sid>.json (cap 200, pruned seqs reported)
+  checkpoints/snapshot.ts working-tree snapshot into refs/ompweb-cp/<sid>/<seq> via temp index (HEAD untouched)
+  checkpoints/restore.ts  preview / in-place / worktree restore from a checkpoint tree (never clean/reset --hard)
+  workspace-memory.ts     localStorage last-open-session per workspace
+  feature-flags.ts        env OMP_WEB_FLAGS ∪ localStorage omp-web:flags → isEnabled() entry-point guards
+  sidebar-history-bridge.ts  inline script keeping sidebar open/close across navigations
+  model-catalog.ts        models.dev payload flattening + add-model presets (pure)
+  model-scope.ts          ambiguous bare model-id guard for native enabledModels
+  models-cache.ts         process-level models registry cache + invalidation
+  models-config-drafts.ts models.yml editor draft types
+  thinking-levels.ts      thinking effort level defs/limits
+  tool-presets.ts         PRESET_NONE/DEFAULT/FULL + getToolNamesForPreset()
+  tool-preset-preference.ts  persisted per-session tool preset choice
+  skills-service.ts       pure-Node skill discovery mirroring omp's providers
+  skill-lock.ts           skills lockfile + install-info annotation
+  skill-updates.ts        skill package update checks/args
+  npx.ts                  npx runner used by skill install
+  usage-types.ts          usage record/report types
+  usage-rates.ts          built-in per-model USD rates + models.yml overrides + cache savings
+  usage-service.ts        session .jsonl usage parsing (mtime-keyed cache) + report aggregation
+  usage-native.ts         native ↔ ompweb usage union merge (applyNativeUsage)
+  usage-db.ts             omp-web's own SQLite usage store (~/.omp/agent/usage.db, node:sqlite)
+  omp-stats-db.ts         read-only readers for omp's own stats.db/agent.db (node:sqlite, 60 s cache, 500 ms budget)
+  insights/session-insights.ts  per-session insights merge core (pure) + fs wrapper
+  scheduler/store.ts      ~/.omp/agent/web-schedules.json store (migrate/quarantine/atomic) + computeNextRunAt + withScheduleStore()
+  scheduler/engine.ts     setTimeout scheduler: next-due arm (30–60 s clamp), catch-up, per-cwd queue, globalThis singleton
+  provider-usage-types.ts provider rate-limit window types
+  provider-usage.ts       parse `omp usage --json --redact` output (fixed argv)
+  npm-update.ts           npm registry update check + bun/npm install-method detection
+  github-release-notes.ts release notes fetch (github.com URLs only)
+  self-update.ts          web self-update state machine (prepare→install→restart)
+  windows-service.ts      Windows service/tray status + lifecycle via bin scripts
+  browser-notifications.ts  completion notifications with permission handling
+  notify/feed.ts          server-side notify feed: 500-row ring + atomic tail at ~/.omp/agent/web-notify.json
+  notify/webhook.ts       webhook delivery (ntfy/discord/telegram/generic), fire-and-forget + 1 retry
+  notify/notify-config.ts ~/.omp/agent/web-notify-config.json store (mode 0600, write-only URL)
+  notify/notify-shared.ts pure notify contracts shared client+server: types, dedup keys, URL validation, quiet hours
+  notify/emit.ts          central notify emits rpc-manager calls (agent_end / approval / rpc error)
+  web-auth.ts             password check + HMAC-signed session cookie verify/create
+  web-slash-commands.ts   client-side slash command defs that expand into effective prompts
+  snippets.ts             fs-backed snippet store at ~/.omp/agent/snippets.json (cap 500, corrupt-file quarantine)
+  snippets/placeholders.ts $NAME / ${NAME} placeholder grammar + fill() (pure)
+  snippets/scope.ts       client-safe snippet scoping/validation + resolveSlash fixed-command precedence
+  stt.ts                  STT audio/request byte caps
+  tts.ts                  TTS text/request byte caps (mirrors stt.ts)
+  terminal-input.ts       key events → escape sequences for the interactive bash tool
+  terminal/terminal-manager.ts  plain-pipe shell child registry on globalThis (spawn/scrollback/coalescing/idle dispose)
+  terminal/herdr-plan.ts        pure herdr pane render plan (append/reset/skip diffing + defensive pane-list parse)
+  terminal/herdr-attach.ts      env-gated herdr pane runner (fixed argv) + globalThis owner claims
+  terminal/audit.ts             terminal input audit JSONL (metadata + content hash rows, 1 MB rotate)
+  subagent-types.ts       subagent wire/history types + defensive AgentProgress parsing
+  subagent-history.ts     on-disk subagent roster/transcript recovery
+  subagent-format.ts      shared subagent telemetry formatters
 
 components/
   AppShell.tsx        layout + URL state + tab management
+  AppShell-layout.tsx resizable desktop sidebar shell (extracted from AppShell)
+  AppShell-app-update.ts   self-update helpers: dismissed versions, stage polling, error sanitize
+  AppShell-provider-usage.ts  provider usage polling hook + formatting for AppShell
+  AppUpdateDialog.tsx self-update progress dialog with release notes
   SessionSidebar.tsx  session tree + FileExplorer
-  ChatWindow.tsx      chat composition + completion sound wrapper
+  SessionSidebar-chrome.tsx  sidebar header/footer chrome
+  SessionSidebar-rows.tsx    session/project/worktree row rendering
+  SessionSidebar-helpers.ts  shared sidebar helpers (stale-response guards)
+  ChatWindow.tsx      chat composition + completion sound wrapper (incl. OmpRuntimeVersion chip)
   ChatInput.tsx       input bar + model/thinking/tools/compact controls
+  ChatInput-banners.tsx       queued follow-up banner row
+  ChatInput-draft-attachments.ts  draft image/file attachment conversion helpers
+  ChatInput-model-options.ts  model option types, visible-model keys, sort order
+  ChatInput-model-picker.tsx  grouped provider/model dropdown + ProviderBadge
+  ChatInput-slash-commands.ts slash palette items (builtin/extension/prompt/skill/ompBuiltin)
+  SnippetPlaceholderRow.tsx  composer chip row: one input per snippet placeholder (Tab cycles, Esc detaches)
+  SnippetDialogs.tsx      "Save as snippet…" + /snippets manager dialogs (rename/duplicate/delete/import/export)
   ComposerPanels.tsx  composer-attached todo + subagent panels (collapsible, live states)
   TodoList.tsx        todo phase grid with preview/show-all (used by ComposerPanels)
   SubagentTranscriptDialog.tsx  task + final output summary dialog (wide, screen-adaptive)
+  SubagentStatusIcon.tsx  shared live/terminal subagent status icon
+  SessionInsightsDialog.tsx  session insights dialog + chat-header entry pill
+  SplitPane.tsx       two-pane split view (draggable divider, active-pane ring, mobile falls back to single)
   MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
+  MessageView-diff-view.tsx   split diff rendering for edit toolResults
+  MessageView-hub-panel.tsx   hub fan-out result panel (receipts, durations)
+  MessageView-task-panel.tsx  per-subagent TaskResultPanel summary
+  MessageView-tool-format.ts  tool row formatting (user-run bash rows)
+  RestoreDialog.tsx   checkpoint restore dialog: file preview, mode radio, force toggle on 409
+  MessageCopyActions.tsx  per-message copy buttons (text/selection)
+  BookmarksPopover.tsx  bookmarks pill/popover + per-message star toggle
   CommandPalette.tsx  ⌘K/Ctrl+K palette (cmdk): session switch, new session, theme
-  ImageLightbox.tsx   click-to-preview lightbox for chat images (ClickableImage)
   BranchNavigator.tsx in-session branch switcher
+  ContextInspector.tsx  entry-tree inspector dialog (SVG lanes, est/exact tokens, compaction cuts; opened from BranchNavigator)
   ChatMinimap.tsx     scroll minimap alongside the message list
   MarkdownBody.tsx    markdown renderer
-  ModelsConfig.tsx    modal for models/auth configuration
-  McpConfig.tsx       project MCP server editor (Settings → MCP tab)
-  PluginsConfig.tsx   modal for installed plugins
-  SkillsConfig.tsx    modal for loaded/search/installable skills
+  MarkdownCode.tsx    shared `code` renderer (MarkdownBody + FileViewer)
+  MermaidBlock.tsx    mermaid diagram rendering inside markdown
+  SyntaxHighlightedCode.tsx  Prism-highlighted code block
+  ImageLightbox.tsx   click-to-preview lightbox for chat images (ClickableImage)
+  RightPanel.tsx      resizable right panel (file tree/viewer, git changes tabs)
+  GitChangesPanel.tsx git status list + per-file diff open + @-mention
+  TerminalTab.tsx     xterm.js terminal pane in the right panel (lazy-mounted; plain shell + optional herdr attach)
   FileExplorer.tsx    file tree inside sidebar
   FileViewer.tsx      file content in a tab
+  FileEditor.tsx      mono editor inside FileViewer tabs (Ctrl+S save, goto-line, EOL-preserving, dirty tracking)
+  FrontmatterCard.tsx  rendered YAML frontmatter card (agent/skill files in FileViewer)
+  FileIcons.tsx       flat monochrome file/folder icon set (currentColor)
   TabBar.tsx          tab bar (Chat + open file tabs)
+  SessionExportMenu.tsx  topbar export menu: HTML export / Markdown download / Copy as Markdown
+  NotificationsBell.tsx  topbar bell: unread badge, notify feed dropdown, mark-all-read + test
+  RunsBoard.tsx      full-screen runs board: card grid, project filter, live interrupt
+  DirectoryPicker.tsx modal directory browser for cwd selection (Windows drives)
+  ExtensionDialog.tsx omp extension_ui_request prompts (open URL / paste code / notify)
+  LoginForm.tsx       web-auth password sign-in form (app/login)
+  ModelsConfig.tsx    modal for models/auth configuration
+  ModelsConfig-panels.tsx  provider/model panel sections of ModelsConfig
+  ModelsConfig-types.ts    shared models.yml types/constants/helpers
+  ModelCatalogPicker.tsx   searchable models.dev catalog picker
+  AgentsConfig.tsx    Settings → Agents: edit agent definition markdown (scopes, CSV fields)
+  SkillsConfig.tsx    modal for loaded/search/installable skills
+  PluginsConfig.tsx   modal for installed plugins
+  McpConfig.tsx       project MCP server editor (Settings → MCP tab)
+  UsageConfig.tsx     Settings → Usage dashboard (ranges, daily/project breakdowns)
+  ProviderUsageBar.tsx  sidebar provider rate-limit meters
+  NotificationsConfig.tsx  Settings → Notifications: browser toggle, quiet hours, write-only webhook URL, test
+  ArchiveBrowser.tsx  browse/restore archived sessions
+  SettingsTabs.tsx    settings tab list + active-tab normalization
+  SettingsConfig.tsx  settings tab bodies (general/models/auth/updates/…)
+  SchedulesConfig.tsx Settings → Schedules tab body: job list + editor dialog (DirectoryPicker, model picker, weekday chips)
+  ProjectLaunchConfigDialog.tsx  per-project launch profile editor (profile + extra args)
+  LanguageSwitcher.tsx  top-bar locale toggle (en / zh-CN / ja)
+  ThemeSwitcher.tsx   light/dark theme toggle
+  OmpWebLogo.tsx      brand mark (omp π glyph)
   ui/                 shared primitives: Dialog/Tooltip/Collapsible, fields, toast
 
 hooks/
   useAgentSession.ts       messages + streaming + SSE + fork/navigate/reconciliation logic
+  useAgentSession-notices.ts  notice-queue state extracted from useAgentSession
+  useAgentSession-queue.ts    queued-prompt tracking + sessionStorage persistence
+  useAgentSession-stream.ts   streaming/SSE, message-transform, subagent, protocol helpers
+  useAgentSession-sync.ts     reconcile/state-sync helpers extracted from useAgentSession
   useAudio.ts              completion sound + browser AudioContext unlock
+  useCopyFeedback.ts       copy with transient "copied" feedback flag
+  useDictation.ts          mic recording → /api/stt → composer text
   useDragDrop.ts           shared drag/drop state
+  useFontSize.ts           chat font-size preference (sm/md/lg/xl, localStorage + event)
   useIsMobile.ts           responsive breakpoint hook
-  usePrefersReducedMotion.ts OS reduce-motion preference (SMIL-safe)
+  useKeyboardShortcuts.ts  global shortcuts + registered abort handler for Esc
+  useModalDialog.ts        dialog stack so only the topmost responds to Escape
+  useNotifyFeed.ts         notify feed polling (20 s while visible) + OS notification gate
+  usePrefersReducedMotion.ts  OS reduce-motion preference (SMIL-safe)
+  useRunsBoard.ts         runs board SSE client (revision-guarded merge, watch refcount)
+  useSidebarHistory.ts     preserve sidebar open/close across SPA history navigation
+  useSplitSession.ts       split-pane glue: &split= / &splitLeaf= resolution, AnchorRequest mapping, close
   useTheme.ts              theme state (localStorage key "omp-theme")
+  useTts.ts                TTS playback/preference + auto-speak registry (one shared <audio>)
+  useUiScale.ts            UI scale preference (compact/standard/comfortable/large)
+
+bin/
+  omp-web.js              CLI entry: node version guard, service subcommand forwarding, server start
+  omp-web-options.js      shared CLI flag parsing (--port/--hostname/--install-tray/…)
+  omp-web-tray.js         Windows system tray (install/status, server lifecycle)
+  linux-tray.js           Linux tray via KDE/StatusNotifierItem
+  omp-web-systemd.js      install as a Linux systemd user service
+  omp-web-launchd.js      install as a macOS launchd user agent
+  service-env.js          systemd EnvironmentFile helpers (~/.omp/agent/web-service.env)
+  omp-web-update-worker.js  detached self-update worker (copied out to survive file locks)
+  process-lifecycle.js    graceful SIGHUP/child teardown for CLI-run launchers
+  network-addresses.js    LAN address enumeration for the "open from phone" URL
+  port-availability.js    free-port probing
+  node-version.js         supported Node range check
+  generate-release-notes.js  release notes generation from git history
 ```
 
 ---
@@ -330,6 +594,383 @@ handled or safely ignored.
 ### Completion sound
 - `hooks/useAudio.ts` stores the toggle in `localStorage` and reuses one `AudioContext`.
 - Browser autoplay policy means sound must be unlocked from a user gesture; `ChatInput` calls the unlock hook from interactive controls, and `ChatWindow` plays the tone from `onAgentEnd`.
+
+### Usage tracking (`lib/usage-db.ts`, `lib/usage-service.ts`, `lib/usage-rates.ts`, `/api/usage`, `components/UsageConfig.tsx`)
+omp-web keeps its OWN usage store — a SQLite database at `~/.omp/agent/usage.db` accessed with `node:sqlite` (`DatabaseSync`, connection cached on `globalThis`). `usage-service` parses usage records out of assistant messages in the session `.jsonl` files (`parseSessionUsage`, with an mtime/size-keyed in-memory cache capped at 2000 entries / 64 MiB), prices them via `usage-rates` (built-in per-model USD rate table, overridden by `models.yml` cost metadata; cache-read/write savings computed), and `usage-db` incrementally syncs them into SQLite (`syncSessionFilesToDb` only reparses files whose mtime/size changed, tracked in a `synced_files` table). `GET /api/usage` serves reports (today/7d/30d/90d/month/all ranges, daily/monthly/project granularity, `?refresh=true` forces a rescan) and `UsageConfig` renders the dashboard. Provider rate-limit windows come separately from `lib/provider-usage.ts`, which shells `omp usage --json --redact` (fixed argv) for `/api/provider-usage` and the `ProviderUsageBar` meters. Never touch omp's own `stats.db`/`agent.db` for this — `usage.db` is omp-web's file.
+
+### Workspace memory (`lib/workspace-memory.ts`)
+A tiny localStorage map (`omp-web:last-open-by-project`) from workspace key (`projectKey ?? projectRoot ?? cwd`) to the last open session id, so re-selecting a project restores the session you left. All reads are defensive — corrupt storage yields `{}`, never a crash.
+
+### STT / dictation (`/api/stt`, `lib/stt.ts`, `hooks/useDictation.ts`)
+The server proxies an OpenAI-compatible `/v1/audio/transcriptions` endpoint when `OMP_WEB_STT_ENDPOINT` is set (optional `OMP_WEB_STT_KEY`, `OMP_WEB_STT_MODEL`); without it the route returns a 503-style "not configured" error. Audio is capped at 25 MB per request. `useDictation` records from the microphone (max 5 minutes, 60 s transcription timeout) and fills the composer input.
+
+### Web auth (`lib/web-auth.ts`, `proxy.ts`, `/api/web-auth/session`, `app/login/page.tsx`, `components/LoginForm.tsx`)
+Password protection is OFF unless `OMP_WEB_PASSWORD` is set. The password compare hashes both sides and uses `timingSafeEqual`; a successful `POST /api/web-auth/session` sets a stateless HMAC-signed cookie (`omp_web_session`, `v1.<expiryMs>.<nonce>.<hmac>`, 30-day max age) — there is no server-side session store. Enforcement lives in `proxy.ts` (this Next version's middleware file, not `middleware.ts`): pages redirect to `/login`, APIs get `401 {code: "password_required"}`, and only static assets plus the manifest/icons pass without a session. The same proxy rejects cross-origin browser API calls via `lib/request-security.ts` (`origin` / `sec-fetch-site` checks). All request-body reads on new endpoints should go through `lib/bounded-form-data.ts` so chunked encodings cannot bypass size limits.
+
+### Session watcher (`lib/session-watcher.ts`)
+One debounced (250 ms) `fs.watch` over the sessions tree. omp owns the `.jsonl` writes and ompweb only gets RPC events for sessions it spawned itself, so a session started in a terminal never refreshed while open — the watcher turns file changes into "these session ids changed" notifications, which `/api/agent/running/events` forwards so an open session live-updates. Coalesced/overflowed watch events (null filename) fall back to full invalidation + rescan, and the watcher self-heals with a 5 s retry after errors.
+
+### File index + @ autocomplete (`/api/file-index`, `lib/file-fuzzy.ts`)
+The chat input's `@` trigger (must be at line start or after whitespace; quoted `@"..."` form for paths with spaces) is detected client-side by `file-fuzzy`, which also ranks results with the same `scoreEntry` ladder as the omp TUI. The file list comes from `GET /api/file-index`: `git ls-files` when the cwd is a git repo (hard cap 200k entries), otherwise a capped plain readdir (5000 entries) honoring the same skip lists as `/api/files`. `?q=` searches server-side; the no-query response is the client-side index.
+
+### Terminal input mapping (`lib/terminal-input.ts`)
+A pure key-event → escape-sequence encoder (`toTerminalKeyData`) used by the interactive bash tool in ChatWindow — there is no terminal emulator involved. It maps arrows/Home/End/Insert/Delete/PageUp/PageDown, legacy ctrl-chords, alt-arrows (word motion), Backspace/Escape, and deliberately passes through printable text; meta combos and Ctrl+V (paste) return null so the UI handles them.
+
+### i18n (`lib/i18n/`)
+Three flat key→string dictionaries in `lib/i18n/locales/` (`en.json`, `zh-CN.json`, `ja.json` — all three must be updated for any new string). `useI18n()` exposes `{ t, tn, locale, setLocale }` via `useSyncExternalStore`; the state (listeners + locale) lives on `globalThis` so Fast Refresh cannot split subscribers. `t(key, vars)` interpolates `{var}` placeholders and falls back key → en → key; `tn()` resolves `<key>.one`/`<key>.other` plurals with `{count}` always available; `translate()` works outside React (toasts, error helpers). Locale comes from `localStorage["omp-lang"]`, then `navigator.language`, then `en`; SSR always renders `en` until hydration so server/client HTML matches. `lib/i18n/api-error.ts` maps route error `code`s to `errors.<code>` dictionary entries, falling back to the server's English text.
+
+### Web slash commands (`lib/web-slash-commands.ts`, `components/ChatInput-slash-commands.ts`)
+omp's `/goal`, `/plan`, `/vibe`, … are TUI-only builtins — over the RPC prompt path they would arrive as literal user text. Web-native command definitions expand client-side into effective prompts before the normal send, so the agent receives a real instruction. The slash palette merges several sources (`builtin` / `extension` / `prompt` / `skill` / `ompBuiltin`) and dims dormant skill commands.
+
+### Cross-session full-text search (P1)
+`GET /api/search?q=&projectRoot?=&limit=&offset=` (envelope `{success, data}`; `runtime = "nodejs"`). Grammar: bare tokens AND together (BM25-ranked), `"quoted phrase"` = exact substring pass over token-narrowed candidates, `project:<name>` = comparable-path filter; min query length 2, `limit` ≤ 100. The index lives in `lib/search/session-index.ts` on `globalThis` (hot-reload safe): lazily built over user+assistant message text (toolResult bodies and images never indexed; 32 KB/message, 2 MB/session caps), shared in-flight build promise with progress, per-query mtime staleness re-check, and `invalidateSearchIndex()` hooked into `invalidateSessionListCache()` — extend, never bypass, when adding session-mutation paths. Snippets are rebuilt from the original entry text (`readEntryText` via the memoized parse cache), redacted by `lib/search/redact.ts` (firedeck port: prefixes/JWT/Bearer/URL-creds/assignments/entropy), and `matchRanges` are computed on the REDACTED text — never ship raw transcript text that failed a pattern. Perf: warm query < 150 ms (logged when exceeded); cold builds never block a request — the route answers `partial: true` + `indexing: {done,total}` and the palette shows "indexing… n%" while auto-retrying. Per-process query mutex: one search at a time; later queries wait ≤ 2 s then get 503 `search_busy`.
+
+### Anchors + in-session find (P1)
+Every chat message row carries `data-entry-id` (+ `id="m-<entryId>"` on minimap rows). Deep links use `?session=<id>&anchor=<entryId>[&hl=<start>,<end>]`; the palette Search mode writes the same URL on result click. `useAgentSession.anchorTo(entryId, { hl? })` is the single anchor API: it waits for hydration, performs ONE branch hop via `GET /api/sessions/[id]/context?forEntry=<entryId>` (server resolves the leaf with `findLeafForEntry`), then publishes an anchor target; ChatWindow scrolls instantly (`behavior: "auto"`), expands the lazy-load window once if needed, and shows a fading accent ring. The find bar (Ctrl/Cmd+F, `hooks/useChatFind.ts` + `components/ChatFindBar.tsx`) steps through in-session matches through the same API with wrap-around; Esc closes; "search all sessions" reopens the palette in Search mode (`lib/palette-bus.ts`) with the query. The command palette has Sessions/Search mode tabs persisted in `omp-web:palette-mode`; Search mode disables cmdk filtering and renders `components/PaletteSearch.tsx` (server-ranked, grouped 5/session with a "+n more" row, redacted snippets with `<mark>` spans from `matchRanges`). `lib/session-reader.ts` exports `findLeafForEntry(entries, entryId)` (deepest+latest leaf from an entry) and `readEntryText(entry)` (user/assistant prose only) — reuse these for bookmarks and the context inspector.
+
+### Notifications + webhooks (`lib/notify/`, `/api/notify`, `NotificationsBell`)
+- Server-side feed (survives closed tabs): `lib/notify/feed.ts` — 500-row ring
+  + debounced atomic tail at `~/.omp/agent/web-notify.json`; rows dedup by
+  `kind:sessionId:runId-or-frameId` so N SSE subscribers → one row. Corrupt
+  stores quarantine to `*.bak-<ts>`.
+- Central emits live in `lib/rpc-manager.ts`: terminal `agent_end` (only with
+  observed assistant output), approval `extension_ui_request` frames
+  (confirm/select/input/editor/open_url), failed RPC responses + child exits.
+  Emits must never break the RPC path (all wrapped).
+- Config store `~/.omp/agent/web-notify-config.json` (mode 0600): browser
+  toggle, webhook `{provider,url,events}`, quiet hours. The webhook URL is a
+  credential: https-or-loopback validated, NEVER echoed over GET (masked to
+  configured+host), write-only in settings. Quiet hours suppress the browser
+  ping only — feed + webhook always record.
+- Webhook delivery (`lib/notify/webhook.ts`): ntfy/discord/telegram/generic,
+  undici fetch, 5 s timeout, 1 retry, always fire-and-forget; failures land
+  as `wherr-`-prefixed error feed rows that are never re-dispatched.
+- Client: `hooks/useNotifyFeed.ts` polls 20 s while visible (+online/
+  visibilitychange), fires OS notifications only for NEW rows while hidden,
+  gated on the browser toggle + granted permission + quiet hours; permission
+  is requested ONLY from the Settings → Notifications toggle gesture.
+  `components/NotificationsBell.tsx` is the header bell (unread badge,
+  dropdown, mark-all-read, test, settings deep-link); the settings section
+  lives in `components/NotificationsConfig.tsx`.
+- `lib/feature-flags.ts`: env `OMP_WEB_FLAGS` ∪ localStorage `omp-web:flags`,
+  enable-only, `isEnabled()` guards hidden entry points (split + scheduler
+  ship default-ON — P12/P11; terminal/herdrAttach/nativeStats stay
+  off/env-gated/probe-gated).
+
+### Prompt / snippet library (`lib/snippets.ts`, `/api/snippets`, composer)
+- User-owned reusable prompts live in `~/.omp/agent/snippets.json`
+  (`{version:1, items:[{id,name,body,projectRoot,createdAt,updatedAt}]}`),
+  written atomically like `project-registry.ts`. Loads QUARANTINE corrupt
+  files to `snippets.json.bak-<ts>` and rebuild empty; items cap at 500
+  (oldest-updated pruned); bodies cap at 16 KB.
+- A snippet is global (`projectRoot: null`) or bound to one canonical project
+  root; names are unique per scope, case-insensitively. Fixed slash commands
+  always win: reserved names (web commands + compact/reload/name/session/copy
+  + `snippets`) are rejected at write time AND re-checked in `resolveSlash` /
+  the palette builder, so a hand-edited store cannot shadow a builtin. A test
+  asserts the reserved set stays in sync with `BUILTIN_SLASH_COMMAND_DEFS`.
+- Placeholders: `$NAME` / `${NAME}`, `$$` escapes a literal `$`
+  (`lib/snippets/placeholders.ts`, pure). `fill()` replaces known names,
+  leaves unknown ones literal.
+- Composer: slash menu has a Snippets group (scope badges, always-present
+  `/snippets` manager entry); picking a snippet expands placeholder-free
+  bodies into the input or mounts `SnippetPlaceholderRow` (Tab cycles, Enter
+  submits when all filled, Esc detaches). Attached snippets + values are
+  memory-only — never persisted into drafts. "+" menu → "Save as snippet…";
+  the manager dialog does rename/duplicate/delete/import/export.
+- `/api/snippets`: GET (list / `?export=1` download), POST create/import/
+  duplicate, PUT partial update, DELETE `?id=`. Bodies bounded (413), stable
+  error codes (`errors.snippet_*`, `errors.name_*`, `errors.body_*`).
+
+### Git checkpoints / file rewind (`lib/checkpoints/`, `/api/sessions/[id]/checkpoints`, `RestoreDialog`)
+- Every ompweb-run terminal `agent_end` snapshots the session's working tree
+  into a hidden ref (`refs/ompweb-cp/<sessionId>/<seq>`) — temp GIT_INDEX_FILE
+  + `add -A` + `write-tree`; HEAD/branches/real index are never touched.
+  Non-git cwds and clean trees no-op; `status` has a 2 s budget (slow repos
+  skip + warn once); all git work for one project root is serialized through
+  a per-root promise queue; failures surface as one notify feed row, never a
+  run failure.
+- Stores: `~/.omp/agent/checkpoints/<sid>.json` (`{version, points[{seq,
+  entryId, treeHash, ts, filesChanged, insertions, deletions}]}`), atomic
+  writes, corrupt files quarantined to `.bak-<ts>`, cap 200 points/session —
+  pruned seqs' refs are deleted with the store entry (ref-before-store on
+  append, rollback on append failure, so they never drift).
+- Restore: user-message action "Restore files" (lucide History) appears when a
+  checkpoint exists at/before the entry; POST preview diffs the checkpoint
+  tree against the CURRENT tree (untracked included); in-place applies via
+  temp-index `read-tree` + `checkout-index -a -f` and deletes ONLY files from
+  our own diff math — **never `git clean`/`git reset --hard`** (AGENTS hard
+  rule). Uncommitted changes → 409 `{dirtyConflict:true}` unless force. The
+  worktree variant creates `<repo>-worktrees/ompweb-restore-<sid>-<seq>` on
+  branch `ompweb-restore/<sid>-<seq>` and commits the checkpoint there.
+- Session DELETE prunes the checkpoint store + refs (best-effort; forks keep
+  their own stores).
+
+### PWA shell (`public/sw.js`, `public/manifest.webmanifest`, `lib/pwa-cache-rules.ts`)
+- The service worker owns only the app shell: `/api/*` (SSE included) is never
+  intercepted, `/_next/static/*` is cache-first, navigations are
+  network-first-fallback-cache, other same-origin GETs are
+  stale-while-revalidate. Cache buckets are version-stamped
+  (`CACHE_VERSION` in sw.js — bump it on shell changes); install precaches the
+  shell and `skipWaiting`+`clients.claim` on activate. The rule functions in
+  `lib/pwa-cache-rules.ts` are the tested source of truth; sw.js carries a
+  documented inline copy — change BOTH (the drift-guard test enforces it).
+- The SW registers in production builds only (dev caching would pin dev
+  chunks); a waiting worker triggers the "new version available" toast whose
+  Reload button posts `SKIP_WAITING`. `/sw.js` must keep
+  `Cache-Control: no-cache` + `Service-Worker-Allowed: /` and the manifest its
+  `application/manifest+json` header (next.config `pwaRules`, test-covered in
+  both phases). `app/manifest.ts` must stay deleted —
+  `public/manifest.webmanifest` owns `/manifest.webmanifest` (negative-existence test).
+- Icons: `scripts/gen-icons.mjs` regenerates + validates the maskable pair; run
+  it after any icon/manifest icon change.
+
+### Markdown session export (`lib/session-markdown.ts`, `?format=md`, `SessionExportMenu`)
+- `sessionToMarkdown(context, meta)` is pure and renders the DISPLAY context:
+  tool calls as ` ```tool:<name> ` fenced normalized JSON, tool results and
+  thinking inside `<details>` (4 KB cap, surrogate-safe), compaction as a
+  blockquote, images as `blob:<ref>` refs (base64 is never inlined — large
+  sessions would produce unusable documents). The topbar export menu
+  (`SessionExportMenu` in AppShell) offers HTML (omp shell-out), Markdown
+  download and Copy-as-Markdown; `?format=md` is in-process so it works
+  without the omp binary and never shells out.
+
+### Global prompt history (`lib/prompt-history.ts`)
+- `localStorage["omp-web:prompt-history"]`, cap 200 `{text, ts, sessionId,
+  projectRoot}`, recorded ONLY on successful sends (shell `!` sends excluded),
+  consecutive-dedupe, every storage failure silent. Empty-input ArrowUp
+  recalls the session's prompts first, the global store second — the fallback
+  list is chronological like `inputHistory` (the first ArrowUp must recall the
+  newest prompt; both lists render oldest-on-top). Cmd/Ctrl+ArrowUp opens the
+  project-filtered recents picker; picking a row inserts it, never sends.
+  Clear lives in Settings → general. Storage is injectable for tests.
+
+### Runs board (P3)
+- `lib/runs-board.ts` — server aggregator: one BoardRun per running session
+  (state running/waiting/error/finished, currentTool, model, elapsed,
+  tokens/cost via usage-service, queue + subagent counts). Terminal rows
+  linger 15 min. globalThis runtime; hot-reload re-wires subscriptions.
+- The 2 s per-session poll (get_state + get_subagents) runs ONLY while ≥ 1
+  board client is connected: `?watch=1` on `/api/runs/events` is the watch;
+  disconnect releases. Never add board polling outside the refcount.
+- Routes: `GET /api/runs` (snapshot, `{success,data:{runs,revision,watchers}}`)
+  and `/api/runs/events` (SSE; per-run ≥ 1 s coalescing; snapshot + runs
+  frames carry the aggregator's monotonic revision — clients drop frames
+  older than their applied snapshot; reconcile on visibilitychange/online).
+- The board never taps wrapper frames: run failures arrive via rpc-manager's
+  `subscribeRpcRunFailures` (do NOT subscribe boards via onEvent — that
+  would capture host_tool_call/host_uri_request routing).
+- `components/RunsBoard.tsx` + `hooks/useRunsBoard.ts` + header LayoutGrid
+  button (badge reuses the sidebar's running-events stream via
+  `onRunningIdsChange`). Shortcut: Ctrl/Cmd+Shift+U (Shift+R is browser
+  hard-reload). Interrupt = `sendCommand({type:"abort"})`.
+- Waiting = pending extension_ui_request dialogs (`pendingUiRequestCount()`).
+
+### Native stats.db readers + session insights (P7)
+- `lib/omp-stats-db.ts` reads omp's OWN databases (~/.omp/stats.db +
+  ~/.omp/agent/agent.db) with `node:sqlite` **read-only** via
+  `createRequire` — never write them, never query `auth_*` (credentials).
+  Queries are single indexed statements, cached 60 s per shape+args on
+  `globalThis`, budgeted 500 ms (overrun → `partial: true` badge), busy
+  retried ×2, and absence degrades to empty — nothing throws.
+- Discovered schema — stats.db sits at the config ROOT (`~/.omp/stats.db`),
+  NOT under `agent/`: `messages` (per-entry tokens/cost/ttft/duration/
+  stop_reason/model), `tool_calls` (name/counts/chars/is_error),
+  `user_messages`, `file_offsets` (per-file sync cursor), `meta` (migration
+  markers). agent.db: `usage_history` (quota windows), `usage_cost_history`,
+  `model_usage`, `model_perf`. The `auth_*`/`settings`/`cache`/`clients`
+  tables are never queried (a contract test asserts the reader source never
+  names `auth_*`).
+- Session insights = `lib/insights/session-insights.ts` (pure merge: native
+  facts win per entry_id/ms, entry usage fills gaps, TTFT native first else
+  turn-start gap; retries/aborts from stop_reason; tool table = native
+  counts ∪ entry-derived "est." durations) served by
+  `GET /api/sessions/[id]/insights` (`{success, data}` envelope,
+  `?refresh=1` busts the shape cache) and rendered by
+  `components/SessionInsightsDialog.tsx` (chat-header pill via
+  `SessionInsightsEntry`).
+- `/api/usage` unions omp CLI/TUI usage by default (`?includeNative=false`
+  excludes): pure merge in `lib/usage-native.ts`, `source: "native"` badges
+  in the breakdown tables, `report.native` meta + `report.quota` (latest
+  per scope from agent.db `usage_history`) feeding the UsageConfig toggle,
+  partial-data notice, and Quota card. `nativeStats` feature flag defaults
+  ON via the probe registered by the stats reader when stats.db exists.
+
+### TTS replies (`/api/tts`, `lib/tts.ts`, `hooks/useTts.ts`)
+The TTS mirror of STT/dictation: the server proxies an OpenAI-compatible
+`POST {OMP_WEB_TTS_ENDPOINT}/v1/audio/speech` when `OMP_WEB_TTS_ENDPOINT` is
+set (optional `OMP_WEB_TTS_KEY`, `OMP_WEB_TTS_MODEL` default `tts-1`,
+`OMP_WEB_TTS_VOICE` default `alloy`); without it the route returns a 503
+`tts_not_configured` envelope. Text is capped at 8000 code points
+(code-point-safe truncation, `X-Ompweb-Truncated: 1` on the audio response),
+request bodies bounded via `parseJsonWithinLimit` (64 KiB), and the mp3 stream
+is passed straight through as `audio/mpeg`. Client-side, `hooks/useTts.ts`
+keeps ONE shared `<audio>` per tab (module-level, the `useAudio` AudioContext
+analogue) with playback state in a module store read via
+`useSyncExternalStore` — every `TtsSpeakButton` in `MessageView` (assistant
+action row, hidden while streaming/no text) sees the same state without props
+through ChatWindow. Playback never overlaps: a new request stops the current
+one (monotonic request id drops superseded fetches); blob URLs are revoked on
+stop/end/error. "Read replies aloud" (Settings → general, localStorage
+`omp-web:tts-enabled`, default OFF) auto-speaks the newest completed reply on
+`agent_end`: `AssistantMessageView` registers replies via
+`rememberAssistantReply()` and ChatWindow's `wrappedOnAgentEnd` defers
+`speakLatestReply()` 300 ms so the just-finished message registers first;
+preference is read at fire time and auto-speak failures are silent. Toggling
+the setting calls `unlockSharedTtsAudio()` (muted play/pause) from the user
+gesture — the autoplay-unlock discipline from `useAudio`.
+
+### Message bookmarks (`lib/bookmarks.ts`, `components/BookmarksPopover.tsx`)
+- Bookmarks are client-side only: `localStorage["omp-web:bookmarks:<sessionId>"]`,
+  cap 200 `{entryId, ts, note?}` newest-first, defensive parse, all failures
+  silent. Entry ids are `.jsonl` entry ids — always jump via the P1
+  `anchorTo(entryId)` API (branch hop + highlight ring come for free); never
+  scroll manually.
+- Surfaces: hover star on user/assistant message rows (CommittedTranscript's
+  ref'd row wrapper only — clustered split rows share an entry id and must
+  show one star), a chat-top Bookmarks pill + popover (hidden at 0 bookmarks;
+  rows jump / edit notes inline / remove), and a per-session star-count badge
+  on sidebar rows. All three stay in sync through `subscribeBookmarks`
+  (same-tab subscriber set + cross-tab `storage` event), filtered by session
+  id so unrelated sessions never re-render.
+- `setBookmarksStorage()` takes a storage GETTER (like prompt-history), not a
+  storage object; tests importing the store must use the same specifier as
+  the components (`@/lib/bookmarks`) to share the jiti module instance.
+
+### Context inspector (P9)
+- `GET /api/sessions/[id]/tree` (envelope route, nodejs) returns the
+  flattened entry tree: `nodes[{id,parentId,kind,role?,ts,estTokens,exact,
+  depth,leafId,preview,tokensIn?…}]`, `compactions[{entryId,
+  firstKeptEntryId,tokensBefore,summaryExcerpt}]`, current `leafId`,
+  `inContext` (buildSessionContext's compaction-collapsed window),
+  `livePath`, `truncated` (4 000-node cap), and `contextGauge` (live child's
+  `get_state.contextUsage`, null when the session isn't running).
+- `lib/session-tree.ts`: estTokens = chars/4 (text-ish content, images
+  skipped); a stats.db `messages` row matched by entry id replaces the
+  estimate with the measured `output_tokens` and sets `exact: true` — turn
+  columns (`tokensIn`/cache/`totalTokens`) ride along for tooltips only, they
+  describe the prompt, not the entry. Orphans root at depth 0, parent cycles
+  terminate deterministically, unknown kinds are ordinary nodes.
+- `components/ContextInspector.tsx` mounts from the BranchNavigator dropdown
+  footer (`GitGraph` icon, needs the `sessionId` prop AppShell passes);
+  clicking a node navigates via `onLeafChange` to the node's `leafId`
+  (findLeafForEntry semantics: latest child wins at forks). The live branch
+  is outlined in `--accent`, the in-context range tinted, compaction cuts
+  carry Scissors markers; the footer ranks the top 5 heaviest entries with
+  est/exact totals vs the live context gauge. Node cap 4 000 (truncation is
+  labeled); reduced-motion disables the hover transition; all states are
+  carried by labels/tooltips/aria, never color alone.
+
+### File editing (P10)
+- `PUT /api/files/[...path]` with `{content}` (nodejs runtime) writes an
+  existing text file: allow-root confined (no session-reference escape),
+  lstat-refuses symlink destinations, fs.realpath's the parent against
+  realpathed roots, 403s binary extensions via `lib/file-types.ts`
+  `isEditableTextPath`, 413s content over 2 MB (`EDITOR_MAX_BYTES`; wire
+  body bounded at 4× cap + 64 KB for JSON escaping), then writes tmp +
+  renames inside the target dir. Bytes-as-sent: BOM/EOL never transformed.
+  Returns `{size, mtime}`. Errors: `access_denied`, `symlink_not_allowed`,
+  `not_a_file`, `file_not_found`, `file_not_editable`,
+  `file_too_large_edit`, `invalid_body`, `invalid_content`, `write_failed`.
+- `GET /api/files/[...path]?type=edit` loads for the editor: text-only +
+  2 MB cap, returns `{content, language, size, mtime}`; `read`/`meta` now
+  include `mtime` (ISO) for external-change detection.
+- `components/FileEditor.tsx`: mono textarea (tab-size 2), line/col status
+  (`role="status"` aria-live line), Ctrl/Cmd+S save, Ctrl/Cmd+G go-to-line,
+  read-only > 1 MB, syntax preview of the saved content disabled > 512 KB,
+  EOL-style preserving saves (detect on load, textarea sees LF only),
+  `FileEditorHandle {save, getValue, focus}`.
+- FileViewer: Pencil/Eye edit toggle; unsaved-changes ConfirmDialog on
+  exit; external change (watch SSE + window-focus meta mtime check) while
+  dirty opens a reload/overwrite/keep-editing dialog — never blind
+  overwrite; while clean, changes refresh the view/editor quietly.
+- TabBar: `Tab.dirty` dot (replaces X until hover) + confirm-before-close
+  for dirty tabs; dirty ids flow FileViewer → RightPanel → AppShell
+  (`dirtyFileTabIds`, pruned on close/others/all).
+
+### Scheduled prompts (`lib/scheduler/`, `/api/schedules`, `components/SchedulesConfig.tsx`) (P11)
+- Jobs live in `~/.omp/agent/web-schedules.json` (own store, `version`,
+  migrate+quarantine+atomic writes; top-level `paused` master switch; last-10
+  history per job). Local-time schedules: `{time "HH:MM", weekdays[]}` —
+  empty weekdays means daily. `model` is "provider:modelId";
+  `toolsPreset` is none/default/full.
+- `lib/scheduler/engine.ts` is one `setTimeout` per server process behind the
+  `globalThis.__ompScheduler` singleton (hot-reload safe), delay clamped to
+  [30s, 60s] — fires land within ≤30 s of their minute and a sleeping machine
+  re-checks within a minute of waking. Missed fires (>2 min late) follow the
+  job's `catchUp`: `skip` or `runOnce` (anchored on now — never once per lost
+  day). Per-cwd concurrency 1 (promise queue). Boot ONLY from
+  `instrumentation.register()` — never from `bin/omp-web.js` (separate
+  process; the singleton cannot dedupe across processes = double-fire).
+- Fires go through `lib/spawn-session.ts` — the session-creation core
+  extracted from `/api/agent/new` (route is a thin adapter, wire contract
+  unchanged; the forged-`sessionId` strip + stable error codes live in the
+  core). Never spawn scheduled prompts any other way.
+- Async history writes MUST use `withScheduleStore()` (globalThis write
+  chain) — two concurrent fires otherwise last-write-win each other's rows.
+  Sync store mutations (tick, routes) are atomic as-is.
+- `notifySchedulerEvent` (lib/notify/emit.ts) emits `kind:"scheduler"` rows
+  (fired/failed/completed/skipped) gated by the job's `notify` flag; the
+  settle watch caps at 30 min (timeout emits nothing — the generic agent_end
+  row covers it).
+- `/api/schedules`: GET / POST create / PUT `{id,…}` / DELETE `?id=` /
+  POST `{action:"run-now", id}` (settings gesture) / POST
+  `{action:"pause-all"}`. cwd validated via `validateProjectPath` +
+  `allowFileRoot`. UI tab `{id:"scheduler"}` (feature-flag `scheduler`,
+  default ON) reuses DirectoryPicker + the composer ModelPickerPanel.
+
+### Split view (P12)
+- `&split=<sessionId>[&splitLeaf=<leafId>]` URL params mirror
+  `session`/`anchor`; the pane close (X) clears both. Desktop only — the
+  `split` flag (default ON) plus a `useIsMobile` gate inside SplitPane fall
+  back to single view; no URL state can force split on mobile.
+- The right pane is a second full `ChatWindow` → its own `useAgentSession`
+  instance (own SSE stream, run ids, optimistic state). Same session in both
+  panes is supported: `AgentSessionWrapper.emit` fans out to an array of
+  listeners and the events route attaches one listener per HTTP connection,
+  so one omp child serves both panes (verified in
+  `hooks/useSplitSession.test.mjs`, same-session×2).
+- `useSplitSession` maps `splitLeaf` to the P1 anchor API (`?forEntry=` one
+  hop) — branch compare reuses deep-link plumbing, no new route params.
+- Divider width persists in `omp-web:split-width`
+  (`components/AppShell-layout.tsx` constants); double-click resets 50/50.
+  Ctrl/Cmd+\ toggles split; Ctrl/Cmd+[ / Ctrl/Cmd+] switch panes; the divider
+  is an arrow-key `separator` slider; the active pane shows an accent ring.
+- Entries to the feature: chat header `Columns2` button (Ctrl/Cmd+\), sidebar
+  session row menu "Split right", branch navigator per-node compare button.
+  All gated by `isEnabled("split")` + desktop.
+- Benign edges (accepted, revisit only if reported): Esc-to-abort is one
+  global registration, so with two ChatWindows mounted the most recently
+  mounted pane owns Esc (both stop buttons always target their own session);
+  queued-message persistence is sessionStorage-keyed by session id, so a
+  same-session split shares that key; `host_tool_call`/`extension_ui_request`
+  fan out to all listeners, so either pane can answer an approval dialog;
+  switching the main session never closes the split (the panes are
+  independent).
+
+### Terminal tab (`lib/terminal/`, `/api/terminal*`, `components/TerminalTab.tsx`) (P13)
+- The right panel's pinned Terminal tab spawns a real shell (no PTY) in the
+  session cwd: plain pipes both ways, merged stdout+stderr, 10k-line server
+  scrollback replayed to new SSE subscribers, ≥16 KB/100 ms flush coalescing,
+  10-min idle dispose. Full-screen TUI apps are unsupported in this mode —
+  the UI banner says so; herdr pane attach (watch read-only /
+  attach-as-owner interactive) is default-OFF behind `OMP_WEB_HERDR_BIN`
+  for those.
+- Safety model: spawn cwd must pass the SAME allow-roots as `/api/files`;
+  fixed shell candidates only (`OMP_WEB_SHELL` override → platform probe);
+  user input goes to the shell's stdin, never into argv; every input batch
+  is audited to `~/.omp/agent/web-terminal-audit.jsonl` (metadata + content
+  hash, 1 MB rotate — never the keystrokes); `OMP_WEB_DISABLE_TERMINAL=1`
+  is the kill switch (hides the tab AND refuses spawns); the `terminal`
+  feature flag defaults ON and cannot be turned off except by that switch.
+- Key input: chords/special keys encode via `lib/terminal-input.ts`
+  (`toTerminalKeyData`); paste wraps `asBracketedPaste`; xterm's `onData`
+  carries printable/IME text. Terminal font size follows the chat font-size
+  setting; the xterm palette is built from design tokens at render time.
+- The manager (`lib/terminal/terminal-manager.ts`) keeps its registry on
+  `globalThis` (`__ompTerminals`) exactly like `rpc-manager` — hot reload
+  must not orphan shell children. Exited terminals linger 5 min so late SSE
+  subscribers observe the exit.
 
 ## omp Session File Format (v3)
 

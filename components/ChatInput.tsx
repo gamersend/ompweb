@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, memo, KeyboardEvent } from "react";
-import { ChevronDown, ListChecks, Loader2, Mic, Paperclip, Plus, Shrink, Sparkles, Wrench, Zap } from "lucide-react";
+import { BookmarkPlus, ChevronDown, ListChecks, Loader2, Mic, Paperclip, Plus, Shrink, Sparkles, Wrench, Zap } from "lucide-react";
 import { getSubmitDuringRunBehavior } from "@/lib/composer-prefs";
+import { recentPrompts, type PromptHistoryEntry } from "@/lib/prompt-history";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { ActiveGoal, ActivePlan } from "@/lib/web-mode-state";
 import { toast } from "@/components/ui/toast";
@@ -27,11 +28,18 @@ import {
   SLASH_SOURCE_GROUP_LABEL_KEYS,
   SLASH_SOURCE_ORDER,
   SLASH_SOURCES,
+  SNIPPETS_MANAGE_COMMAND_NAME,
+  buildSnippetSlashCommands,
   isDormantSkillCommand,
   slashMatchRank,
   type SlashCommandPaletteItem,
   type SlashCommandSource,
+  type SnippetScopeItem,
 } from "./ChatInput-slash-commands";
+import { SnippetPlaceholderRow } from "./SnippetPlaceholderRow";
+import { SaveSnippetDialog, SnippetsManagerDialog } from "./SnippetDialogs";
+import { fill, parsePlaceholders } from "@/lib/snippets/placeholders";
+import { resolveSlash } from "@/lib/snippets/scope";
 import {
   COMPOSER_MODELS_STORAGE_KEY,
   compareModelOptions,
@@ -135,6 +143,8 @@ interface Props {
   draftKey?: string;
   /** Session working directory — enables the @ file autocomplete menu */
   cwd?: string | null;
+  /** Canonical project root — scopes the ⌘/Ctrl+↑ global prompt-history picker. */
+  projectRoot?: string | null;
   activeGoal?: ActiveGoal | null;
   activePlan?: ActivePlan | null;
   advisorEnabled?: boolean;
@@ -157,6 +167,9 @@ export interface ChatInputHandle {
   openContextPanel: () => void;
 }
 const COMPOSITION_END_ENTER_GRACE_MS = 100;
+// Stable empty array so the attachedPlaceholders derivation keeps referential
+// stability when no snippet is attached.
+const EMPTY_PLACEHOLDERS: string[] = [];
 
 // The history / slash / @ menus are absolutely positioned relative to the
 // composer input. On the empty-session page the composer sits inside an
@@ -255,6 +268,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   onPromoteQueuedToSteer,
   draftKey = "new:unassigned",
   cwd,
+  projectRoot,
   activeGoal,
   activePlan,
   advisorEnabled,
@@ -298,9 +312,25 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const [atActiveIndex, setAtActiveIndex] = useState(0);
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const [historyActiveIndex, setHistoryActiveIndex] = useState(0);
+  // 6e global prompt history: the ⌘/Ctrl+↑ recents picker (project-filtered)
+  // and the empty-input ArrowUp fallback when this session has no messages yet.
+  const [globalPickerOpen, setGlobalPickerOpen] = useState(false);
+  const [globalPickerIndex, setGlobalPickerIndex] = useState(0);
+  const [globalPickerItems, setGlobalPickerItems] = useState<PromptHistoryEntry[]>([]);
+  const [recallFallback, setRecallFallback] = useState<string[]>([]);
   const [fileIndex, setFileIndex] = useState<{ cwd: string; entries: FileIndexEntry[]; truncated: boolean } | null>(null);
   const [fileIndexLoading, setFileIndexLoading] = useState(false);
   const [atServerResult, setAtServerResult] = useState<{ cwd: string; query: string; matches: FileIndexEntry[] } | null>(null);
+
+  // ── Snippet library state (P4) ────────────────────────────────────────────
+  // The snippet LIST is fetched from /api/snippets (throttled); an ATTACHED
+  // snippet and its placeholder values live in memory only — never persisted
+  // into the draft store, never sent anywhere until the user submits.
+  const [snippets, setSnippets] = useState<SnippetScopeItem[]>([]);
+  const [attachedSnippet, setAttachedSnippet] = useState<{ item: SnippetScopeItem; values: Record<string, string> } | null>(null);
+  const [saveSnippetOpen, setSaveSnippetOpen] = useState(false);
+  const [snippetsManagerOpen, setSnippetsManagerOpen] = useState(false);
+  const snippetsFetchedAtRef = useRef(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -310,6 +340,8 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const contextWrapRef = useRef<HTMLDivElement>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
+  const globalPickerRef = useRef<HTMLDivElement>(null);
+  const globalPickerItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const atMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -605,10 +637,12 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
 
     // Invalidate any attachment reads still in flight for the old session so
     // they cannot append onto the new session's composer, and drop any stale
-    // validation banner along with the old draft.
+    // validation banner along with the old draft. A detached snippet is also
+    // dropped: its values are memory-only by contract, never persisted.
     attachmentRevisionRef.current += 1;
     setAttachError(null);
     setQueuedDeleteTarget(null);
+    setAttachedSnippet(null);
 
     if (previousDraftKey) {
       setDraft(previousDraftKey, {
@@ -663,13 +697,102 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
     return error !== null;
   }, []);
 
+  // ── Snippet library (P4) ──────────────────────────────────────────────────
+  // Scope root for project snippets: the session cwd in comparable form.
+  const snippetScopeRoot = cwd ?? null;
+
+  const refreshSnippets = useCallback((force = false) => {
+    if (!force && Date.now() - snippetsFetchedAtRef.current < 5000) return;
+    snippetsFetchedAtRef.current = Date.now();
+    fetch("/api/snippets", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() as Promise<{ success: boolean; data?: { items?: SnippetScopeItem[] } }> : null))
+      .then((payload) => {
+        if (payload) setSnippets(payload.data?.items ?? []);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch once on mount (typed "/rev Enter" must resolve even without the
+  // menu) and refresh whenever the slash menu opens.
+  useEffect(() => {
+    refreshSnippets();
+  }, [refreshSnippets]);
+
+  /** Detach a snippet into the composer: placeholder-free bodies expand
+   *  directly into the input; bodies with placeholders mount the chip row
+   *  and wait for values. `rest` keeps any text typed after the /token. */
+  const attachSnippet = useCallback((item: SnippetScopeItem, rest: string) => {
+    setSlashMenuOpen(false);
+    setSlashActiveIndex(0);
+    setAtQuery(null);
+    const placeholders = parsePlaceholders(item.body);
+    if (placeholders.length === 0) {
+      const composed = rest ? `${rest}\n\n${item.body}` : item.body;
+      setAttachedSnippet(null);
+      setValue(composed);
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(composed.length, composed.length);
+        ta.style.height = "auto";
+        ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+      });
+      return;
+    }
+    setAttachedSnippet({ item, values: {} });
+    setValue(rest);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.style.height = "auto";
+      ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+    });
+  }, []);
+
+  /** True when every placeholder of the attached snippet has a value. */
+  const attachedPlaceholders = attachedSnippet ? parsePlaceholders(attachedSnippet.item.body) : EMPTY_PLACEHOLDERS;
+  const snippetAllFilled = attachedSnippet !== null
+    && attachedPlaceholders.length > 0
+    && attachedPlaceholders.every((name) => (attachedSnippet.values[name] ?? "").trim().length > 0);
+
   const handleSend = useCallback(async () => {
     const msg = value.trim();
-    if (!msg && !attachedImages.length && !attachedTextFiles.length) return;
+    if (!msg && !attachedImages.length && !attachedTextFiles.length && !attachedSnippet) return;
     if (isStreaming) return;
     onAudioUnlock?.();
+    // An attached snippet composes body+values at submit; any text typed in
+    // the composer rides along as a prefix (blank-line separated).
+    if (attachedSnippet) {
+      const unfilled = parsePlaceholders(attachedSnippet.item.body).filter(
+        (name) => !(attachedSnippet.values[name] ?? "").trim(),
+      );
+      if (unfilled.length > 0) {
+        toast.error(t("snippets.fillAllFirst"));
+        return;
+      }
+      const filled = fill(attachedSnippet.item.body, attachedSnippet.values);
+      const composed = msg ? `${msg}\n\n${filled}` : filled;
+      if (rejectsOversizedPrompt(composed, attachedImages)) return;
+      onSend(composed, attachedImages.length ? attachedImages : undefined);
+      setAttachedSnippet(null);
+      clearInput();
+      return;
+    }
     const composedMessage = composeMessageWithTextAttachments(msg, attachedTextFiles);
     if (!attachedImages.length && !attachedTextFiles.length && msg.startsWith("/") && onBuiltinCommand) {
+      // Snippet tokens resolve first; fixed commands still win because
+      // resolveSlash refuses reserved names (no-shadow contract).
+      const token = msg.slice(1).trim().split(/\s+/)[0] ?? "";
+      const resolution = resolveSlash(snippets, token, snippetScopeRoot);
+      if (resolution.kind === "snippet") {
+        const item = snippets.find((entry) => entry.id === resolution.item.id);
+        if (item) {
+          attachSnippet(item, msg.slice(1 + token.length).trimStart());
+          return;
+        }
+      }
       const expansion = expandWebSlashCommand(msg);
       if (expansion.kind === "expand" && rejectsOversizedPrompt(expansion.prompt, attachedImages)) return;
       const sentValue = value;
@@ -684,12 +807,16 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
     if (rejectsOversizedPrompt(composedMessage, attachedImages)) return;
     onSend(composedMessage, attachedImages.length ? attachedImages : undefined);
     clearInput();
-  }, [value, attachedImages, attachedTextFiles, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, rejectsOversizedPrompt]);
+  }, [value, attachedImages, attachedTextFiles, attachedSnippet, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, rejectsOversizedPrompt, snippets, snippetScopeRoot, attachSnippet, t]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
     : null;
-  const historyFlip = useDropdownFlip(historyMenuOpen && inputHistory.length > 0, historyMenuRef, 0.44, 360);
+  // 6e recall: this session's prompts first, the global prompt-history
+  // fallback (loaded at ArrowUp time) only while the session list is empty.
+  const recallItems = inputHistory.length > 0 ? inputHistory : recallFallback;
+  const historyFlip = useDropdownFlip(historyMenuOpen && recallItems.length > 0, historyMenuRef, 0.44, 360);
+  const globalPickerFlip = useDropdownFlip(globalPickerOpen && globalPickerItems.length > 0, globalPickerRef, 0.44, 360);
   const slashFlip = useDropdownFlip(slashMenuOpen && slashQuery !== null, slashMenuRef, 0.56, 460);
   const atFlip = useDropdownFlip(atMenuOpen && atQuery !== null, atMenuRef, 0.48, 400);
   const plusFlip = useDropdownFlip(plusMenuOpen, plusMenuRef, 0.44, 320);
@@ -708,6 +835,12 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
     return () => controller.abort();
   }, [cwd, slashQuery]);
 
+  // Refresh the snippet library (throttled) every time the slash menu opens,
+  // so a snippet saved elsewhere shows up without remounting the composer.
+  useEffect(() => {
+    if (slashQuery !== null) refreshSnippets();
+  }, [slashQuery, refreshSnippets]);
+
   const builtinSlashCommands: SlashCommandPaletteItem[] = React.useMemo(
     () => BUILTIN_SLASH_COMMAND_DEFS
       // The /advisor command is linked to Settings → Enable Advisor: hidden
@@ -720,6 +853,22 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
         source: "builtin" as const,
       })),
     [t, advisorEnabled],
+  );
+
+  // Snippet rows: scope-filtered (globals + this project's snippets), the
+  // /snippets manager entry always last so the entry exists even with an
+  // empty library. Hidden while streaming, matching the builtin group.
+  const snippetSlashCommands: SlashCommandPaletteItem[] = React.useMemo(
+    () => (isStreaming ? [] : [
+      ...buildSnippetSlashCommands(snippets, snippetScopeRoot),
+      {
+        name: SNIPPETS_MANAGE_COMMAND_NAME,
+        description: t("snippets.manageEntryDescription"),
+        source: "snippet" as const,
+        projectRoot: null,
+      },
+    ]),
+    [isStreaming, snippets, snippetScopeRoot, t],
   );
 
   // Externally reported commands (extension/prompt/skill/ompBuiltin) group
@@ -740,7 +889,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
 
   const filteredSlashCommands = (() => {
     if (slashQuery === null) return [];
-    const commands = [...(isStreaming ? [] : builtinSlashCommands), ...externalSlashCommands];
+    const commands = [...(isStreaming ? [] : builtinSlashCommands), ...snippetSlashCommands, ...externalSlashCommands];
     return [...commands]
       .filter((command) => {
         const name = command.name.toLowerCase();
@@ -920,19 +1069,27 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   }, [atActiveIndex, atMenuOpen]);
 
   useEffect(() => {
-    if (historyActiveIndex >= inputHistory.length) {
-      setHistoryActiveIndex(Math.max(0, inputHistory.length - 1));
+    if (historyActiveIndex >= recallItems.length) {
+      setHistoryActiveIndex(Math.max(0, recallItems.length - 1));
     }
-  }, [inputHistory.length, historyActiveIndex]);
+  }, [recallItems.length, historyActiveIndex]);
 
   useEffect(() => {
-    historyItemRefs.current.length = inputHistory.length;
-  }, [inputHistory.length]);
+    historyItemRefs.current.length = recallItems.length;
+  }, [recallItems.length]);
 
   useEffect(() => {
     if (!historyMenuOpen) return;
     historyItemRefs.current[historyActiveIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [historyActiveIndex, historyMenuOpen]);
+
+  useEffect(() => {
+    if (!globalPickerOpen) return;
+    // Roving focus: the active option owns the tab stop and receives focus so
+    // screen readers announce the picker (plan a11y pattern for pickers).
+    globalPickerItemRefs.current[globalPickerIndex]?.focus();
+    globalPickerItemRefs.current[globalPickerIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [globalPickerIndex, globalPickerOpen]);
 
   const applyHistoryInput = useCallback((text: string) => {
     setValue(text);
@@ -949,11 +1106,50 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
     });
   }, []);
 
+  // 6e: the global recents picker INSERTS the chosen prompt — it never sends.
+  const applyGlobalPickerInput = useCallback((text: string) => {
+    setGlobalPickerOpen(false);
+    setGlobalPickerIndex(0);
+    setGlobalPickerItems([]);
+    applyHistoryInput(text);
+  }, [applyHistoryInput]);
+
+  const applyGlobalPickerCancel = useCallback(() => {
+    setGlobalPickerOpen(false);
+    setGlobalPickerIndex(0);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+
+  const openGlobalPicker = useCallback(() => {
+    const items = recentPrompts(projectRoot ? { projectRoot } : {});
+    if (items.length === 0) return;
+    setHistoryMenuOpen(false);
+    setSlashMenuOpen(false);
+    setAtMenuOpen(false);
+    setGlobalPickerItems(items);
+    setGlobalPickerIndex(0);
+    setGlobalPickerOpen(true);
+  }, [projectRoot]);
+
   const applySlashCommand = useCallback((command: SlashCommandPaletteItem) => {
-    const nextValue = `/${command.name} `;
-    setValue(nextValue);
     setSlashMenuOpen(false);
     setSlashActiveIndex(0);
+    // Snippet-source rows don't insert "/name" — the manager entry opens the
+    // library dialog and real snippets detach into the composer.
+    if (command.source === "snippet") {
+      if (command.name === SNIPPETS_MANAGE_COMMAND_NAME) {
+        setValue("");
+        setSnippetsManagerOpen(true);
+        return;
+      }
+      const item = snippets.find((entry) => entry.name.toLowerCase() === command.name.toLowerCase());
+      if (item) {
+        attachSnippet(item, "");
+        return;
+      }
+    }
+    const nextValue = `/${command.name} `;
+    setValue(nextValue);
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (!ta) return;
@@ -962,14 +1158,33 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
       ta.style.height = "auto";
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     });
-  }, []);
+  }, [snippets, attachSnippet]);
 
   const sendQueued = useCallback((mode: "steer" | "followup") => {
     const msg = value.trim();
-    if (!msg && !attachedImages.length && !attachedTextFiles.length) return;
+    if (!msg && !attachedImages.length && !attachedTextFiles.length && !attachedSnippet) return;
     if (attachedImages.length || attachedTextFiles.length) return;
     onAudioUnlock?.();
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
+    // An attached snippet queues its filled body; unfilled placeholders keep
+    // the composer intact so the values can be completed after the run.
+    if (attachedSnippet) {
+      const unfilled = parsePlaceholders(attachedSnippet.item.body).filter(
+        (name) => !(attachedSnippet.values[name] ?? "").trim(),
+      );
+      if (unfilled.length > 0) {
+        toast.error(t("snippets.fillAllFirst"));
+        return;
+      }
+      const filled = fill(attachedSnippet.item.body, attachedSnippet.values);
+      const composed = msg ? `${msg}\n\n${filled}` : filled;
+      if (rejectsOversizedPrompt(composed, attachedImages)) return;
+      if (mode === "steer" && onSteer) onSteer(composed);
+      else if (mode === "followup" && onFollowUp) onFollowUp(composed);
+      setAttachedSnippet(null);
+      clearInput();
+      return;
+    }
     if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
       const commandName = msg.slice(1).split(/\s+/)[0];
       // Same gate as the direct path (useAgentSession refuses /advisor while
@@ -977,6 +1192,24 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
       if (commandName === "advisor" && !advisorEnabled) {
         toast.error(t("agentSession.advisorDisabled"));
         return;
+      }
+      // Snippet commands resolve before the web-command expansion. A snippet
+      // with placeholders cannot be queued blind — it must be attached and
+      // filled in the composer first.
+      const token = msg.slice(1).trim().split(/\s+/)[0] ?? "";
+      const resolution = resolveSlash(snippets, token, snippetScopeRoot);
+      if (resolution.kind === "snippet") {
+        const item = snippets.find((entry) => entry.id === resolution.item.id);
+        if (item) {
+          if (parsePlaceholders(item.body).length > 0) {
+            toast.error(t("snippets.queueNeedsValues", { name: item.name }));
+            return;
+          }
+          if (rejectsOversizedPrompt(item.body, attachedImages)) return;
+          onPromptWithStreamingBehavior(item.body, streamingBehavior, undefined);
+          clearInput();
+          return;
+        }
       }
       // Web commands must be expanded even when queued: the raw slash text
       // would otherwise reach omp as a literal message (its /goal //plan are
@@ -1008,12 +1241,13 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
       onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
     }
     clearInput();
-  }, [value, attachedImages, attachedTextFiles, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, t, advisorEnabled, rejectsOversizedPrompt]);
-  // A typed, text-only message during a run is a queued follow-up. Keep Stop
-  // as the action while the composer is empty or contains attachments.
+  }, [value, attachedImages, attachedTextFiles, attachedSnippet, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, t, advisorEnabled, rejectsOversizedPrompt, snippets, snippetScopeRoot]);
+  // A typed, text-only message during a run is a queued follow-up (an attached,
+  // filled snippet queues its body too). Keep Stop as the action while the
+  // composer is empty or contains attachments.
   const primaryActionQueuesMessage =
     isStreaming
-    && Boolean(value.trim())
+    && (Boolean(value.trim()) || snippetAllFilled)
     && attachedImages.length === 0
     && attachedTextFiles.length === 0
     && Boolean(onFollowUp);
@@ -1149,10 +1383,35 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
       }
 
 
+      // 6e: the global recents picker owns the keys while focus is inside it
+      // (roving focus puts the active option in the tab order).
+      if (globalPickerOpen && globalPickerItems.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setGlobalPickerIndex((i) => (i + 1) % globalPickerItems.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setGlobalPickerIndex((i) => (i - 1 + globalPickerItems.length) % globalPickerItems.length);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          applyGlobalPickerCancel();
+          return;
+        }
+        if ((e.key === "Enter" || e.key === "Tab") && globalPickerItems[globalPickerIndex]) {
+          e.preventDefault();
+          applyGlobalPickerInput(globalPickerItems[globalPickerIndex].text);
+          return;
+        }
+      }
+
       if (historyMenuOpen && !isComposing) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setHistoryActiveIndex((i) => Math.min(Math.max(0, inputHistory.length - 1), i + 1));
+          setHistoryActiveIndex((i) => Math.min(Math.max(0, recallItems.length - 1), i + 1));
           return;
         }
         if (e.key === "ArrowUp") {
@@ -1165,9 +1424,9 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
           setHistoryMenuOpen(false);
           return;
         }
-        if ((e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) && inputHistory[historyActiveIndex]) {
+        if ((e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) && recallItems[historyActiveIndex]) {
           e.preventDefault();
-          applyHistoryInput(inputHistory[historyActiveIndex]);
+          applyHistoryInput(recallItems[historyActiveIndex]);
           return;
         }
       }
@@ -1230,12 +1489,36 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
         }
       }
 
-      if (e.key === "ArrowUp" && !isComposing && !isStreaming && inputHistory.length > 0 && value.trim().length === 0) {
+      // ⌘/Ctrl+↑ opens the global prompt-history recents picker
+      // (project-filtered; inserts the choice without sending).
+      if ((e.metaKey || e.ctrlKey) && e.key === "ArrowUp" && !isComposing && !e.altKey) {
+        e.preventDefault();
+        openGlobalPicker();
+        return;
+      }
+
+      // Empty-input ArrowUp recalls: this session's prompts first, then the
+      // global prompt-history fallback (6e). The store is newest-first but the
+      // recall list is chronological like `inputHistory` (oldest on top, the
+      // active highlight starts on the LAST row = the most recent prompt), so
+      // the first ArrowUp always recalls the newest global prompt.
+      if (e.key === "ArrowUp" && !isComposing && !e.metaKey && !e.ctrlKey && !e.altKey && !isStreaming && value.trim().length === 0) {
+        const fallback = inputHistory.length > 0 ? [] : recentPrompts().map((entry) => entry.text).reverse();
+        if (inputHistory.length === 0 && fallback.length === 0) return;
         e.preventDefault();
         setSlashMenuOpen(false);
         setAtMenuOpen(false);
-        setHistoryActiveIndex(inputHistory.length - 1);
+        if (inputHistory.length === 0) setRecallFallback(fallback);
+        setHistoryActiveIndex((inputHistory.length > 0 ? inputHistory.length : fallback.length) - 1);
         setHistoryMenuOpen(true);
+        return;
+      }
+
+      // Esc detaches the attached snippet before any other Esc behavior
+      // (abort / minimize) can fire.
+      if (e.key === "Escape" && !isComposing && attachedSnippet) {
+        e.preventDefault();
+        setAttachedSnippet(null);
         return;
       }
 
@@ -1268,7 +1551,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
         }
       }
     },
-    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, onMinimize, slashMenuOpen, slashQuery, filteredSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, isRecording, isTranscribing, cancelDictation, stopDictation, toggleDictation]
+    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, onMinimize, slashMenuOpen, slashQuery, filteredSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, globalPickerOpen, globalPickerItems, globalPickerIndex, applyGlobalPickerInput, applyGlobalPickerCancel, historyMenuOpen, recallItems, inputHistory, historyActiveIndex, applyHistoryInput, value, isRecording, isTranscribing, cancelDictation, stopDictation, toggleDictation, attachedSnippet, openGlobalPicker]
   );
 
   const handleInput = useCallback(() => {
@@ -1442,6 +1725,9 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
       if (historyMenuRef.current && !historyMenuRef.current.contains(e.target as Node) && !textareaRef.current?.contains(e.target as Node)) {
         setHistoryMenuOpen(false);
       }
+      if (globalPickerRef.current && !globalPickerRef.current.contains(e.target as Node) && !textareaRef.current?.contains(e.target as Node)) {
+        setGlobalPickerOpen(false);
+      }
       if (contextWrapRef.current && !contextWrapRef.current.contains(e.target as Node)) {
         setContextOpen(false);
       }
@@ -1478,6 +1764,18 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
           setQueuedDeleteTarget(null);
           onRemoveQueuedMessage?.(activeDeleteTarget.text);
         }}
+      />
+      <SaveSnippetDialog
+        open={saveSnippetOpen}
+        onOpenChange={setSaveSnippetOpen}
+        defaultBody={value}
+        defaultProjectRoot={snippetScopeRoot}
+        onSaved={() => refreshSnippets(true)}
+      />
+      <SnippetsManagerDialog
+        open={snippetsManagerOpen}
+        onOpenChange={setSnippetsManagerOpen}
+        onChanged={(items) => setSnippets(items)}
       />
       {/* Hidden file input */}
       <input
@@ -1549,6 +1847,27 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
             </svg>
             {compactResultText}
           </div>
+        )}
+        {/* Attached snippet placeholder row — mounted with the draft-attachment
+            chips; values stay in memory and are composed into the prompt at
+            submit. */}
+        {attachedSnippet && (
+          <SnippetPlaceholderRow
+            snippet={attachedSnippet.item}
+            placeholders={attachedPlaceholders}
+            values={attachedSnippet.values}
+            scopeLabel={attachedSnippet.item.projectRoot === null ? t("snippets.scopeGlobal") : t("snippets.scopeProject")}
+            onValueChange={(name, next) => {
+              setAttachedSnippet((prev) => (prev ? { ...prev, values: { ...prev.values, [name]: next } } : prev));
+            }}
+            onSubmit={() => {
+              // Same split as the composer's primary action: a filled snippet
+              // queues while the agent runs, sends when idle.
+              if (isStreaming) sendQueued("followup");
+              else void handleSend();
+            }}
+            onDetach={() => setAttachedSnippet(null)}
+          />
         )}
         {/* Image previews */}
         {attachError && (
@@ -1653,7 +1972,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
 
         {/* Main input */}
         <div style={{ position: "relative" }}>
-          {historyMenuOpen && inputHistory.length > 0 && (
+          {historyMenuOpen && recallItems.length > 0 && (
             <div
               ref={historyMenuRef}
               className="dropdown-surface"
@@ -1668,7 +1987,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
               }}
             >
               <div
-                title={t("chatInput.inputHistory")}
+                title={inputHistory.length > 0 ? t("chatInput.inputHistory") : t("promptHistory.fallbackTitle")}
                 style={{
                   height: 30,
                   padding: "0 10px",
@@ -1706,7 +2025,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                   padding: 4,
                 }}
               >
-                {inputHistory.map((item, index) => {
+                {recallItems.map((item, index) => {
                   const active = index === historyActiveIndex;
                   return (
                     <button
@@ -1741,6 +2060,110 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                       </span>
                       <span style={{ minWidth: 0, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden", overflowWrap: "anywhere" }}>
                         {item}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {globalPickerOpen && globalPickerItems.length > 0 && (
+            <div
+              ref={globalPickerRef}
+              className="dropdown-surface"
+              role="listbox"
+              aria-label={t("promptHistory.pickerTitle")}
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                zIndex: 120,
+                display: "flex",
+                flexDirection: "column",
+                ...menuDropStyle(globalPickerFlip.placement, globalPickerFlip.maxHeight),
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setGlobalPickerIndex((i) => (i + 1) % globalPickerItems.length);
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setGlobalPickerIndex((i) => (i - 1 + globalPickerItems.length) % globalPickerItems.length);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  applyGlobalPickerCancel();
+                } else if (e.key === "Enter" && globalPickerItems[globalPickerIndex]) {
+                  e.preventDefault();
+                  applyGlobalPickerInput(globalPickerItems[globalPickerIndex].text);
+                }
+              }}
+            >
+              <div
+                title={t("promptHistory.pickerTitle")}
+                style={{
+                  height: 30,
+                  padding: "0 10px",
+                  borderBottom: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  color: "var(--text-dim)",
+                  fontSize: 11,
+                  flexShrink: 0,
+                }}
+              >
+                {t("promptHistory.pickerTitle")}
+                {projectRoot ? <span style={{ color: "var(--text-dim)", opacity: 0.8 }}>·</span> : null}
+                {projectRoot ? <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectRoot}</span> : null}
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  maxHeight: globalPickerFlip.maxHeight !== null
+                    ? `${Math.max(0, globalPickerFlip.maxHeight - 31)}px`
+                    : "calc(min(44vh, 360px) - 31px)",
+                  overflowY: "auto",
+                  padding: 4,
+                }}
+              >
+                {globalPickerItems.map((entry, index) => {
+                  const active = index === globalPickerIndex;
+                  return (
+                    <button
+                      key={`${entry.ts}:${index}:${entry.text}`}
+                      ref={(node) => {
+                        globalPickerItemRefs.current[index] = node;
+                      }}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      tabIndex={active ? 0 : -1}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        applyGlobalPickerInput(entry.text);
+                      }}
+                      onMouseEnter={() => setGlobalPickerIndex(index)}
+                      onFocus={() => setGlobalPickerIndex(index)}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        padding: "7px 8px",
+                        border: "none",
+                        borderRadius: 6,
+                        background: active ? "var(--bg-selected)" : "none",
+                        color: "var(--text)",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        fontSize: 12.5,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      <span aria-hidden="true" style={{ flexShrink: 0, width: 6, height: 6, borderRadius: "50%", marginTop: 6, background: entry.projectRoot ? "var(--accent)" : "var(--text-dim)" }} />
+                      <span style={{ minWidth: 0, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden", overflowWrap: "anywhere" }}>
+                        {entry.text}
                       </span>
                     </button>
                   );
@@ -1867,6 +2290,23 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                                   <span style={{ marginLeft: 6, fontSize: 10, color: "var(--text-dim)" }}>{command.argumentHint}</span>
                                 )}
                                 {dormant && <span style={{ marginLeft: 6, fontSize: 10, color: "var(--text-dim)" }}>{t("chatInput.dormant")}</span>}
+                                {command.source === "snippet" && command.name !== SNIPPETS_MANAGE_COMMAND_NAME && (
+                                  <span
+                                    style={{
+                                      marginLeft: 6,
+                                      fontSize: 9.5,
+                                      fontWeight: 600,
+                                      letterSpacing: "0.05em",
+                                      textTransform: "uppercase",
+                                      padding: "0 4px",
+                                      borderRadius: 4,
+                                      border: `1px solid ${command.projectRoot === null ? "var(--border)" : "var(--accent)"}`,
+                                      color: command.projectRoot === null ? "var(--text-muted)" : "var(--accent)",
+                                    }}
+                                  >
+                                    {command.projectRoot === null ? t("snippets.scopeGlobal") : t("snippets.scopeProject")}
+                                  </span>
+                                )}
                               </span>
                               {command.description && (
                                 <span style={{
@@ -2348,6 +2788,23 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                   >
                     <Paperclip size={12} strokeWidth={1.8} style={{ flexShrink: 0 }} aria-hidden="true" />
                     <span style={{ flex: 1 }}>{t("chatInput.attachFile")}</span>
+                  </button>
+                  {/* Save the current composer text as a reusable snippet. */}
+                  <button
+                    role="menuitem"
+                    onClick={() => { setPlusMenuOpen(false); setSaveSnippetOpen(true); }}
+                    disabled={!value.trim()}
+                    title={t("snippets.saveAs")}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, width: "100%",
+                      padding: "7px 10px", border: 0, borderRadius: 5,
+                      background: "transparent", color: value.trim() ? "var(--text-muted)" : "var(--text-dim)",
+                      cursor: value.trim() ? "pointer" : "not-allowed", fontSize: 12, textAlign: "left",
+                      opacity: value.trim() ? 1 : 0.5,
+                    }}
+                  >
+                    <BookmarkPlus size={12} strokeWidth={1.8} style={{ flexShrink: 0 }} aria-hidden="true" />
+                    <span style={{ flex: 1 }}>{t("snippets.saveAs")}</span>
                   </button>
                   {onToolPresetChange && (
                     <>
@@ -2859,17 +3316,17 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                 type="button"
                 className="composer-primary-action"
                 onClick={handleSend}
-                disabled={!value.trim() && !attachedImages.length && !attachedTextFiles.length}
+                disabled={!value.trim() && !attachedImages.length && !attachedTextFiles.length && !snippetAllFilled}
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
-                  background: (value.trim() || attachedImages.length || attachedTextFiles.length) ? "var(--accent-strong)" : "var(--bg-panel)",
+                  background: (value.trim() || attachedImages.length || attachedTextFiles.length || snippetAllFilled) ? "var(--accent-strong)" : "var(--bg-panel)",
                   border: "none",
                   borderRadius: 8,
-                  color: (value.trim() || attachedImages.length || attachedTextFiles.length) ? "var(--on-accent)" : "var(--text-dim)",
-                  cursor: (value.trim() || attachedImages.length || attachedTextFiles.length) ? "pointer" : "not-allowed",
+                  color: (value.trim() || attachedImages.length || attachedTextFiles.length || snippetAllFilled) ? "var(--on-accent)" : "var(--text-dim)",
+                  cursor: (value.trim() || attachedImages.length || attachedTextFiles.length || snippetAllFilled) ? "pointer" : "not-allowed",
                   fontSize: 12,
                   fontWeight: 600,
-                  boxShadow: (value.trim() || attachedImages.length || attachedTextFiles.length) ? "var(--shadow-card)" : "none",
+                  boxShadow: (value.trim() || attachedImages.length || attachedTextFiles.length || snippetAllFilled) ? "var(--shadow-card)" : "none",
                   transition: "background var(--dur-fast) var(--ease-out-warm), box-shadow var(--dur-fast) var(--ease-out-warm)",
                 }}
               >

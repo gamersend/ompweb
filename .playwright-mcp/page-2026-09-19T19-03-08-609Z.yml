@@ -1,0 +1,48 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - button "omp logo ompweb" [ref=e7] [cursor=pointer]:
+            - img "omp logo" [ref=e8]
+            - generic [ref=e11]: ompweb
+          - generic [ref=e12]:
+            - button "Archived Sessions" [ref=e13] [cursor=pointer]
+            - button "Import session" [ref=e17] [cursor=pointer]
+            - button "Refresh" [ref=e22] [cursor=pointer]
+        - button "New Session" [disabled] [ref=e28]
+      - generic [ref=e31]:
+        - generic [ref=e32]: Workspaces
+        - button "Search sessions" [ref=e33] [cursor=pointer]
+        - button "Show running sessions only" [ref=e37] [cursor=pointer]
+        - button "Add workspace" [ref=e39] [cursor=pointer]
+      - generic [ref=e41]: Loading...
+      - region "Provider Usage" [ref=e43]:
+        - button "Provider Usage No provider limits reported" [ref=e44] [cursor=pointer]:
+          - generic [ref=e51]: Provider Usage
+          - generic [ref=e52]: No provider limits reported
+      - button "Settings" [ref=e54] [cursor=pointer]
+    - separator "Resize sidebar" [ref=e62]
+    - main [ref=e63]:
+      - generic [ref=e64]:
+        - generic [ref=e65]:
+          - button "Hide sidebar" [ref=e66] [cursor=pointer]
+          - group [ref=e69]:
+            - generic [ref=e70]:
+              - button "Toggle theme" [ref=e72] [cursor=pointer]
+              - button "EN" [ref=e79] [cursor=pointer]
+        - generic [ref=e82]:
+          - generic [ref=e83]:
+            - button "Notifications (0 unread)" [ref=e84] [cursor=pointer]
+            - status [ref=e88]
+          - button "Runs board (0 running)" [ref=e89] [cursor=pointer]
+      - generic [ref=e95]:
+        - generic:
+          - generic:
+            - generic: Get Started
+            - generic:
+              - text: 1.Select a project directory from the sidebar2.Add models via the
+              - strong: Models
+              - text: button at the bottom
+    - status [ref=e96]: Loading…
+  - button "Show file panel" [ref=e97] [cursor=pointer]
