@@ -6,6 +6,8 @@
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ompweb uses the microphone for /live voice conversations with your coding agent. Audio goes directly to the model — nothing is recorded or stored.</string>
 	<key>CFBundleDisplayName</key>
         <string>omp web</string>
 	<key>CFBundleExecutable</key>

@@ -559,8 +559,11 @@ async function main() {
     process.exit(1);
   }
   if (!isLoopbackHost(hostname)) {
-    if (!passwordEnabled) {
-      console.error(`Refusing to listen on ${hostname} without OMP_WEB_PASSWORD (or --password). Set a strong password or bind to 127.0.0.1.`);
+    // Explicit opt-out for tailnet/VPN-only deployments where the owner
+    // accepts an unauthenticated LAN bind (e.g. behind a trusted fabric).
+    const allowNoPassword = process.env.OMP_WEB_ALLOW_NO_PASSWORD === "1";
+    if (!passwordEnabled && !allowNoPassword) {
+      console.error(`Refusing to listen on ${hostname} without OMP_WEB_PASSWORD (or --password). Set a strong password, pass --allow-no-password, or bind to 127.0.0.1.`);
       process.exit(1);
     }
     console.warn(`Warning: ompweb is listening on ${hostname} over HTTP. Use HTTPS or a trusted VPN to protect the password and session cookie in transit.`);
