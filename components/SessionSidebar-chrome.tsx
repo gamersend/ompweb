@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { createPortal } from "react-dom";
 import { Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { freshnessOf } from "@/lib/session-health";
 import { hasLaunchSpawnConfig } from "@/lib/launch-profile";
 import type { ManagedProject } from "@/lib/types";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
@@ -483,7 +484,58 @@ function LaunchChipRow({
     </div>
   );
 }
+/**
+ * Freshness chip (Phase P9 / R3-32): text-only sidebar-footer diagnostics for
+ * the session LIST's freshness — how long since /api/sessions last answered
+ * with a real payload, and whether the last attempt failed ("degraded").
+ * Live/recent/stale comes from freshnessOf (lib/session-health); while the
+ * sessions-changed SSE channel is connected a stale verdict clamps to
+ * "recent" (the push channel keeps the list current between polls). Exactly
+ * one 30 s tick here ages the label — zero new fetch loops.
+ */
+function FreshnessChip({
+  lastRefreshMs,
+  degraded,
+  live,
+}: {
+  lastRefreshMs: number | null;
+  degraded: boolean;
+  live: boolean;
+}) {
+  const { t } = useI18n();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+  const freshness = freshnessOf(lastRefreshMs, now, live);
+  const label = degraded ? t("freshness.degraded") : t(`freshness.${freshness.label}`);
+  const tooltip = degraded ? t("freshness.degradedTooltip") : t("freshness.tooltip");
+  const color = degraded
+    ? "var(--accent-strong)"
+    : freshness.label === "live"
+      ? "var(--accent)"
+      : freshness.label === "recent"
+        ? "var(--text-muted)"
+        : "var(--text-dim)";
+  return (
+    <div style={{ padding: "5px 12px 3px", display: "flex", justifyContent: "flex-end" }}>
+      <span
+        aria-label={`${label} — ${tooltip}`}
+        title={tooltip}
+        style={{
+          fontSize: 10, padding: "1px 8px", borderRadius: 999,
+          border: "1px solid var(--border)", background: "var(--bg-subtle)",
+          color, lineHeight: 1.5, whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
 export {
+  FreshnessChip,
   LaunchChipRow,
   OmpWebTitle,
   PathLabel,

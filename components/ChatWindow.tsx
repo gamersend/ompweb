@@ -651,7 +651,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
     slashCommands, slashCommandsLoading, queuedMessages, advisorActive, advisorEnabled, handleAdvisorChange,
     notices, dismissNotice, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
-    agentPhase, activeGoal, activePlan,
+    agentPhase, activeGoal, activePlan, clearActiveGoal,
     liveToolResults,
     subagents, subagentEvents, subagentTranscriptVersions, activeSubagentCount, currentTodoPhase, todoPhases,
     isNew,
@@ -1773,6 +1773,9 @@ export function ChatWindow({ session, newSessionCwd, newSessionWorkspace, toolCa
               todoPhases={todoPhases}
               subagents={subagents}
               onSelectSubagent={setSelectedSubagent}
+              sessionId={session?.id ?? sessionIdRef.current ?? null}
+              goal={activeGoal}
+              onClearGoal={clearActiveGoal}
             />
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>

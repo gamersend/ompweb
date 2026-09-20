@@ -1,4 +1,4 @@
-# Wave 3 — P2–P7 implementation notes
+# Wave 3 — P2–P9 implementation notes
 
 Per-phase knowledge lives in the W3 sections of AGENTS.md (authoritative).
 This file is the delivery record: what shipped, what was verified, and what
@@ -91,8 +91,25 @@ was deliberately left alone.
   persistence is ompweb-owned (P7.2's "extend an existing store" clause) —
   no client-reducer changes were needed.
 
-## Gates at the P7 checkpoint (2026-09-21)
+## P8 — Durable cross-device goal rail (R3-05)
 
-- tsc 0 · eslint 0/0 · npm test 1697 tests / 1695 pass / 0 fail / 2 skips
-- check:parity green (2170 keys × 3; envelope ratchet 0 new / 90 routes)
-- file-map green (90 routes / 84 components / 22 hooks / 125 lib)
+-  (cap 100 sessions LRU) + /api/goals +   (debounced last-wins push, pagehide flush, server-wins-on-newer-ts pull,
+  clear-cancels-pending-push).  above the composer panels with the
+  display-only native-plan bridge;  gained optional
+  non-breaking ts/steps fields. Built by a background agent.
+
+## P9 — Recovery center + freshness diagnostics (R3-07 / R3-32)
+
+- Pure  (running/stale/idle + orphans + freshness) +
+  read-only /api/recovery (200-session cap, per-source degrade) +
+   on the runs board (manual refresh, Open/Interrupt via the
+  board's existing abort path, per-browser dismiss) + sidebar FreshnessChip
+  (live/recent/stale/degraded, one 30 s tick). Recovery events reuse the
+  existing process-exit/rpc-error feed rows — no new emission authority.
+  Built by a background agent.
+
+## Gates at the P9 checkpoint (2026-09-21, both lanes merged)
+
+- tsc 0 · eslint 0/0 · npm test 1710 tests / 1708 pass / 0 fail / 2 skips
+- check:parity green (2193 keys × 3; envelope ratchet 0 new / 92 routes)
+- file-map green (92 routes / 86 components / 22 hooks / 128 lib)

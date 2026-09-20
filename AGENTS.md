@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 90 API routes, 84 components, 22 hooks, 125 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 92 API routes, 86 components, 22 hooks, 128 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -151,6 +151,8 @@ app/api/
   skills/update/route.ts          POST update an installed skill package
   web-auth/session/route.ts       POST password → HMAC-signed session cookie (disabled w/o password)
   store-diagnostics/route.ts      GET read-only health census of the ompweb-owned stores (W3-P5)
+  goals/route.ts                  GET/PUT/DELETE per-session durable goals (W3-P8)
+  recovery/route.ts               GET read-only recovery read model (stale runs + orphans) (W3-P9)
   client-state/route.ts           GET ?since= incremental pull | PUT {key,value,baseRev} | DELETE tombstone (W3-P2)
   push/register/route.ts          POST {subscription,label?,kinds?} per-device registration (W3-P3)
   push/subscriptions/route.ts     PATCH/DELETE {endpointHash} device meta / removal (W3-P3)
@@ -283,6 +285,9 @@ lib/
   origin.ts               ONE session-origin resolver (direct/scheduled/delegated) behind every badge (W3-P5)
   delegation-ledger.ts    durable web-delegations.json record of delivered delegations (W3-P5)
   handoffs.ts             durable web-handoffs.json cross-session handoff manifest (W3-P6)
+  goals.ts                durable web-goals.json per-session goal/plan store (W3-P8)
+  goals-client.ts         silent goals sync client (debounced push, server-wins pull) (W3-P8)
+  session-health.ts       pure session-health/freshness classification (W3-P9)
   session-activity.ts     bounded redacted per-session lifecycle ring (W3-P7)
   browser-notifications.ts  completion notifications with permission handling
   notify/feed.ts          server-side notify feed: 500-row ring + atomic tail at ~/.omp/agent/web-notify.json
@@ -332,6 +337,8 @@ components/
   SessionInsightsDialog.tsx  session insights dialog + chat-header entry pill (+ restore-ledger section, W3-P4)
   SyncStatusPanel.tsx  settings sync status: device, last sync, conflicts, tombstone list + restore (W3-P2)
   StoreDiagnosticsPanel.tsx  settings system-tab store health census (copy-safe, read-only) (W3-P5)
+  GoalRail.tsx         collapsible durable goal/plan rail above the composer panels (W3-P8)
+  RecoveryPanel.tsx    runs-board recovery section (stale runs + orphans, dismiss) (W3-P9)
   SplitPane.tsx       two-pane split view (draggable divider, active-pane ring, mobile falls back to single)
   MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
   MessageView-diff-view.tsx   split diff rendering for edit toolResults
@@ -1619,6 +1626,53 @@ palette (`components/CommandPalette.tsx`, ⌘K/Ctrl+K) is built on `cmdk`.
   text; failures tinted, never color-alone).
 - The tap is deliberately if/else, NOT a `switch` — source-contract tests grep
   the wrapper's own `case "agent_start":` block, which must stay unique.
+
+### Durable cross-device goal rail (W3-P8)
+- Goal/plan state left tab-only sessionStorage: `lib/goals.ts` owns
+  `~/.omp/agent/web-goals.json` (version 1, cap 100 sessions LRU-by-ts,
+  atomic + quarantine like every store) keyed by session:
+  `{title ≤300, steps? ≤20 × {id, text ≤300, done}, ts, device?}`.
+  `putGoal` is an idempotent upsert; `formatGoalSummary` is the client-safe
+  speakable summary ("Goal: X. Next: <step>") shared with `web-mode-state`.
+- Sync (`lib/goals-client.ts`): local-first — the sessionStorage goal stays
+  the immediate truth; changes queue a debounced (800 ms, last-wins,
+  globalThis runtime) PUT; pagehide flushes; session hydration fire-and-forget
+  GETs and adopts the server goal ONLY when its ts is newer (server-wins on
+  recency, never clobbers fresher local edits). A clear cancels any pending
+  push BEFORE the DELETE, so a clear inside the debounce window can never
+  resurrect the goal. All sync failures are silent — offline = today.
+- Route `/api/goals`: GET ?sessionId= / newest-20 list / PUT (invalid optional
+  fields dropped, never fatal; invalid id/title → 400 stable codes) / DELETE.
+- UI: `GoalRail` renders above the todo/subagent panels in ComposerPanels —
+  title, next un-done step, done/total, collapse (persisted
+  `omp-web:goal-rail-collapsed`), clear (X), aria-label from
+  formatGoalSummary, and a display-only "native plan: {count} steps" line fed
+  by the session's EXISTING todoPhases (P8.3 bridge — never written back to
+  omp). Renders nothing when no goal exists.
+- `web-mode-state.ts` gained optional non-breaking `ts`/`steps` fields
+  (existing strict tests untouched).
+
+### Session recovery center + freshness diagnostics (W3-P9)
+- Pure classification in `lib/session-health.ts` (injectable clock, no
+  fs/network): `classifySessionHealth` (running / stale ≥10 min default /
+  idle / unresponsive-unknown), `classifyOrphan` (modified ≤24 h, no live
+  child), `freshnessOf` (live <60 s, recent <15 min, stale).
+- `GET /api/recovery` is a READ-ONLY read model: running children from
+  `getRunningRpcSessions()` classified per child; orphans from
+  `listAllSessions()` newest-first with a 200-session inspection cap
+  (`truncated: true`); `?staleAfterSec=` clamped 1–3600; each source degrades
+  to `[]` independently — never a 500. No actions on the route.
+- `RecoveryPanel` (runs board, below the grid, collapsed by default with a
+  count badge): manual Refresh only (no polling); stale rows offer Open +
+  Interrupt (the board's EXISTING abort path, extracted as
+  `interruptSession(sessionId)` so cards and the panel share one path);
+  orphan rows offer Open; per-browser dismiss to
+  `localStorage["omp-web:dismissed-recovery"]` (cap 100).
+- Freshness chip (R3-32) in the sidebar footer: `SessionSidebar` tracks
+  last-successful-refresh (non-304), a degraded flag (fetch threw), and SSE
+  liveness; `FreshnessChip` renders live/recent/stale/degraded with a single
+  30 s tick — no new fetch loops. Recovery events ride the EXISTING
+  process-exit / rpc-error feed rows (P9.5) — no new emission authority.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

@@ -8,10 +8,12 @@ import {
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { SubagentInfo } from "@/hooks/useAgentSession";
+import type { ActiveGoal } from "@/lib/web-mode-state";
 import type { GenerationSpeedInfo, SessionStatsInfo, TodoPhase } from "@/lib/pi-types";
 import { countNestedSubagents, formatCost, formatDuration, formatTokens, shortModel } from "@/lib/subagent-format";
 import { formatCompactNumber, formatPercent, getCacheHitRate } from "@/lib/format";
 import { copyText } from "@/lib/clipboard";
+import { GoalRail } from "./GoalRail";
 import { TodoList } from "./TodoList";
 import { SubagentStatusIcon } from "./SubagentStatusIcon";
 
@@ -257,21 +259,34 @@ function SubagentsPanel({ subagents, onSelectSubagent, defaultExpanded = false }
   );
 }
 
-/** Session panels attached to the composer: live todo plan + running
- * subagent roster. Each is independently collapsible via its header row
- * (`chevron`) and starts collapsed; the headers always show live progress /
- * running-summary. Rendered pinned above the chat input. */
-export function ComposerPanels({ todoPhases, subagents, onSelectSubagent, defaultExpanded = false }: {
+/** Session panels attached to the composer: durable goal rail + live todo
+ * plan + running subagent roster. Each is independently collapsible via its
+ * header row (`chevron`) and starts collapsed; the headers always show live
+ * progress / running-summary. Rendered pinned above the chat input. */
+export function ComposerPanels({ todoPhases, subagents, onSelectSubagent, sessionId, goal, onClearGoal, defaultExpanded = false }: {
   todoPhases: TodoPhase[];
   subagents: SubagentInfo[];
   onSelectSubagent: (subagent: SubagentInfo) => void;
+  /** Active session id — gates the goal rail (goals are per-session). */
+  sessionId?: string | null;
+  /** Durable goal for the active session; absent → no rail renders. */
+  goal?: ActiveGoal | null;
+  /** Clears the goal locally + server-side (the rail's X). */
+  onClearGoal?: () => void;
   /** Initial expansion of both panels (default: collapsed). */
   defaultExpanded?: boolean;
 }) {
   const [todoCollapsed, setTodoCollapsed] = useState(() => loadCollapsed(TODO_COLLAPSED_STORAGE_KEY, defaultExpanded));
-  if (todoPhases.length === 0 && subagents.length === 0) return null;
+  if (todoPhases.length === 0 && subagents.length === 0 && !goal) return null;
+  const nativeTodoSteps = todoPhases.reduce(
+    (sum, phase) => sum + (Array.isArray(phase?.tasks) ? phase.tasks.length : 0),
+    0,
+  );
   return (
     <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
+      {goal && sessionId && onClearGoal && (
+        <GoalRail goal={goal} nativeTodoSteps={nativeTodoSteps} onClear={onClearGoal} />
+      )}
       <TodoList
         phases={todoPhases}
         collapsible

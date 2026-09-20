@@ -25,6 +25,7 @@ import { toast } from "@/components/ui/toast";
 import { expandWebSlashCommand } from "@/lib/web-slash-commands";
 import { validateOutgoingPrompt } from "@/lib/image-attachments";
 import { createActiveGoal, parseActiveGoal, type ActiveGoal, type ActivePlan } from "@/lib/web-mode-state";
+import { cancelGoalSync, clearGoalForSession, getGoalForSession, localGoalIsNewer, queueGoalSync, serverGoalToActive } from "@/lib/goals-client";
 import type { HostToolDefinition, HostUriSchemeDefinition, RpcAvailableSlashCommand, SessionStatsInfo, TodoPhase } from "@/lib/pi-types";
 import { isRecord } from "@/lib/type-guards";
 import { subscribeSessionsChanged } from "@/lib/session-change-bus";
@@ -518,6 +519,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   // Goal mode is web-hosted because omp's native /goal is TUI-only. Keep it
   // scoped to its session so switching conversations never leaks objectives.
+  // P8: the sessionStorage copy stays primary for rendering; a server goal
+  // with a NEWER ts (set on another device) is adopted in the background.
   useEffect(() => {
     const sid = session?.id;
     setActivePlan(null);
@@ -526,7 +529,38 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       return;
     }
     setActiveGoal(parseActiveGoal(sessionStorage.getItem(`omp-web:goal:${sid}`)));
+    let cancelled = false;
+    void getGoalForSession(sid).then((serverGoal) => {
+      if (cancelled || !serverGoal) return;
+      const local = parseActiveGoal(sessionStorage.getItem(`omp-web:goal:${sid}`));
+      if (local && localGoalIsNewer(local, serverGoal)) return;
+      const adopted = serverGoalToActive(serverGoal);
+      try {
+        sessionStorage.setItem(`omp-web:goal:${sid}`, JSON.stringify(adopted));
+      } catch {
+        // storage unavailable — the in-memory copy still applies
+      }
+      if (sessionIdRef.current === sid) setActiveGoal(adopted);
+    });
+    return () => { cancelled = true; };
   }, [session?.id]);
+
+  // Clear the active goal locally + server-side (the goal rail's X).
+  const clearActiveGoal = useCallback(() => {
+    const sid = sessionIdRef.current;
+    if (sid) {
+      try {
+        sessionStorage.removeItem(`omp-web:goal:${sid}`);
+      } catch {
+        // storage unavailable — nothing to remove
+      }
+      // Cancel any queued push first: an older PUT must never land after
+      // the DELETE and resurrect the cleared goal.
+      cancelGoalSync(sid);
+      void clearGoalForSession(sid);
+    }
+    setActiveGoal(null);
+  }, []);
 
   // A plan request is in progress only for its current agent turn.
   useEffect(() => {
@@ -3179,7 +3213,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             const goal = createActiveGoal(args);
             setActiveGoal(goal);
             const activeSessionId = sessionIdRef.current;
-            if (activeSessionId) sessionStorage.setItem(`omp-web:goal:${activeSessionId}`, JSON.stringify(goal));
+            if (activeSessionId) {
+              sessionStorage.setItem(`omp-web:goal:${activeSessionId}`, JSON.stringify(goal));
+              // P8: mirror to the durable rail (debounced, fire-and-forget).
+              queueGoalSync(activeSessionId, goal);
+            }
           }
           return { handled: true };
         }
@@ -3601,7 +3639,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     notices: noticeState.visible, dismissNotice, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     advisorActive: advisorActiveAt > 0, advisorEnabled, handleAdvisorChange,
     subagents, subagentEvents, subagentTranscriptVersions, activeSubagentCount, currentTodoPhase, todoPhases,
-    activeGoal, activePlan,
+    activeGoal, activePlan, clearActiveGoal,
     isNew,
     // Refs
     sessionIdRef, messagesEndRef, scrollContainerRef,

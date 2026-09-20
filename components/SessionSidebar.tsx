@@ -30,7 +30,7 @@ import {
   type WorktreeEntry,
   type WorktreeState,
 } from "./SessionSidebar-helpers";
-import { LaunchChipRow, OmpWebTitle, SIDEBAR_BUTTON_TRANSITION, SidebarIconButton } from "./SessionSidebar-chrome";
+import { LaunchChipRow, FreshnessChip, OmpWebTitle, SIDEBAR_BUTTON_TRANSITION, SidebarIconButton } from "./SessionSidebar-chrome";
 import { ProjectRow, ProjectWorktreeSwitcher, type GetSessionOrigin } from "./SessionSidebar-rows";
 import type { SessionOrigin } from "@/lib/origin";
 
@@ -173,6 +173,12 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
 
   const sessionsEtagRef = useRef<string | null>(null);
   const sessionsAbortRef = useRef<AbortController | null>(null);
+  // Freshness chip (Phase P9 / R3-32): when /api/sessions last answered with
+  // a real (non-304) payload, whether the last attempt failed, and whether the
+  // sessions-changed SSE channel is delivering. Rendered by FreshnessChip.
+  const [sessionsLastRefreshMs, setSessionsLastRefreshMs] = useState<number | null>(null);
+  const [sessionsRefreshDegraded, setSessionsRefreshDegraded] = useState(false);
+  const [sessionsSseLive, setSessionsSseLive] = useState(false);
   // Set once the first /api/sessions fetch settles (success OR failure) so the
   // initial-restore effect can stop waiting on a load that never yields rows.
   const initialLoadedRef = useRef(false);
@@ -225,6 +231,8 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         return next.size === prev.size ? prev : next;
       });
       setError(null);
+      setSessionsLastRefreshMs(Date.now());
+      setSessionsRefreshDegraded(false);
       if (!showLoading) {
         setSessionRefreshDone(true);
         if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
@@ -232,6 +240,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       }
     } catch (e) {
       if ((e as Error)?.name === "AbortError") return;
+      setSessionsRefreshDegraded(true);
       setError(t("sessionSidebar.loadFailed", { detail: e instanceof Error ? e.message : String(e) }));
     } finally {
       clearTimeout(timeout);
@@ -308,6 +317,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     const source = new EventSource("/api/agent/running/events");
 
     source.onmessage = (e) => {
+      setSessionsSseLive(true);
       try {
         const data = JSON.parse(e.data) as {
           type?: string;
@@ -345,6 +355,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       // EventSource auto-reconnects; until a fresh frame arrives, let the
       // polled /api/sessions fallback own running state again.
       sseAuthoritativeRef.current = false;
+      setSessionsSseLive(false);
     };
     // On error EventSource auto-reconnects; keep the last known state meanwhile.
     return () => {
@@ -1486,8 +1497,9 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
 
       {/* Provider usage bar — pinned above Settings */}
       {usageVisible && <ProviderUsageBar />}
-      {/* Pinned footer: Settings */}
+      {/* Pinned footer: freshness chip + Settings */}
       <div style={{ borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+        <FreshnessChip lastRefreshMs={sessionsLastRefreshMs} degraded={sessionsRefreshDegraded} live={sessionsSseLive} />
         <button
           className="sidebar-settings-row"
           data-active={settingsOpen}

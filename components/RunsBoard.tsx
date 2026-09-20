@@ -32,6 +32,7 @@ import { ConfirmDialog } from "./ui/field";
 import { Dialog, DialogContent, DialogTitle } from "./ui/primitives";
 import { toast } from "./ui/toast";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
+import { RecoveryPanel } from "./RecoveryPanel";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -154,20 +155,28 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
     return options;
   }, [projects, runs]);
 
-  const handleInterrupt = useCallback(async (run: BoardRun) => {
+  // The ONE abort path for the board (cards + recovery panel both use it).
+  // omp's wire command for stopping a run is "abort" (the RPC layer has
+  // no "interrupt" verb — see AGENTS.md protocol differences).
+  const interruptSession = useCallback(async (sessionId: string) => {
     setInterruptBusy(true);
     try {
-      // omp's wire command for stopping a run is "abort" (the RPC layer has
-      // no "interrupt" verb — see AGENTS.md protocol differences).
-      await sendAgentCommand(run.sessionId, { type: "abort" });
+      await sendAgentCommand(sessionId, { type: "abort" });
       toast.success(t("runsBoard.interrupted"));
     } catch (error) {
       toast.error(t("runsBoard.interruptFailed", { detail: error instanceof Error ? error.message : String(error) }));
     } finally {
       setInterruptBusy(false);
-      setInterruptTarget(null);
     }
   }, [t]);
+
+  const handleInterrupt = useCallback(async (run: BoardRun) => {
+    try {
+      await interruptSession(run.sessionId);
+    } finally {
+      setInterruptTarget(null);
+    }
+  }, [interruptSession]);
 
   // Roving tabindex arrow-key navigation over the card grid. Column count is
   // derived from the rendered layout (cards sharing the first card's top).
@@ -407,6 +416,13 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
       />
 
       <DelegateDialog run={delegateSource} onClose={() => setDelegateSource(null)} />
+
+      {/* Session recovery (Phase P9 / R3-07): stale running children + orphaned
+          sessions, read-only probe below the grid. Open/Interrupt reuse this
+          board's existing paths. */}
+      <div style={{ borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+        <RecoveryPanel onOpenSession={onOpenSession} onInterrupt={interruptSession} />
+      </div>
 
       {/* Handoff manifest (wave 3 P6): settled delegation states, newest
           first. Hidden entirely when no handoff has ever been recorded. */}
