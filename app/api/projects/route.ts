@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-utils";
 import { comparableProjectPath } from "@/lib/comparable-path";
 import { allowFileRoot } from "@/lib/file-access";
+import { normalizeLaunchConfigFields } from "@/lib/launch-profile";
 import {
   hideProject,
   isReservedLaunchArg,
@@ -37,8 +38,12 @@ function parseLaunchConfig(value: unknown): ProjectLaunchConfig | undefined {
     if (typeof arg !== "string" || !arg || arg.length > MAX_EXTRA_ARG_LENGTH || isReservedLaunchArg(arg)) throw new ProjectPathError("invalid_extra_args", "Extra args contain an invalid or reserved argument");
     return arg;
   });
-  if (!profile && advisor === undefined && (!extraArgs || extraArgs.length === 0)) return undefined;
-  return { profile, advisor, extraArgs };
+  // v2 launch fields (prompt/model/thinkingLevel/toolsPreset): invalid values
+  // are DROPPED, not fatal — same sanitize semantics as the on-disk parser in
+  // lib/project-registry.ts, so a bad field can never wedge a project add.
+  const launchFields = normalizeLaunchConfigFields(raw);
+  if (!profile && advisor === undefined && (!extraArgs || extraArgs.length === 0) && Object.keys(launchFields).length === 0) return undefined;
+  return { profile, advisor, extraArgs, ...launchFields };
 }
 
 // GET /api/projects  →  { projects: ManagedProject[] }

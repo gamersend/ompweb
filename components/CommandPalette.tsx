@@ -1,12 +1,13 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Command } from "cmdk";
-import { Check, MessageSquare, Monitor, Moon, Plus, Search, Sparkles, Sun } from "lucide-react";
-import type { SessionInfo } from "@/lib/types";
+import { Check, MessageSquare, Monitor, Moon, Plus, Search, Sparkles, Sun, Zap } from "lucide-react";
+import type { ManagedProject, SessionInfo } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
 import { ALL_THEMES, useTheme } from "@/hooks/useTheme";
+import { projectLabel } from "./SessionSidebar-helpers";
 import { PaletteSearch, type SearchResultItem } from "./PaletteSearch";
 import { onOpenPalette, type PaletteMode } from "@/lib/palette-bus";
 
@@ -16,6 +17,11 @@ type Props = {
   /** Deep-link a search result: open the session + anchor to the message. */
   onOpenSearchResult?: (result: SearchResultItem) => void;
   currentModel?: string | null;
+  /** Phase 3 quick-launch: projects with launch profiles (the sidebar's own
+   *  list, passed down — the palette never refetches the registry) + the
+   *  spawn handler shared with the sidebar chips. */
+  launchProjects?: ManagedProject[];
+  onLaunchProject?: (project: ManagedProject) => Promise<void> | void;
 };
 
 const PALETTE_MODE_STORAGE_KEY = "omp-web:palette-mode";
@@ -66,7 +72,7 @@ export function dedupeSessions(sessions: SessionInfo[]): SessionInfo[] {
   return [...byId.values()];
 }
 
-export const CommandPalette = memo(function CommandPalette({ onSelectSession, onNewSession, onOpenSearchResult, currentModel }: Props) {
+export const CommandPalette = memo(function CommandPalette({ onSelectSession, onNewSession, onOpenSearchResult, currentModel, launchProjects, onLaunchProject }: Props) {
   const { t, locale } = useI18n();
   const { isDark, toggleTheme, setTheme, preference } = useTheme();
   const [open, setOpen] = useState(false);
@@ -104,6 +110,19 @@ export const CommandPalette = memo(function CommandPalette({ onSelectSession, on
     setMode(next);
     persistMode(next);
   }, []);
+
+  // Quick-launch entries (Phase 3): every project carrying a launch profile,
+  // labeled "Launch <profileName> — <project>". Sourced from the sidebar's
+  // project list via props — the palette never fetches the registry itself.
+  const launchEntries = useMemo(() => {
+    if (!onLaunchProject) return [];
+    return (launchProjects ?? [])
+      .filter((project) => project.launchConfig)
+      .map((project) => {
+        const label = project.alias ?? projectLabel(project.path);
+        return { project, label, profileName: project.launchConfig?.profile || label };
+      });
+  }, [launchProjects, onLaunchProject]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -197,6 +216,21 @@ export const CommandPalette = memo(function CommandPalette({ onSelectSession, on
             <Command.Item value={t("commandPalette.newSession")} onSelect={() => choose(onNewSession)} style={{ display: "flex", gap: 10, padding: "9px 10px", borderRadius: "var(--radius-control)", color: "var(--text)", cursor: "pointer" }}><Plus size={15} color="var(--accent)" />{t("commandPalette.newSession")}</Command.Item>
             <Command.Item value={t("commandPalette.toggleTheme")} onSelect={() => choose(toggleTheme)} style={{ display: "flex", gap: 10, padding: "9px 10px", borderRadius: "var(--radius-control)", color: "var(--text)", cursor: "pointer" }}>{isDark ? <Sun size={15} color="var(--accent)" /> : <Moon size={15} color="var(--accent)" />}{t("commandPalette.toggleTheme")}</Command.Item>
           </Command.Group>
+          {launchEntries.length > 0 && (
+            <Command.Group heading={t("launch.paletteHeading")}>
+              {launchEntries.map(({ project, label, profileName }) => (
+                <Command.Item
+                  key={project.path}
+                  value={t("launch.paletteEntry", { profile: profileName, project: label })}
+                  onSelect={() => choose(() => { void onLaunchProject?.(project); })}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: "var(--radius-control)", color: "var(--text)", cursor: "pointer" }}
+                >
+                  <Zap size={15} color="var(--accent)" />
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t("launch.paletteEntry", { profile: profileName, project: label })}</span>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          )}
           <Command.Group heading={t("commandPalette.themes") || "Themes"}>
             {ALL_THEMES.map((theme) => (
               <Command.Item

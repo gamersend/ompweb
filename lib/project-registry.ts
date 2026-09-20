@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, 
 import { homedir } from "os";
 import { isAbsolute, resolve } from "path";
 import { comparableProjectPath } from "./comparable-path";
+import { normalizeLaunchConfigFields } from "./launch-profile";
 import { getAgentDir } from "./omp/paths";
 import type { ManagedProject, ProjectLaunchConfig } from "./types";
 
@@ -34,9 +35,14 @@ export interface ProjectRegistryEntry {
 }
 
 export interface ProjectRegistryFile {
-  version: 1;
+  version: 2;
   projects: ProjectRegistryEntry[];
 }
+
+/** On-disk schema version. v1 → v2 added the quick-launch fields on
+ *  ProjectLaunchConfig (prompt/model/thinkingLevel/toolsPreset); migration is
+ *  a pure version bump — every v1 field is preserved verbatim (migrateRegistry). */
+export const REGISTRY_VERSION = 2;
 
 /** Error carrying a stable code (errors.* key) for client localization. */
 export class ProjectPathError extends Error {
@@ -48,7 +54,7 @@ export class ProjectPathError extends Error {
   }
 }
 
-const EMPTY_REGISTRY: ProjectRegistryFile = { version: 1, projects: [] };
+const EMPTY_REGISTRY: ProjectRegistryFile = { version: REGISTRY_VERSION, projects: [] };
 
 function canonicalProjectPath(value: string): string {
   const resolved = resolve(value);
@@ -68,7 +74,9 @@ export function isReservedLaunchArg(arg: string): boolean {
   return RESERVED_LAUNCH_ARGS[arg] === true || RESERVED_LAUNCH_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix));
 }
 
-/** Parse the on-disk registry's launch config; invalid fields are safely ignored. */
+/** Parse the on-disk registry's launch config; invalid fields are safely ignored.
+ *  The v2 launch fields (prompt/model/thinkingLevel/toolsPreset) are validated
+ *  by normalizeLaunchConfigFields — invalid values are dropped, never fatal. */
 function parseLaunchConfig(item: Record<string, unknown>): ProjectLaunchConfig | undefined {
   const raw = item.launchConfig;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -78,8 +86,16 @@ function parseLaunchConfig(item: Record<string, unknown>): ProjectLaunchConfig |
   const extraArgs = Array.isArray(value.extraArgs)
     ? value.extraArgs.filter((arg): arg is string => typeof arg === "string" && arg.length > 0 && arg.length <= 256 && !isReservedLaunchArg(arg)).slice(0, 32)
     : undefined;
-  if (!profile && advisor === undefined && (!extraArgs || extraArgs.length === 0)) return undefined;
-  return { profile, advisor, extraArgs };
+  const launchFields = normalizeLaunchConfigFields(value);
+  if (!profile && advisor === undefined && (!extraArgs || extraArgs.length === 0) && Object.keys(launchFields).length === 0) return undefined;
+  return { profile, advisor, extraArgs, ...launchFields };
+}
+
+/** Migrate a registry file to the current on-disk version. v1 → v2 preserves
+ *  every entry field verbatim (the version bump only annotates that launch
+ *  configs may carry the quick-launch fields); v2 input passes through. */
+export function migrateRegistry(file: { version?: number; projects: ProjectRegistryEntry[] }): ProjectRegistryFile {
+  return { version: REGISTRY_VERSION, projects: file.projects.map((project) => ({ ...project })) };
 }
 
 /** Parse registry JSON; missing, corrupt, or foreign-shaped input yields an
@@ -104,7 +120,10 @@ export function parseProjectRegistry(raw: string): ProjectRegistryFile {
         launchConfig: parseLaunchConfig(item as Record<string, unknown>),
       });
     }
-    return { version: 1, projects: entries };
+    // Reading always migrates: the parsed file carries the current version
+    // regardless of what was on disk (v1 files gain only the version bump).
+    const diskVersion = (parsed as { version?: unknown }).version;
+    return migrateRegistry({ version: diskVersion === REGISTRY_VERSION ? REGISTRY_VERSION : 1, projects: entries });
   } catch {
     return EMPTY_REGISTRY;
   }
@@ -155,7 +174,7 @@ export function upsertProject(
   // (e.g. un-hiding) without config must not wipe it. Explicit clear goes
   // through PATCH with null.
   projects.push({ path: canonical, addedAt: now, hidden: false, launchConfig: launchConfig ?? existing?.launchConfig });
-  return { version: 1, projects };
+  return { version: REGISTRY_VERSION, projects };
 }
 
 /** Apply display-only updates (alias, sortOrder) to any number of projects in
@@ -171,7 +190,7 @@ export function updateProjectsPresentation(
     [comparableProjectPath(canonicalProjectPath(update.path)), update] as const,
   ));
   return {
-    version: 1,
+    version: REGISTRY_VERSION,
     projects: registry.projects.map((project) => {
       const update = keyed.get(comparableProjectPath(project.path));
       if (!update) return project;
@@ -204,7 +223,7 @@ export function hideProject(registry: ProjectRegistryFile, path: string): Projec
   if (!existing) {
     projects.push({ path: canonical, addedAt: new Date().toISOString(), hidden: true });
   }
-  return { version: 1, projects };
+  return { version: REGISTRY_VERSION, projects };
 }
 
 /** Merge registered projects with session-discovered ones, excluding hidden

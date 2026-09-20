@@ -2,8 +2,12 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { hasLaunchSpawnConfig } from "@/lib/launch-profile";
+import type { ManagedProject } from "@/lib/types";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { projectLabel } from "./SessionSidebar-helpers";
 import OmpWebLogo from "./OmpWebLogo";
 /**
  * Path label that ellipsizes on the LEFT, keeping the (most relevant) trailing
@@ -396,7 +400,91 @@ function UnreadSessionIndicator({ size = 14 }: { size?: number }) {
     </span>
   );
 }
+/**
+ * Quick-launch chip row (Phase 3): one compact chip per project that has a
+ * launch profile, rendered in the sidebar header from the project list the
+ * sidebar ALREADY holds — never a registry fetch, never a render blocker.
+ * Chip click spawns a session for that project (profile cwd + optional first
+ * prompt/model/thinking/tools applied server-side). The dot marks a profile
+ * that carries spawn shortcuts (prompt/model/thinking/toolsPreset), i.e. a
+ * one-tap fully-configured agent, versus a plain CLI profile.
+ */
+function LaunchChip({ project, busy, onLaunch }: { project: ManagedProject; busy: boolean; onLaunch: (project: ManagedProject) => void }) {
+  const { t } = useI18n();
+  const [hovered, setHovered] = useState(false);
+  const label = project.alias ?? projectLabel(project.path);
+  const configured = hasLaunchSpawnConfig(project.launchConfig);
+  return (
+    <button
+      type="button"
+      aria-label={t("launch.chipTitle", { project: label })}
+      title={t("launch.chipTitle", { project: label })}
+      disabled={busy}
+      onClick={() => onLaunch(project)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        maxWidth: 150,
+        height: 24,
+        padding: "0 9px",
+        background: busy || hovered ? "var(--bg-selected)" : "var(--bg-hover)",
+        border: `1px solid ${hovered ? "color-mix(in srgb, var(--accent) 30%, transparent)" : "var(--border)"}`,
+        borderRadius: "var(--radius-control)",
+        color: "var(--text-muted)",
+        cursor: busy ? "default" : "pointer",
+        fontSize: 11,
+        fontWeight: 500,
+        lineHeight: 1,
+        opacity: busy ? 0.7 : 1,
+        transition: SIDEBAR_BUTTON_TRANSITION,
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <Zap size={11} strokeWidth={2} color="var(--accent)" style={{ flexShrink: 0 }} aria-hidden="true" />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+      {configured && (
+        <span
+          aria-label={t("launch.profileDot")}
+          title={t("launch.profileDot")}
+          style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)", flexShrink: 0 }}
+        />
+      )}
+    </button>
+  );
+}
+function LaunchChipRow({
+  projects,
+  launchingPath,
+  onLaunch,
+}: {
+  projects: ManagedProject[];
+  launchingPath?: string | null;
+  onLaunch: (project: ManagedProject) => void;
+}) {
+  const { t } = useI18n();
+  const withProfiles = projects.filter((project) => project.launchConfig);
+  if (withProfiles.length === 0) return null;
+  return (
+    <div
+      role="group"
+      aria-label={t("launch.chipRowLabel")}
+      style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}
+    >
+      {withProfiles.map((project) => (
+        <LaunchChip
+          key={project.path}
+          project={project}
+          busy={launchingPath === project.path}
+          onLaunch={onLaunch}
+        />
+      ))}
+    </div>
+  );
+}
 export {
+  LaunchChipRow,
   OmpWebTitle,
   PathLabel,
   RunningSessionIndicator,

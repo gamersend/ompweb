@@ -19,7 +19,14 @@ export interface ThinkingModelMeta {
   thinking?: { efforts?: string[] };
 }
 
-const DEFAULT_THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const DEFAULT_THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/** True for a level on the generic ladder — the validity check launch profiles
+ *  and persisted config use (provider-added extras only exist on live models,
+ *  so a stored profile can only carry the known ladder). */
+export function isKnownThinkingLevel(value: unknown): value is (typeof DEFAULT_THINKING_LEVELS)[number] {
+  return typeof value === "string" && (DEFAULT_THINKING_LEVELS as readonly string[]).includes(value);
+}
 
 /** Keep familiar levels ordered while preserving provider-defined additions. */
 export function selectableThinkingLevels(available: readonly string[] | null | undefined): string[] {

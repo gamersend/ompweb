@@ -457,6 +457,16 @@ export interface ProjectLaunchConfig {
   advisor?: boolean;
   /** Extra OMP CLI args, stored as an array. */
   extraArgs?: string[];
+  /** First prompt for a quick-launch spawn (registry v2). Sent VERBATIM —
+   *  NOT a snippet, no $PLACEHOLDER expansion. Empty/absent spawns the
+   *  session without a first message. */
+  prompt?: string;
+  /** Model reference "provider:modelId" applied to the spawn via set_model. */
+  model?: string;
+  /** Thinking effort level applied via set_thinking_level. */
+  thinkingLevel?: string;
+  /** Tool preset for the spawn; "full"/unset leaves omp's default toolset. */
+  toolsPreset?: "none" | "default" | "full";
 }
 
 /** A project in the sidebar: an explicitly added directory (registered in the

@@ -30,7 +30,7 @@ import {
   type WorktreeEntry,
   type WorktreeState,
 } from "./SessionSidebar-helpers";
-import { OmpWebTitle, SIDEBAR_BUTTON_TRANSITION, SidebarIconButton } from "./SessionSidebar-chrome";
+import { LaunchChipRow, OmpWebTitle, SIDEBAR_BUTTON_TRANSITION, SidebarIconButton } from "./SessionSidebar-chrome";
 import { ProjectRow, ProjectWorktreeSwitcher } from "./SessionSidebar-rows";
 
 /** Deadline for one /api/sessions fetch. A wedged-but-listening server never
@@ -77,6 +77,10 @@ interface Props {
   onRunningIdsChange?: (ids: string[]) => void;
   /** P12 split view: open a session in the right pane (row action menu). */
   onSplitSession?: (session: SessionInfo) => void;
+  /** Phase 3 quick-launch: spawn a session for a project's launch profile
+   *  (runs in AppShell so the adopted session lands in the active chat).
+   *  Resolves whether the spawn succeeded — AppShell owns the error toast. */
+  onLaunchProject?: (project: ManagedProject) => Promise<void> | void;
 }
 
 
@@ -84,7 +88,7 @@ interface Props {
 
 
 
-export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onWorkspaceOptionsChange, addProjectOpen, setAddProjectOpen, usageVisible = true, onOpenSettings, onOpenArchive, updateAvailable, settingsOpen = false, onRunningIdsChange, onSplitSession }: Props) {
+export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onWorkspaceOptionsChange, addProjectOpen, setAddProjectOpen, usageVisible = true, onOpenSettings, onOpenArchive, updateAvailable, settingsOpen = false, onRunningIdsChange, onSplitSession, onLaunchProject }: Props) {
 
 
   const { t } = useI18n();
@@ -105,6 +109,10 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   // Project currently being removed (hide) — serializes remove requests.
   const [removeProjectPath, setRemoveProjectPath] = useState<string | null>(null);
   const [launchConfigProject, setLaunchConfigProject] = useState<ManagedProject | null>(null);
+  // Phase 3 quick-launch: the project whose spawn is in flight (chip busy
+  // state). The sidebar data (projects state) drives the chip row — the
+  // header never blocks on a registry read.
+  const [launchingPath, setLaunchingPath] = useState<string | null>(null);
   // Worktree/branch/Git state is scoped per repository. It is cached in a
   // map keyed by the normalized repository root so switching workspaces never
   // leaks one project's branch/worktree data into another's UI (each project
@@ -133,6 +141,18 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   const [searchQuery, setSearchQuery] = useState("");
   const [runningOnly, setRunningOnly] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Phase 3 quick-launch: serialize chip clicks while one spawn is in flight.
+  // onLaunchProject resolves on success AND failure — AppShell owns the error
+  // toast, the sidebar only tracks busy state.
+  const handleLaunchProject = useCallback((project: ManagedProject) => {
+    if (launchingPath) return;
+    if (!project.launchConfig || !onLaunchProject) return;
+    setLaunchingPath(project.path);
+    void Promise.resolve(onLaunchProject(project)).finally(() => {
+      setLaunchingPath((current) => (current === project.path ? null : current));
+    });
+  }, [launchingPath, onLaunchProject]);
 
   // Once the SSE stream has delivered a frame it is the source of truth for
   // running state; late /api/sessions responses must not overwrite it.
@@ -1250,6 +1270,13 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
             void handleImportSession(file);
           }}
         />
+        {onLaunchProject && (
+          <LaunchChipRow
+            projects={projects}
+            launchingPath={launchingPath}
+            onLaunch={handleLaunchProject}
+          />
+        )}
         <button
           onClick={handleNewSession}
           disabled={!selectedCwd}
