@@ -112,7 +112,9 @@ function parseNumstat(output: string): Map<string, { insertions: number; deletio
   return stats;
 }
 
-async function diffTrees(ctx: SnapshotContext, fromTree: string, toTree: string): Promise<RestorePreviewFile[]> {
+/** Exported for the PR wizard (lib/checkpoints/pr.ts): the same A/M/D diff
+ *  math powers "what would the pull request change". */
+export async function diffTrees(ctx: SnapshotContext, fromTree: string, toTree: string): Promise<RestorePreviewFile[]> {
   const [nameStatus, numstat] = await Promise.all([
     git(ctx.repoRoot, ["diff", "--name-status", "-z", "--no-renames", fromTree, toTree]),
     git(ctx.repoRoot, ["diff", "--numstat", "-z", "--no-renames", fromTree, toTree]),
@@ -155,8 +157,10 @@ export interface RestoreInPlaceResult {
 
 /** Remove the given repo-relative paths (regular files only) from `root`.
  *  Every path is containment-checked against the root — this list is the ONLY
- *  deletion channel (never git clean / reset --hard). */
-function deleteRepoRelativeFiles(root: string, paths: string[]): number {
+ *  deletion channel (never git clean / reset --hard). Exported for the PR
+ *  wizard (lib/checkpoints/pr.ts), which deletes selected-file deletions in
+ *  the PR worktree through the same explicit math. */
+export function deleteRepoRelativeFiles(root: string, paths: string[]): number {
   const resolvedRoot = resolve(root);
   let deleted = 0;
   for (const gitPath of paths) {
