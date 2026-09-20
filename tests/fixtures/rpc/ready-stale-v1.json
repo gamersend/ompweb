@@ -1,0 +1,7 @@
+{
+  "type": "ready",
+  "protocolVersion": 1,
+  "supportedProtocolVersions": [1],
+  "maxFrameBytes": 1048576,
+  "maxReassembledFrameBytes": 67108864
+}

@@ -1,0 +1,13 @@
+{
+  "type": "available_commands_update",
+  "commands": [
+    { "name": "valid_command", "source": "builtin" },
+    { "name": "", "source": "builtin" },
+    { "source": "builtin" },
+    "not-an-object",
+    42,
+    null,
+    { "name": "valid_command", "source": "duplicate-dropped" },
+    { "name": "bad name with spaces", "source": "builtin" }
+  ]
+}

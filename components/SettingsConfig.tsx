@@ -4,6 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { getSubmitDuringRunBehavior, setSubmitDuringRunBehavior, type SubmitDuringRunBehavior } from "@/lib/composer-prefs";
 import { clearPromptHistory, promptHistoryCount as promptHistoryCountStored } from "@/lib/prompt-history";
 import { isSyncEnabled, setSyncEnabled } from "@/lib/client-state-sync";
+import { SyncStatusPanel } from "./SyncStatusPanel";
+import { StoreDiagnosticsPanel } from "./StoreDiagnosticsPanel";
 import { readTtsEnabled, unlockSharedTtsAudio, writeTtsEnabled } from "@/hooks/useTts";
 import {
   readElResultsEnabled,
@@ -911,6 +913,9 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
                       }}
                     />
                   </NativeSetting>
+                  {/* Wave 3 P2.3: live sync status + the bounded tombstone
+                      list (deleted items across devices), restore included. */}
+                  <SyncStatusPanel />
                   <NativeSetting searchId="clear-prompt-history" label={t("settingsConfig.promptHistory")} description={t("settingsConfig.promptHistoryDescCount", { count: promptHistoryCount })} scope="UI">
                     <button
                       type="button"
@@ -1555,6 +1560,10 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
                     </div>
                   </section>
                 )}
+
+                {/* Store diagnostics (wave 3 P5.4/P5.5): read-only health of
+                    the ompweb-owned stores — copy-safe, no repair buttons. */}
+                <StoreDiagnosticsPanel />
               </div>
             )}
 

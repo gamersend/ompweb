@@ -1,4 +1,4 @@
-import type { NotifyRow } from "../notify/notify-shared";
+import type { NotifyKind, NotifyRow } from "../notify/notify-shared";
 import { loadNotifyConfig } from "../notify/notify-config";
 import { shouldPushRow } from "./gate";
 import { buildPushPayload } from "./payload";
@@ -143,27 +143,37 @@ export interface PushBroadcastResult {
   delivered: number;
   pruned: number;
   failed: number;
+  /** Subscriptions skipped by their per-device kind chips (not an error). */
+  skipped?: number;
 }
 
 /** Send one payload to every stored subscription. Awaits all deliveries so the
- * test route can report counts; prunes endpoints the service reported gone. */
-export async function sendPushToAllSubs(payload: string, deps: { timeoutMs?: number; webpush?: WebPushModule } = {}): Promise<PushBroadcastResult> {
+ *  test route can report counts; prunes endpoints the service reported gone.
+ *  `rowKind` applies the PER-DEVICE kind chips (wave 3 P3): a subscription
+ *  with an explicit kinds list that excludes the row is skipped — undefined
+ *  kinds means "all kinds" (the pre-P3 default). */
+export async function sendPushToAllSubs(payload: string, deps: { timeoutMs?: number; webpush?: WebPushModule; rowKind?: NotifyKind; onlyHash?: string } = {}): Promise<PushBroadcastResult> {
   const { subs } = loadPushSubs();
-  if (subs.length === 0) return { delivered: 0, pruned: 0, failed: 0 };
+  const eligible = typeof deps.rowKind === "string"
+    ? subs.filter((sub) => !sub.kinds || sub.kinds.includes(deps.rowKind!))
+    : subs;
+  const targets = deps.onlyHash ? eligible.filter((sub) => sub.endpointHash === deps.onlyHash) : eligible;
+  const skipped = subs.length - targets.length;
+  if (targets.length === 0) return { delivered: 0, pruned: 0, failed: 0, skipped };
   const vapid = ensurePushKeys();
   const dead: string[] = [];
   let delivered = 0;
   let failed = 0;
   const results = await Promise.all(
-    subs.map((subscription) => deliverPushToSubscription(subscription, payload, {
+    targets.map((subscription) => deliverPushToSubscription(subscription, payload, {
       subject: vapid.subject,
       publicKey: vapid.publicKey,
       privateKey: vapid.privateKey,
     }, deps)),
   );
-  for (let i = 0; i < subs.length; i += 1) {
+  for (let i = 0; i < targets.length; i += 1) {
     const result = results[i];
-    const endpoint = subs[i]?.endpoint;
+    const endpoint = targets[i]?.endpoint;
     if (!result) continue;
     if (result.ok) delivered += 1;
     else if (result.gone) {
@@ -172,7 +182,7 @@ export async function sendPushToAllSubs(payload: string, deps: { timeoutMs?: num
     } else failed += 1;
   }
   const prunedResult = prunePushSubscriptions(dead);
-  return { delivered, pruned: prunedResult.pruned, failed };
+  return { delivered, pruned: prunedResult.pruned, failed, skipped };
 }
 
 /**
@@ -190,7 +200,7 @@ export function dispatchPushForRow(row: NotifyRow): void {
       // fails (a failed OS ping is not worth retrying behind the user's back).
       rememberPushedId(row.id);
       const payload = buildPushPayload(row);
-      await sendPushToAllSubs(JSON.stringify(payload));
+      await sendPushToAllSubs(JSON.stringify(payload), { rowKind: row.kind });
     } catch {
       // Swallowed by contract: push delivery must never break the feed.
     }

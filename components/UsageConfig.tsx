@@ -349,6 +349,19 @@ function ModelReportCard() {
                           {t("report.scheduledChip", { count: row.sessionsScheduled })}
                         </span>
                       )}
+                      {row.sessionsDelegated > 0 && (
+                        <span
+                          title={row.delegatedBy ? t("report.delegatedBy", { label: row.delegatedBy.slice(0, 12) }) : undefined}
+                          style={{
+                            display: "inline-flex", flexShrink: 0, fontSize: 9, fontWeight: 600,
+                            letterSpacing: "0.04em", color: "var(--accent)",
+                            border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+                            padding: "0 5px", lineHeight: "14px", background: "var(--bg-subtle)",
+                          }}
+                        >
+                          {t("report.delegatedChip", { count: row.sessionsDelegated })}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>

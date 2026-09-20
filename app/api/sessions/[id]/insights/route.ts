@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { apiErrorResponse, resolveSessionPathOr404 } from "@/lib/api-utils";
 import { getSessionInsights } from "@/lib/insights/session-insights";
 import type { SessionInsights } from "@/lib/insights/session-insights";
+import { ledgerEntriesForSession } from "@/lib/checkpoints/ledger";
+import { readSessionHeader } from "@/lib/session-reader";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,6 +89,25 @@ export async function GET(
     // Native reader / merge failure must never 500 the dialog open — degrade.
     data = emptyInsights(filePath);
   }
-  const payload = { ...data, tookMs: Date.now() - startedAt };
+  // Wave 3 P4 (R3-01): the durable restore ledger rides along (newest first,
+  // capped at 3) so the dialog can show this session's restore history.
+  const restores = (() => {
+    try {
+      const sessionId = readSessionHeader(filePath)?.id ?? id;
+      return ledgerEntriesForSession(sessionId).slice(0, 3).map((entry) => ({
+        seq: entry.seq,
+        mode: entry.mode,
+        outcome: entry.outcome,
+        ts: entry.ts,
+        ...(entry.device ? { device: entry.device } : {}),
+        ...(entry.error ? { error: entry.error } : {}),
+        ...(entry.prUrl ? { prUrl: entry.prUrl } : {}),
+        ...(entry.branch ? { branch: entry.branch } : {}),
+      }));
+    } catch {
+      return [];
+    }
+  })();
+  const payload = { ...data, restores, tookMs: Date.now() - startedAt };
   return NextResponse.json({ success: true, data: payload }, { headers: { "Cache-Control": "no-store" } });
 }

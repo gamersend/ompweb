@@ -43,8 +43,11 @@ try {
         Log-Message "  Stopping headless service process tree (PID $($p.ProcessId))..."
         Start-Process -FilePath $taskkillExe -ArgumentList "/PID $($p.ProcessId) /T /F" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue | Out-Null
     }
-    # Delete Scheduled Task (both schtasks and PowerShell fallback)
-    try { schtasks /delete /tn "omp-web" /f 2>$null | Out-Null; Log-Message "  [OK] Removed Scheduled Task: omp-web" } catch { }
+    # Delete Scheduled Task (both schtasks and PowerShell fallback). Uninstall
+    # removes BOTH the blessed ompweb-service task and any legacy omp-web task.
+    try { schtasks /delete /tn "ompweb-service" /f 2>$null | Out-Null; Log-Message "  [OK] Removed Scheduled Task: ompweb-service" } catch { }
+    try { Unregister-ScheduledTask -TaskName "ompweb-service" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
+    try { schtasks /delete /tn "omp-web" /f 2>$null | Out-Null; Log-Message "  [OK] Removed legacy Scheduled Task: omp-web" } catch { }
     try { Unregister-ScheduledTask -TaskName "omp-web" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
 } catch { }
 

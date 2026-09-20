@@ -31,7 +31,8 @@ import {
   type WorktreeState,
 } from "./SessionSidebar-helpers";
 import { LaunchChipRow, OmpWebTitle, SIDEBAR_BUTTON_TRANSITION, SidebarIconButton } from "./SessionSidebar-chrome";
-import { ProjectRow, ProjectWorktreeSwitcher } from "./SessionSidebar-rows";
+import { ProjectRow, ProjectWorktreeSwitcher, type GetSessionOrigin } from "./SessionSidebar-rows";
+import type { SessionOrigin } from "@/lib/origin";
 
 /** Deadline for one /api/sessions fetch. A wedged-but-listening server never
  * answers; without this the initial spinner would pend forever. */
@@ -93,6 +94,10 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
 
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
+  // Wave 3 P5.3: per-session origin badges (delegated/scheduled). Ref-backed
+  // map + stable accessor so row memoization never breaks on identity.
+  const originsRef = useRef<Map<string, SessionOrigin>>(new Map());
+  const getOrigin = useCallback<GetSessionOrigin>((sessionId) => originsRef.current.get(sessionId), []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
@@ -190,7 +195,8 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const etag = res.headers.get("ETag");
       if (etag) sessionsEtagRef.current = etag;
-      const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[]; runningSessions?: Array<{ id: string; cwd: string }> };
+      const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[]; runningSessions?: Array<{ id: string; cwd: string }>; origins?: Record<string, SessionOrigin> };
+      originsRef.current = new Map(Object.entries(data.origins ?? {}));
       setAllSessions(data.sessions);
       if (data.runningSessions) {
         for (const rs of data.runningSessions) {
@@ -1450,6 +1456,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
                 hiddenCount={filtersActive ? 0 : Math.max(0, tree.length - MAX_PROJECT_SESSIONS)}
                 selectedSessionId={selectedSessionId}
                 runningSessionIds={runningSessionIds}
+                getOrigin={getOrigin}
                 unreadSessionIds={unreadSessionIds}
                 relativeTimeNow={relativeTimeNow}
                 onActivate={activateProject}

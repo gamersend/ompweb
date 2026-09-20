@@ -35,6 +35,7 @@ import {
   resolveSessionPath,
 } from "./session-reader";
 import { redactSnippet } from "./search/redact";
+import { recordDelegationDelivery } from "./delegation-ledger";
 import { spawnNewSession, SpawnSessionInputError, type SpawnNewSessionResult } from "./spawn-session";
 import { notifyDelegation } from "./notify/emit";
 import type { SessionEntry } from "./types";
@@ -217,6 +218,8 @@ export interface DelegateDeps {
   now?: () => number;
   /** Test seam — defaults to the real notify emit (wrapped, never throws). */
   emitNotify?: (result: DelegationResult, token: string) => void;
+  /** Test seam — defaults to the real durable ledger write (wrapped). */
+  recordDelivery?: typeof recordDelegationDelivery;
 }
 
 interface SessionTexts {
@@ -375,6 +378,14 @@ export async function performDelegation(
 
   // ── record + notify (never break the caller) ──
   delegationLedger().set(toSession, { tsMs: nowMs, fromSession });
+  // Durable attribution record (wave 3 P5.2): the model report / digest /
+  // runs board read this store — the in-memory ledger above intentionally
+  // does not survive restarts, this does.
+  try {
+    (deps.recordDelivery ?? recordDelegationDelivery)({ toSession, fromSession, tsMs: nowMs, mode });
+  } catch {
+    // never break the delegation path over bookkeeping
+  }
   const toTitle = header?.title || "Session";
   const result: DelegationResult = {
     mode,

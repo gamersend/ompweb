@@ -1,0 +1,14 @@
+{
+  "comment": "Sanitized lifecycle event samples (shape only). Every entry must be an object with a string `type`; payloads are structural placeholders, never transcript text.",
+  "events": [
+    { "type": "agent_start" },
+    { "type": "agent_end", "isTerminal": true },
+    { "type": "agent_end", "isTerminal": false },
+    { "type": "notice", "text": "structural sample notice" },
+    { "type": "todo_reminder" },
+    { "type": "compaction_start" },
+    { "type": "compaction_end" },
+    { "type": "model_changed", "model": { "provider": "sample-provider", "id": "sample-model" } },
+    { "type": "unknown_future_event", "payload": { "opaque": true } }
+  ]
+}

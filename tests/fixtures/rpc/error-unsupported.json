@@ -1,0 +1,5 @@
+{
+  "type": "error",
+  "code": "unknown_command",
+  "message": "Structural sample: the child refused an unsupported command."
+}

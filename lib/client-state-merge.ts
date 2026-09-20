@@ -11,10 +11,44 @@ import { comparableProjectPath } from "./comparable-path";
 // every device. The sync adapters (lib/client-state-sync.ts) serialize local
 // storage into these shapes, call a merge, and write the result back.
 //
-// Deletion is NOT synced in this phase: the contract is additive union /
-// last-write-wins, so removing a bookmark or a prompt on one device leaves
-// the other device's copy intact (tombstones would be a later phase).
+// Deletion IS synced as of wave 3 P2 (R3-02) via bounded tombstones: every
+// merge accepts the tombstones that apply to its namespace and drops deleted
+// items DETERMINISTICALLY — a tombstone beats an item whose `ts` is older or
+// EQUAL to `deletedAt` (ties keep the data deleted; re-adding an item stamps
+// a fresh ts, so a deliberate re-add always beats its own tombstone). The
+// rule is a pure function of the final set, so replay order, clock ties, and
+// duplicate deletes all converge.
 // ============================================================================
+
+/** Wire shape of one delete marker (server sends these alongside keys). */
+export interface SyncTombstone {
+  itemId: string;
+  deletedAt: number;
+  deviceId?: string;
+}
+
+/** True when the tombstone set says this item version is deleted. */
+export function itemIsTombstoned(itemId: string, ts: number | undefined, tombstones: readonly SyncTombstone[] | undefined): boolean {
+  if (!tombstones || tombstones.length === 0) return false;
+  const itemTs = ts || 0;
+  for (const tombstone of tombstones) {
+    if (tombstone.itemId !== itemId) continue;
+    if ((tombstone.deletedAt || 0) >= itemTs) return true;
+  }
+  return false;
+}
+
+/** Stable cross-device identity for a prompt-history entry: djb2 over the
+ *  exact text (both sides compute it from the text they hold — no server
+ *  round-trip needed). Collisions are acceptable: the merge dedupes on text
+ *  anyway, so a collision only over-deletes an identical prompt. */
+export function promptItemId(text: string): string {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+  }
+  return `p${(hash >>> 0).toString(16)}`;
+}
 
 /** Stable structural equality for wire values: object key order AND array
  *  element order are both insignificant. Array order is irrelevant because
@@ -55,7 +89,7 @@ export { BOOKMARKS_CAP, PROMPT_HISTORY_CAP };
  * deterministic, and a same-length edit race is a wash). Newest-first, like
  * the local store, capped at BOOKMARKS_CAP.
  */
-export function mergeBookmarks(local: BookmarkEntry[], remote: BookmarkEntry[]): BookmarkEntry[] {
+export function mergeBookmarks(local: BookmarkEntry[], remote: BookmarkEntry[], tombstones?: readonly SyncTombstone[]): BookmarkEntry[] {
   const byId = new Map<string, BookmarkEntry>();
   const put = (entry: BookmarkEntry) => {
     if (typeof entry?.entryId !== "string" || entry.entryId.length === 0) return;
@@ -68,6 +102,7 @@ export function mergeBookmarks(local: BookmarkEntry[], remote: BookmarkEntry[]):
     byId.set(entry.entryId, existing ? mergeBookmarkPair(existing, entry) : entry);
   }
   return [...byId.values()]
+    .filter((entry) => !itemIsTombstoned(entry.entryId, entry.ts, tombstones))
     .sort((a, b) => b.ts - a.ts || a.entryId.localeCompare(b.entryId))
     .slice(0, BOOKMARKS_CAP);
 }
@@ -94,7 +129,7 @@ function mergeBookmarkPair(local: BookmarkEntry, remote: BookmarkEntry): Bookmar
  * (metadata like sessionId/projectRoot rides along from the winning side),
  * re-sorted newest-first, capped at PROMPT_HISTORY_CAP.
  */
-export function mergePromptHistory(local: PromptHistoryEntry[], remote: PromptHistoryEntry[]): PromptHistoryEntry[] {
+export function mergePromptHistory(local: PromptHistoryEntry[], remote: PromptHistoryEntry[], tombstones?: readonly SyncTombstone[]): PromptHistoryEntry[] {
   const byText = new Map<string, PromptHistoryEntry>();
   for (const entry of local) {
     if (typeof entry?.text !== "string" || entry.text.length === 0) continue;
@@ -106,6 +141,7 @@ export function mergePromptHistory(local: PromptHistoryEntry[], remote: PromptHi
     if (!existing || (entry.ts || 0) > (existing.ts || 0)) byText.set(entry.text, entry);
   }
   return [...byText.values()]
+    .filter((entry) => !itemIsTombstoned(promptItemId(entry.text), entry.ts, tombstones))
     .sort((a, b) => b.ts - a.ts || a.text.localeCompare(b.text))
     .slice(0, PROMPT_HISTORY_CAP);
 }
@@ -125,10 +161,13 @@ export type WorkspaceMemorySyncValue = Record<string, WorkspaceMemorySyncEntry>;
  * Last-write-wins PER WORKSPACE KEY. Workspace keys are path-shaped, so
  * identity is the comparable-path form (Windows casing/separator safe) —
  * the winner keeps its own raw key spelling. Equal ts keeps local.
+ * Tombstone identity for workspace mappings is the same comparable-path
+ * form (a deleted workspace mapping is remembered under its identity).
  */
 export function mergeWorkspaceMemory(
   local: WorkspaceMemorySyncValue,
   remote: WorkspaceMemorySyncValue,
+  tombstones?: readonly SyncTombstone[],
 ): WorkspaceMemorySyncValue {
   const merged: WorkspaceMemorySyncValue = {};
   const claimed = new Map<string, string>(); // comparable key → raw key in merged
@@ -136,6 +175,7 @@ export function mergeWorkspaceMemory(
     if (typeof rawKey !== "string" || rawKey.length === 0) return;
     if (!entry || typeof entry.id !== "string" || entry.id.length === 0) return;
     const identity = comparableProjectPath(rawKey);
+    if (itemIsTombstoned(identity, entry.ts, tombstones)) return;
     const winnerKey = claimed.get(identity);
     if (winnerKey === undefined) {
       merged[rawKey] = entry;
@@ -168,13 +208,17 @@ export interface ComposerPrefsSyncValue {
 
 /**
  * Last-write-wins on the WHOLE value (the preference is one enum). Equal ts
- * keeps local.
+ * keeps local. The single item's tombstone identity is the literal "value";
+ * a tombstoned preference merges to null (the caller removes the local key).
  */
+export const COMPOSER_PREFS_ITEM_ID = "value";
+
 export function mergeComposerPrefs(
   local: ComposerPrefsSyncValue | null,
   remote: ComposerPrefsSyncValue | null,
+  tombstones?: readonly SyncTombstone[],
 ): ComposerPrefsSyncValue | null {
-  if (!local) return remote;
-  if (!remote) return local;
-  return (remote.ts || 0) > (local.ts || 0) ? remote : local;
+  const winner = !local ? remote : !remote ? local : (remote.ts || 0) > (local.ts || 0) ? remote : local;
+  if (winner && itemIsTombstoned(COMPOSER_PREFS_ITEM_ID, winner.ts, tombstones)) return null;
+  return winner;
 }

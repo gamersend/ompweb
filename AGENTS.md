@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 87 API routes, 82 components, 22 hooks, 119 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 89 API routes, 84 components, 22 hooks, 123 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -150,12 +150,17 @@ app/api/
   skills/check/route.ts           POST check for skill package updates
   skills/update/route.ts          POST update an installed skill package
   web-auth/session/route.ts       POST password → HMAC-signed session cookie (disabled w/o password)
+  store-diagnostics/route.ts      GET read-only health census of the ompweb-owned stores (W3-P5)
+  client-state/route.ts           GET ?since= incremental pull | PUT {key,value,baseRev} | DELETE tombstone (W3-P2)
+  push/register/route.ts          POST {subscription,label?,kinds?} per-device registration (W3-P3)
+  push/subscriptions/route.ts     PATCH/DELETE {endpointHash} device meta / removal (W3-P3)
   worktrees/route.ts              GET/POST/DELETE git worktrees
 
 lib/
   omp/paths.ts            Node port of omp's directory resolution (~/.omp/agent, XDG, session slugs)
   omp/omp-cli.ts          locate/probe the installed omp binary (resolveOmpBin, getOmpVersion)
   omp/rpc-process.ts      process + NDJSON protocol layer (RpcProcess)
+  omp/rpc-capabilities.ts pure capability adapter over ready/available_commands fixtures (W3-P1)
   omp/rpc-frame.ts        NDJSON frame encode/parse primitives
   omp/rpc-utility.ts      shared short-lived utility omp process for non-session commands
   omp/session-files.ts    mtime-keyed session directory walk (listSessionFiles) + line streaming
@@ -198,6 +203,7 @@ lib/
   compaction-summary.ts   parse structured compaction summaries
   task-result-details.ts  task toolResult extraction (cost, retries, structured output)
   rpc-manager.ts          session registry + startRpcSession over RpcProcess (globalThis keyed)
+  device-id.ts            client device identity (localStorage, presentation metadata — never auth)
   spawn-session.ts        session-creation core extracted from /api/agent/new (cwd checks → startRpcSession → prompt)
   runs-board.ts           runs board aggregator over rpc-manager (refcounted poll, 15-min terminal linger)
   agent-client.ts         typed fetch helper for /api/agent commands
@@ -273,6 +279,9 @@ lib/
   github-release-notes.ts release notes fetch (github.com URLs only)
   self-update.ts          web self-update state machine (prepare→install→restart)
   windows-service.ts      Windows service/tray status + lifecycle via bin scripts
+  store-diagnostics.ts    read-only health census over the ompweb-owned stores (W3-P5)
+  origin.ts               ONE session-origin resolver (direct/scheduled/delegated) behind every badge (W3-P5)
+  delegation-ledger.ts    durable web-delegations.json record of delivered delegations (W3-P5)
   browser-notifications.ts  completion notifications with permission handling
   notify/feed.ts          server-side notify feed: 500-row ring + atomic tail at ~/.omp/agent/web-notify.json
   notify/webhook.ts       webhook delivery (ntfy/discord/telegram/generic), fire-and-forget + 1 retry
@@ -318,7 +327,9 @@ components/
   TodoList.tsx        todo phase grid with preview/show-all (used by ComposerPanels)
   SubagentTranscriptDialog.tsx  task + final output summary dialog (wide, screen-adaptive)
   SubagentStatusIcon.tsx  shared live/terminal subagent status icon
-  SessionInsightsDialog.tsx  session insights dialog + chat-header entry pill
+  SessionInsightsDialog.tsx  session insights dialog + chat-header entry pill (+ restore-ledger section, W3-P4)
+  SyncStatusPanel.tsx  settings sync status: device, last sync, conflicts, tombstone list + restore (W3-P2)
+  StoreDiagnosticsPanel.tsx  settings system-tab store health census (copy-safe, read-only) (W3-P5)
   SplitPane.tsx       two-pane split view (draggable divider, active-pane ring, mobile falls back to single)
   MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
   MessageView-diff-view.tsx   split diff rendering for edit toolResults
@@ -1460,6 +1471,113 @@ motion: --dur-fast (150ms) --dur-med (220ms) --dur-slow (320ms) --ease-out-warm
 ConfirmDialog), `toast.tsx` (`toast.success/error/info`, mounted in AppShell).
 Icons come from `lucide-react` — do not add new inline SVGs. The command
 palette (`components/CommandPalette.tsx`, ⌘K/Ctrl+K) is built on `cmdk`.
+
+### Client-state tombstones (W3-P2)
+- Deleting a synced item (bookmark, prompt, workspace mapping, composer pref)
+  is now a bounded DELETE MARKER, not an omission. Store `web-client-state.json`
+  is version 2 (v1 files migrate; older builds ignore the field safely): a
+  `tombstones` map keyed `"<serverKey>::<itemId>"` → `{rev, itemId, deletedAt, deviceId?}`
+  beside `keys`, capped at 256 markers pruned oldest-rev-first (beyond the cap a
+  device offline for the whole window may resurrect ONE item — documented
+  tradeoff). `DELETE /api/client-state {key, itemId, deviceId?}` is idempotent —
+  a replay keeps the FIRST marker and never advances the rev; the stored VALUE is
+  untouched (devices filter at merge time).
+- Merge rule (pure, lib/client-state-merge.ts): a tombstone beats an update
+  whose ts ≤ deletedAt (ties keep the data DELETED); a re-add with a fresher ts
+  beats its own tombstone. Deterministic under replay order and duplicate
+  deletes. Item identities: bookmarks = entryId; prompts = djb2 of the exact
+  text (`promptItemId`, stable cross-device); workspace = comparable-path form;
+  prefs = "value".
+- Engine (lib/client-state-sync.ts): local deletions are detected by diffing the
+  observed storage value against the shadow snapshot (a whole-key removal —
+  Settings clear — tombstones every known item), persisted locally at
+  `omp-web:client-tombstones` (cap 256), pushed through the DELETE endpoint, and
+  acked. Pulls ingest server tombstones and ALWAYS filter the merge through
+  them. applyWire runs under an `applying` flag — merge-driven local writes
+  never fabricate tombstones.
+- UI: Settings → general gains `SyncStatusPanel` (device id short form, last
+  pull/push, conflict count, pending tombstones with state chips; bookmarks are
+  restorable — re-added with a fresh ts through addBookmark, which beats the
+  marker everywhere; prompt text is unrecoverable from an id and is NOT
+  restorable). Status reads `getClientStateSyncStatus()`.
+
+### Per-kind Web Push + device labels (W3-P3)
+- `web-push-subs.json` entries gain `kinds?: NotifyKind[]` (undefined = ALL kinds
+  — the pre-P3 default, so existing subscribers keep their behavior),
+  user-facing `label?`, and `lastSeenAt?` (refreshed on every register). Store
+  version stays 1 (additive optional fields, sanitize-on-parse).
+- Delivery filtering lives in sendPushToAllSubs deps: `rowKind` skips subs whose
+  kinds exclude the row; `onlyHash` aims a payload at ONE device (per-device
+  test button). The filter applies to real deliveries AND tests alike — a
+  device that muted a kind stays quiet even when probed.
+- Routes: register accepts {label, kinds}; `/api/push/subscriptions` PATCH
+  {endpointHash, label?, kinds?} / DELETE {endpointHash} lets the settings panel
+  name/remove OTHER devices (hash = sha256(endpoint) — raw endpoints and keys
+  never cross the wire). status returns the safe `subscriptions[]` list.
+- UI: Notifications → push section renders a Devices card per subscription
+  (label input, per-kind chips, Save/Test/Remove; the LAST active chip cannot
+  be unchecked — empty allowlist would silently mean "all"). sw.js deep links
+  are unchanged (sessionId in payload → `/?session=`) — no CACHE_VERSION bump.
+
+### Durable checkpoint-restore ledger (W3-P4)
+- Every mutating checkpoints-route attempt (in-place restore, restore-worktree,
+  pr) writes ONE record to `~/.omp/agent/web-checkpoint-ledger.json` (version 1,
+  cap 200 = the retention policy, atomic + quarantine like every store):
+  {id: correlationId, sessionId, seq, mode, outcome: success|failed|superseded,
+  ts, cwd, device?, error? (≤240 chars), prUrl?, branch?}. Deduped by
+  correlation id — the client generates a FRESH id per attempt (a 409 retry
+  must never reuse the failed attempt's id). Ledger write + notify emission are
+  wrapped and can never change the restore result.
+- Notify: "checkpoint" added to the NotifyKind union + NOTIFY_KINDS + the
+  settings events chips (notifyCheckpointRestore in lib/notify/emit.ts, dedup
+  id = checkpoint:sessionId:correlationId). NOTE: a stored notify config keeps
+  its explicit events list — checkpoint pushes start only after the config is
+  re-saved with the kind enabled (same as the W2 delegation/digest additions).
+- Consumers: the weekly digest now counts restores from the ledger by outcome
+  (previously honestly omitted); session insights
+  (`/api/sessions/[id]/insights`) attaches the newest 3 ledger records and
+  SessionInsightsDialog renders a Restores section. The ledger is ompweb-owned
+  history, NOT git/omp history.
+
+### Tray identity, origin attribution, store diagnostics (W3-P5)
+- Tray: lib/windows-service.ts + scripts/windows/{install,uninstall}-tray.ps1
+  converge on the blessed `ompweb-service` scheduled task (constants
+  SERVICE_TASK_NAME / LEGACY_SERVICE_TASK_NAME). startTrayService runs the
+  blessed task first and falls back to a legacy-name task so an un-migrated
+  install still starts; stopTrayService /end's both (stopping is not
+  deleting); `getScheduledTaskStatus()` reports both names READ-ONLY and
+  `/api/windows-service` GET carries a `tasks` census. Only the explicit
+  install (migration) and uninstall flows ever DELETE a task.
+- Delegated-origin attribution: /api/delegate now also records deliveries in
+  the durable `web-delegations.json` store (lib/delegation-ledger.ts, cap 200,
+  dedup per (target, source, ts)) — the in-memory ledger stays the busy-window
+  authority. lib/insights/model-report.ts matches TARGET ids against stats.db
+  session paths (same substring rule as scheduled), rows gain
+  sessionsDelegated + delegatedBy, and `labeled.delegated` is finally real.
+  lib/origin.ts is the ONE resolver (delegated > scheduled > direct) behind
+  the badges: /api/sessions gains an `origins` map (SessionInfo untouched),
+  SessionSidebar rows show a memo-stable icon, and BoardRun.origin feeds the
+  runs board / kanban chips.
+- Store diagnostics: lib/store-diagnostics.ts probes a FIXED registry of the
+  ompweb-owned stores (exists/size/mtime/version/counts/backups; health =
+  ok|missing|corrupt|unreadable|empty) plus the terminal-audit JSONL row count.
+  READ-ONLY — no writes, no contents, no absolute paths (secrets can never
+  leak because values are never read). `/api/store-diagnostics` + the
+  Settings → system "Store diagnostics" panel render the census with a
+  copy-safe summary; there are deliberately NO repair buttons (corrupt stores
+  self-quarantine).
+
+### Wave-3 parity gates (W3-P1)
+- `npm run check:i18n` (exact en/zh-CN/ja key parity), `npm run check:envelopes`
+  (envelope ratchet: scripts/envelope-baseline.json holds the 80 legacy
+  violations; NEW unwrapped JSON responses fail — migrate legacy routes freely
+  and shrink the baseline with --update-baseline), `npm run check:parity` =
+  both.
+- lib/omp/rpc-capabilities.ts + tests/fixtures/rpc/*.json: every native
+  capability a future phase renders goes through deriveCapabilities()
+  (supported / missing_command / unknown_command / malformed_response /
+  transport_disconnected); the fixture suite loads every file and greps for
+  credential-shaped strings. Compatibility tiers: docs/agent-notes-w3-P1.md.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

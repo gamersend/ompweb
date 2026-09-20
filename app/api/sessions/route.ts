@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { listAllSessions } from "@/lib/session-reader";
 import { getRunningRpcSessions } from "@/lib/rpc-manager";
+import { collectSessionOrigins, resolveSessionOrigin } from "@/lib/origin";
 
 // The session list mixes on-disk sessions with the live runningSessionIds set,
 // which changes on every agent turn, so it must never be cached by proxies or
@@ -18,7 +19,16 @@ export async function GET(req: Request) {
     const sessions = await listAllSessions();
     const runningSessions = getRunningRpcSessions();
     const runningSessionIds = runningSessions.map((s) => s.id);
-    const body = { sessions, runningSessionIds, runningSessions };
+    // Wave 3 P5.3 (R3-08): per-session origin badge (direct/scheduled/
+    // delegated) from the ONE attribution resolver. A separate map — the
+    // SessionInfo contract stays untouched.
+    const origins = collectSessionOrigins();
+    const originMap: Record<string, { kind: string; label?: string }> = {};
+    for (const session of sessions) {
+      const origin = resolveSessionOrigin(session.id, origins.scheduled, origins.delegated);
+      if (origin.kind !== "direct") originMap[session.id] = origin;
+    }
+    const body = { sessions, runningSessionIds, runningSessions, origins: originMap };
     const bodyJson = JSON.stringify(body);
     const etag = `"${createHash("sha1").update(bodyJson).digest("hex").slice(0, 16)}"`;
     if (req.headers.get("if-none-match") === etag) {

@@ -73,6 +73,19 @@ export interface SessionInsightsTotals {
   compactions: number;
 }
 
+/** One durable checkpoint-restore record for this session (wave 3 P4 ledger).
+ *  Attached at the route level — never produced by the pure merge core. */
+export interface SessionRestoreRecord {
+  seq: number;
+  mode: "in-place" | "worktree" | "pr";
+  outcome: "success" | "failed" | "superseded";
+  ts: string;
+  device?: string;
+  error?: string;
+  prUrl?: string;
+  branch?: string;
+}
+
 export interface SessionInsights {
   sessionPath: string;
   native: { available: boolean; partial: boolean; facts: number };
@@ -82,6 +95,8 @@ export interface SessionInsights {
   totals: SessionInsightsTotals;
   timeline: InsightsTimelinePoint[];
   tools: InsightsToolRow[];
+  /** Newest restore-ledger records first, capped by the route. */
+  restores?: SessionRestoreRecord[];
 }
 
 /** Payload the pure core consumes: the already-normalized UI context plus the

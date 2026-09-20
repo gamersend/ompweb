@@ -14,7 +14,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  ArrowRightLeft,
   Bot,
+  CalendarClock,
   CheckCircle2,
   CircleStop,
   Folder,
@@ -451,6 +453,21 @@ function RunCard({ run, index, focused, onFocusCard, nowMs, onOpen, onInterrupt,
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
             {run.sessionTitle}
           </span>
+          {run.origin && run.origin.kind !== "direct" && (
+            <span
+              title={t(`origin.${run.origin.kind}`, run.origin.label ? { label: run.origin.label.slice(0, 12) } : undefined)}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0,
+                fontSize: 10, padding: "1px 7px", borderRadius: 999,
+                border: "1px solid var(--border)", background: "var(--bg-subtle)", color: "var(--text-muted)",
+              }}
+            >
+              {run.origin.kind === "delegated"
+                ? <ArrowRightLeft size={10} strokeWidth={2} aria-hidden="true" />
+                : <CalendarClock size={10} strokeWidth={2} aria-hidden="true" />}
+              {t(`origin.${run.origin.kind}`, run.origin.label ? { label: run.origin.label.slice(0, 12) } : undefined)}
+            </span>
+          )}
           <span style={{
             fontSize: 10, padding: "1px 7px", borderRadius: 999, flexShrink: 0,
             border: "1px solid var(--border)", background: "var(--bg-subtle)", color: "var(--text-muted)",

@@ -36,6 +36,7 @@ import { resolveProject } from "./worktree";
 import { parseSubagentSnapshot, type SubagentInfo } from "./subagent-types";
 import { extractSubagentHistory } from "./subagent-history";
 import { historyEntryToCard } from "./board-kanban";
+import { collectSessionOrigins, resolveSessionOrigin, type SessionOrigin } from "./origin";
 import type { WebSessionState } from "./pi-types";
 
 /** Contract per BUILD-PLAN Phase 3 — served verbatim by /api/runs. */
@@ -62,6 +63,9 @@ export interface BoardRun {
    * recovery for terminal rows whose last snapshot came up empty. Absent or
    * empty when the run has no (recovered) subagents. Bounded per run. */
   subagents?: SubagentInfo[];
+  /** Origin badge (wave 3 P5.3): direct / scheduled / delegated, from the
+   * ONE attribution resolver. */
+  origin?: SessionOrigin;
 }
 
 /** Hard cap on kanban cards carried per run — the SSE payload must stay
@@ -401,6 +405,19 @@ export async function pollBoardOnce(): Promise<string[]> {
       await refreshRowFromWrapper(session.id, row);
       row.signature = rowSignature(row.run);
       if (row.signature !== before) changed.push(session.id);
+    }
+    // Wave 3 P5.3 (R3-08): stamp per-run origin badges. Loaded once per pass
+    // (two tiny JSON stores); only a CHANGED origin bumps the signature.
+    const origins = collectSessionOrigins();
+    for (const [sessionId, row] of state.rows) {
+      if (row.pruneAt) continue; // terminal rows keep the origin they died with
+      const origin = resolveSessionOrigin(sessionId, origins.scheduled, origins.delegated);
+      if (JSON.stringify(row.run.origin) !== JSON.stringify(origin)) {
+        row.run.origin = origin;
+        const before = row.signature;
+        row.signature = rowSignature(row.run);
+        if (row.signature !== before) changed.push(sessionId);
+      }
     }
     return commitChanges(state, changed, Date.now());
   } finally {

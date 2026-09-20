@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import {
   getWebServiceStatus,
+  getScheduledTaskStatus,
   installTrayShortcuts,
   uninstallTrayShortcuts,
   toggleAutostart,
   startTrayService,
   stopTrayService,
   restartTrayService,
-  WebServiceStatus,
 } from "@/lib/windows-service";
 
 export const dynamic = "force-dynamic";
@@ -22,9 +22,13 @@ interface WindowsServiceRequestBody {
   cleanConfig?: boolean;
 }
 
-export async function GET(): Promise<NextResponse<WebServiceStatus>> {
+export async function GET(): Promise<NextResponse> {
   const status = await getWebServiceStatus();
-  return NextResponse.json(status, {
+  // Wave 3 P5.1 (R3-04): read-only scheduled-task census — the blessed
+  // ompweb-service task plus any legacy omp-web leftover, reported (never
+  // deleted outside the uninstall flow).
+  const tasks = await getScheduledTaskStatus();
+  return NextResponse.json({ ...status, tasks }, {
     headers: { "Cache-Control": "no-store" },
   });
 }

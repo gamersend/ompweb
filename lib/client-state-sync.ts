@@ -1,6 +1,7 @@
 import {
   BOOKMARKS_CAP,
   BOOKMARKS_STORAGE_PREFIX,
+  addBookmark,
   bookmarksStorageKey,
   setBookmarksStorage,
   type BookmarkEntry,
@@ -22,15 +23,19 @@ import {
 } from "./composer-prefs";
 import { comparableProjectPath } from "./comparable-path";
 import {
+  COMPOSER_PREFS_ITEM_ID,
   mergeBookmarks,
   mergeComposerPrefs,
   mergePromptHistory,
   mergeWorkspaceMemory,
+  promptItemId,
   syncValuesEqual,
   type ComposerPrefsSyncValue,
+  type SyncTombstone,
   type WorkspaceMemorySyncEntry,
   type WorkspaceMemorySyncValue,
 } from "./client-state-merge";
+import { getDeviceId } from "./device-id";
 
 // ============================================================================
 // Client-state sync (wave 2, phase 1): mirrors the localStorage-only client
@@ -51,6 +56,16 @@ import {
 //
 // Merge math lives in the pure lib/client-state-merge.ts.
 //
+// Tombstones (wave 3 P2 / R3-02): a local deletion is detected by diffing the
+// observed storage value against the previous snapshot; the missing item ids
+// become LOCAL tombstones (localStorage `omp-web:client-tombstones`, bounded)
+// which are pushed to the server's idempotent DELETE endpoint and merged into
+// every pull. Pulls filter tombstoned items deterministically (delete beats
+// an update whose ts ≤ deletedAt; a re-add with a fresher ts wins), so a
+// deleted bookmark/prompt/mapping/pref no longer resurrects on another
+// device. applyWire runs under an `applying` flag: merge-driven local writes
+// never fabricate new tombstones.
+//
 // Echo-loop guards: (a) per-key "lastPushed rev+json" memo — a push of a
 // value identical to what we last sent/applied is skipped; (b) after pulling,
 // the merged value is memoized so our own write-through never re-pushes it.
@@ -58,9 +73,7 @@ import {
 // NOT synced, by design (device- or tab-scoped): composer drafts
 // (`lib/draft-store.ts`, sessionStorage — a draft is mid-typing state, not a
 // durable artifact) and `omp-web:notify-last-read` (per-device unread
-// cursor). Bookmark/prompt DELETION also does not propagate: the contract is
-// additive union / LWW, so removing on one device leaves the other device's
-// copy (tombstones would be a later phase).
+// cursor).
 // ============================================================================
 
 /* ------------------------------ settings toggle ---------------------------- */
@@ -127,14 +140,23 @@ const KEY_COMPOSER_PREFS = "composer-prefs";
 export const CLIENT_STATE_PULL_INTERVAL_MS = 15_000;
 export const CLIENT_STATE_PUSH_DEBOUNCE_MS = 1_000;
 
-interface ServerEntry {
+export interface ServerEntry {
   rev: number;
   value: unknown;
+}
+
+/** Server wire tombstone (GET ?since= payload). */
+export interface ServerTombstone {
+  rev: number;
+  itemId: string;
+  deletedAt: number;
+  deviceId?: string;
 }
 
 interface PullResponse {
   rev: number;
   keys: Record<string, ServerEntry>;
+  tombstones?: Record<string, ServerTombstone>;
 }
 
 /** One namespace's local ⇄ wire behavior. Wire values are exactly the JSON
@@ -145,9 +167,11 @@ interface KeyAdapter {
   /** Serialized local state for a server key; null = absent locally. */
   readLocalWire(serverKey: string): { value: unknown; json: string } | null;
   /** Write a merged wire value into local storage (write-through so the
-   *  cross-tab `storage` event fires). */
+   *  cross-tab `storage` event fires). null removes the local value. */
   applyWire(serverKey: string, value: unknown): void;
-  merge(localValue: unknown, remoteValue: unknown): unknown;
+  merge(localValue: unknown, remoteValue: unknown, tombstones?: readonly SyncTombstone[]): unknown;
+  /** Stable cross-device item identities inside one wire value. */
+  itemIdsOf(value: unknown): string[];
   /** A local storage write was observed — update LWW shadow state. */
   observe?(storageKey: string): void;
 }
@@ -204,15 +228,24 @@ function createBookmarksAdapter(storage: SyncStorage): KeyAdapter {
     },
     applyWire(serverKey, value) {
       const sessionId = serverKey.slice(NS_BOOKMARKS.length);
+      if (value === null) {
+        storage.removeItem(bookmarksStorageKey(sessionId));
+        return;
+      }
       const entries = Array.isArray(value)
         ? value.map(validBookmark).filter((entry): entry is BookmarkEntry => entry !== null).slice(0, BOOKMARKS_CAP)
         : [];
       storage.setItem(bookmarksStorageKey(sessionId), JSON.stringify(entries));
     },
-    merge(localValue, remoteValue) {
+    merge(localValue, remoteValue, tombstones) {
       const local = Array.isArray(localValue) ? localValue : [];
       const remote = Array.isArray(remoteValue) ? remoteValue : [];
-      return mergeBookmarks(local as BookmarkEntry[], remote as BookmarkEntry[]);
+      return mergeBookmarks(local as BookmarkEntry[], remote as BookmarkEntry[], tombstones);
+    },
+    itemIdsOf(value) {
+      return Array.isArray(value)
+        ? value.map((entry) => (entry && typeof entry === "object" && typeof (entry as BookmarkEntry).entryId === "string" ? (entry as BookmarkEntry).entryId : "")).filter(Boolean)
+        : [];
     },
   };
 }
@@ -237,15 +270,24 @@ function createPromptHistoryAdapter(storage: SyncStorage): KeyAdapter {
       return wire(entries);
     },
     applyWire(_serverKey, value) {
+      if (value === null) {
+        storage.removeItem(PROMPT_HISTORY_STORAGE_KEY);
+        return;
+      }
       const entries = Array.isArray(value)
         ? value.map(validPromptEntry).filter((entry): entry is PromptHistoryEntry => entry !== null).slice(0, PROMPT_HISTORY_CAP)
         : [];
       storage.setItem(PROMPT_HISTORY_STORAGE_KEY, JSON.stringify(entries));
     },
-    merge(localValue, remoteValue) {
+    merge(localValue, remoteValue, tombstones) {
       const local = Array.isArray(localValue) ? localValue : [];
       const remote = Array.isArray(remoteValue) ? remoteValue : [];
-      return mergePromptHistory(local as PromptHistoryEntry[], remote as PromptHistoryEntry[]);
+      return mergePromptHistory(local as PromptHistoryEntry[], remote as PromptHistoryEntry[], tombstones);
+    },
+    itemIdsOf(value) {
+      return Array.isArray(value)
+        ? value.map((entry) => (entry && typeof entry === "object" && typeof (entry as PromptHistoryEntry).text === "string" ? promptItemId((entry as PromptHistoryEntry).text) : "")).filter(Boolean)
+        : [];
     },
   };
 }
@@ -323,6 +365,10 @@ function createWorkspaceMemoryAdapter(storage: SyncStorage, now: () => number): 
       return wire(value);
     },
     applyWire(_serverKey, value) {
+      if (value === null) {
+        storage.removeItem(WORKSPACE_MEMORY_STORAGE_KEY);
+        return;
+      }
       const wireMap = parseWorkspaceMap(JSON.stringify(value ?? {}));
       const idMap: Record<string, string> = {};
       for (const [rawKey, entry] of Object.entries(wireMap)) {
@@ -339,10 +385,14 @@ function createWorkspaceMemoryAdapter(storage: SyncStorage, now: () => number): 
       }
       storage.setItem(WORKSPACE_MEMORY_STORAGE_KEY, JSON.stringify(idMap));
     },
-    merge(localValue, remoteValue) {
+    merge(localValue, remoteValue, tombstones) {
       const local = parseWorkspaceMap(localValue === undefined || localValue === null ? null : JSON.stringify(localValue));
       const remote = parseWorkspaceMap(remoteValue === undefined || remoteValue === null ? null : JSON.stringify(remoteValue));
-      return mergeWorkspaceMemory(local, remote);
+      return mergeWorkspaceMemory(local, remote, tombstones);
+    },
+    itemIdsOf(value) {
+      const map = parseWorkspaceMap(value === undefined || value === null ? null : JSON.stringify(value));
+      return Object.keys(map).map((rawKey) => comparableProjectPath(rawKey));
     },
     observe() {
       syncShadow();
@@ -369,20 +419,29 @@ function createComposerPrefsAdapter(storage: SyncStorage, now: () => number): Ke
       return wire({ value, ts: shadowTs } satisfies ComposerPrefsSyncValue);
     },
     applyWire(_serverKey, value) {
+      if (value === null) {
+        shadowTs = null;
+        lastSeen = null;
+        storage.removeItem(SUBMIT_DURING_RUN_STORAGE_KEY);
+        return;
+      }
       const record = (value && typeof value === "object" ? value : {}) as Partial<ComposerPrefsSyncValue>;
       const behavior = record.value === "queue" ? "queue" : "steer";
       shadowTs = typeof record.ts === "number" && Number.isFinite(record.ts) ? record.ts : now();
       lastSeen = String(behavior);
       storage.setItem(SUBMIT_DURING_RUN_STORAGE_KEY, behavior);
     },
-    merge(localValue, remoteValue) {
+    merge(localValue, remoteValue, tombstones) {
       const asValue = (input: unknown): ComposerPrefsSyncValue | null => {
         if (!input || typeof input !== "object") return null;
         const record = input as Partial<ComposerPrefsSyncValue>;
         if (record.value !== "steer" && record.value !== "queue") return null;
         return { value: record.value, ts: typeof record.ts === "number" && Number.isFinite(record.ts) ? record.ts : 0 };
       };
-      return mergeComposerPrefs(asValue(localValue), asValue(remoteValue));
+      return mergeComposerPrefs(asValue(localValue), asValue(remoteValue), tombstones);
+    },
+    itemIdsOf(value) {
+      return value && typeof value === "object" ? [COMPOSER_PREFS_ITEM_ID] : [];
     },
     observe(storageKey) {
       if (storageKey !== SUBMIT_DURING_RUN_STORAGE_KEY) return;
@@ -393,6 +452,137 @@ function createComposerPrefsAdapter(storage: SyncStorage, now: () => number): Ke
       }
     },
   };
+}
+
+/* ----------------------- local tombstones (deletes) ----------------------- */
+
+export const TOMBSTONES_STORAGE_KEY = "omp-web:client-tombstones";
+/** Bounded like every sync surface; the OLDEST delete marker is evicted. */
+export const CLIENT_TOMBSTONES_CAP = 256;
+
+/** One local delete waiting to reach (or already confirmed by) the server. */
+export interface LocalTombstone {
+  serverKey: string;
+  itemId: string;
+  deletedAt: number;
+  deviceId: string;
+  /** Server-confirmed at (no re-push needed). */
+  ackedAt?: number;
+}
+
+function parseLocalTombstones(raw: string | null): LocalTombstone[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: LocalTombstone[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Partial<LocalTombstone>;
+    if (typeof record.serverKey !== "string" || record.serverKey.length === 0) continue;
+    if (typeof record.itemId !== "string" || record.itemId.length === 0) continue;
+    if (typeof record.deletedAt !== "number" || !Number.isFinite(record.deletedAt)) continue;
+    const tombstone: LocalTombstone = {
+      serverKey: record.serverKey.slice(0, 300),
+      itemId: record.itemId.slice(0, 300),
+      deletedAt: record.deletedAt,
+      deviceId: typeof record.deviceId === "string" ? record.deviceId.slice(0, 128) : "unknown",
+    };
+    if (typeof record.ackedAt === "number" && Number.isFinite(record.ackedAt)) tombstone.ackedAt = record.ackedAt;
+    out.push(tombstone);
+  }
+  return out;
+}
+
+/** Read this device's bounded delete list (newest first, defensive). */
+export function listLocalTombstones(storage?: SyncStorage | null): LocalTombstone[] {
+  const view = storage ?? (typeof window !== "undefined" ? localStorageView() : null);
+  if (!view) return [];
+  return parseLocalTombstones(view.getItem(TOMBSTONES_STORAGE_KEY))
+    .sort((a, b) => b.deletedAt - a.deletedAt)
+    .slice(0, CLIENT_TOMBSTONES_CAP);
+}
+
+function saveLocalTombstones(view: SyncStorage, list: LocalTombstone[]): void {
+  try {
+    view.setItem(TOMBSTONES_STORAGE_KEY, JSON.stringify(list.slice(0, CLIENT_TOMBSTONES_CAP)));
+  } catch {
+    // storage full/unavailable — deletions still apply locally this session
+  }
+}
+
+/** Mutable helpers over the injectable view; the engine calls these. */
+function upsertLocalTombstones(
+  view: SyncStorage,
+  mutate: (list: LocalTombstone[]) => LocalTombstone[],
+): void {
+  saveLocalTombstones(view, mutate(parseLocalTombstones(view.getItem(TOMBSTONES_STORAGE_KEY))));
+}
+
+/** Sync-status projection for the Settings surface (P2.3). All counters are
+ *  best-effort: no active engine → inactive with defaults. */
+export interface ClientStateSyncStatus {
+  active: boolean;
+  enabled: boolean;
+  deviceId: string;
+  lastPullAt: number | null;
+  lastPushAt: number | null;
+  /** Optimistic-concurrency retries this session (client-side counter). */
+  conflicts: number;
+  /** Delete markers not yet confirmed by the server. */
+  pendingTombstones: number;
+}
+
+export function getClientStateSyncStatus(storage?: SyncStorage | null): ClientStateSyncStatus {
+  const runtime = activeRuntime;
+  const pending = listLocalTombstones(storage).filter((tombstone) => !tombstone.ackedAt).length;
+  if (!runtime || runtime.disposed) {
+    return {
+      active: false,
+      enabled: isSyncEnabled(),
+      deviceId: getDeviceId(),
+      lastPullAt: null,
+      lastPushAt: null,
+      conflicts: 0,
+      pendingTombstones: pending,
+    };
+  }
+  return {
+    active: true,
+    enabled: runtime.enabled(),
+    deviceId: runtime.deviceId,
+    lastPullAt: runtime.lastPullAt,
+    lastPushAt: runtime.lastPushAt,
+    conflicts: runtime.conflictCount,
+    pendingTombstones: pendingTombstoneCount(runtime),
+  };
+}
+
+/**
+ * Restore an intentionally deleted BOOKMARK: re-adds the entry (fresh ts, so
+ * it beats its own tombstone everywhere by the merge rule) through the normal
+ * bookmark store — the observing proxy schedules the push. Other namespaces
+ * are not restorable from an id alone (a prompt's text is gone) and return
+ * false; the honest path there is to create the item again normally.
+ */
+export function restoreTombstonedBookmark(tombstone: LocalTombstone): boolean {
+  const sessionId = tombstone.serverKey.startsWith(NS_BOOKMARKS)
+    ? tombstone.serverKey.slice(NS_BOOKMARKS.length)
+    : null;
+  if (!sessionId) return false;
+  try {
+    if (typeof window === "undefined") return false;
+    // addBookmark is the ONLY write path (dedupe, caps, subscriber notify
+    // included) — never hand-write the storage key. The fresh ts beats the
+    // tombstone by the merge rule.
+    return addBookmark(sessionId, tombstone.itemId, { now: Date.now });
+  } catch {
+    return false;
+  }
 }
 
 /* ---------------------------------- engine --------------------------------- */
@@ -414,6 +604,15 @@ interface SyncRuntime {
    *  base for a push before the key has its own memo entry. */
   baseRevHint: Map<string, number>;
   dirty: Set<string>;
+  /** Item ids seen in each key's last local read — deletions are the diff. */
+  shadowItems: Map<string, Set<string>>;
+  /** True while applyWire writes a PULLED value: merge-driven local writes
+   *  must never fabricate tombstones for items the merge itself dropped. */
+  applying: boolean;
+  deviceId: string;
+  lastPullAt: number | null;
+  lastPushAt: number | null;
+  conflictCount: number;
   pushTimer: ReturnType<typeof setTimeout> | null;
   pollTimer: ReturnType<typeof setInterval> | null;
   lastServerRev: number | null;
@@ -466,6 +665,61 @@ function adapterFor(runtime: SyncRuntime, serverKey: string): KeyAdapter | null 
   return null;
 }
 
+/** Sync-tombstone helper: how many deletes are unconfirmed (status). */
+function pendingTombstoneCount(runtime: SyncRuntime): number {
+  return listLocalTombstones(runtime.storage).filter((tombstone) => !tombstone.ackedAt).length;
+}
+
+/** Record delete markers for `ids` under one server key (bounded, deduped). */
+function createLocalTombstones(runtime: SyncRuntime, serverKey: string, ids: readonly string[]): void {
+  if (ids.length === 0) return;
+  const stamp = runtime.now();
+  const deviceId = runtime.deviceId;
+  upsertLocalTombstones(runtime.storage, (list) => {
+    const next = [...list];
+    for (const itemId of ids) {
+      if (next.some((tombstone) => tombstone.serverKey === serverKey && tombstone.itemId === itemId)) continue;
+      next.push({ serverKey, itemId, deletedAt: stamp, deviceId });
+    }
+    return next.sort((a, b) => b.deletedAt - a.deletedAt).slice(0, CLIENT_TOMBSTONES_CAP);
+  });
+  schedulePush(runtime);
+}
+
+/**
+ * Snapshot the current local items for a key and turn MISSING ids into local
+ * tombstones. Skipped while `applying` (merge-driven writes) and on the very
+ * first sight of a key (no baseline to diff against yet). A key that vanished
+ * entirely (e.g. Settings → clear) tombstones every previously-seen item —
+ * otherwise the pull would resurrect the cleared list.
+ */
+function detectDeletions(runtime: SyncRuntime, serverKey: string): void {
+  const adapter = adapterFor(runtime, serverKey);
+  if (!adapter) return;
+  const local = adapter.readLocalWire(serverKey);
+  if (!local) {
+    const previous = runtime.shadowItems.get(serverKey);
+    runtime.shadowItems.delete(serverKey);
+    if (!runtime.applying && previous && previous.size > 0) {
+      createLocalTombstones(runtime, serverKey, [...previous]);
+    }
+    return;
+  }
+  const current = new Set(adapter.itemIdsOf(local.value));
+  const previous = runtime.shadowItems.get(serverKey);
+  runtime.shadowItems.set(serverKey, current);
+  if (runtime.applying || !previous) return;
+  const missing = [...previous].filter((id) => !current.has(id));
+  createLocalTombstones(runtime, serverKey, missing);
+}
+
+/** Tombstones known locally for one server key, in the merge shape. */
+function tombstonesForKey(runtime: SyncRuntime, serverKey: string): SyncTombstone[] {
+  return listLocalTombstones(runtime.storage)
+    .filter((tombstone) => tombstone.serverKey === serverKey)
+    .map((tombstone) => ({ itemId: tombstone.itemId, deletedAt: tombstone.deletedAt, deviceId: tombstone.deviceId }));
+}
+
 function schedulePush(runtime: SyncRuntime): void {
   if (runtime.disposed || runtime.pushTimer) return;
   runtime.pushTimer = setTimeout(() => {
@@ -488,6 +742,10 @@ function observeStorageKey(runtime: SyncRuntime, storageKey: string): void {
     serverKey = KEY_COMPOSER_PREFS;
   }
   if (!serverKey) return;
+  // Deletion detection FIRST (diffs against the pre-write snapshot is wrong
+  // here — the write already happened; the shadow holds the pre-write ids
+  // from the last read, which is exactly what we diff against).
+  detectDeletions(runtime, serverKey);
   runtime.dirty.add(serverKey);
   schedulePush(runtime);
 }
@@ -503,23 +761,58 @@ async function pull(runtime: SyncRuntime): Promise<void> {
     const payload = (await response.json().catch(() => null)) as { success?: boolean; data?: PullResponse } | null;
     const data = payload?.data;
     if (!data || typeof data.rev !== "number" || !data.keys || typeof data.keys !== "object") return;
+    // Ingest server delete markers BEFORE the per-key merges so the merged
+    // values below are already tombstone-filtered. Markers for known keys are
+    // remembered locally (dedupe: keep the earliest deletedAt) and ACKED —
+    // they are on the server, so we must never push them back.
+    if (data.tombstones && typeof data.tombstones === "object" && !Array.isArray(data.tombstones)) {
+      upsertLocalTombstones(runtime.storage, (list) => {
+        const next = [...list];
+        for (const [id, marker] of Object.entries(data.tombstones as Record<string, ServerTombstone>)) {
+          if (!marker || typeof marker.itemId !== "string" || !Number.isFinite(marker.deletedAt)) continue;
+          const sep = id.lastIndexOf("::");
+          const serverKey = sep > 0 ? id.slice(0, sep) : "";
+          if (!serverKey || !adapterFor(runtime, serverKey)) continue;
+          const existing = next.find((tombstone) => tombstone.serverKey === serverKey && tombstone.itemId === marker.itemId);
+          if (existing) {
+            if (marker.deletedAt < existing.deletedAt) existing.deletedAt = marker.deletedAt;
+            existing.ackedAt = runtime.now();
+            continue;
+          }
+          next.push({ serverKey, itemId: marker.itemId, deletedAt: marker.deletedAt, deviceId: marker.deviceId ?? "remote", ackedAt: runtime.now() });
+        }
+        return next.sort((a, b) => b.deletedAt - a.deletedAt).slice(0, CLIENT_TOMBSTONES_CAP);
+      });
+    }
+    runtime.lastPullAt = runtime.now();
     for (const [serverKey, entry] of Object.entries(data.keys)) {
       if (!entry || typeof entry.rev !== "number") continue;
       const adapter = adapterFor(runtime, serverKey);
       // Foreign/future namespaces are ignored (and never re-requested —
       // incremental pulls move `since` past them).
       if (!adapter) continue;
+      // Snapshot/refresh the local shadow first: catches deletions made
+      // since the last cycle (offline window included) and keeps the diff
+      // basis fresh before any merge-driven write below.
+      detectDeletions(runtime, serverKey);
       const local = adapter.readLocalWire(serverKey);
       const memoized = runtime.memo.get(serverKey);
       if (local && memoized && memoized.rev === entry.rev && local.json === memoized.json) continue;
-      const merged = adapter.merge(local?.value, entry.value);
+      const merged = adapter.merge(local?.value, entry.value, tombstonesForKey(runtime, serverKey));
       const mergedJson = JSON.stringify(merged) ?? "null";
       const localSame = local !== null && syncValuesEqual(merged, local.value);
       const remoteSame = syncValuesEqual(merged, entry.value);
       if (!localSame) {
         // Converge local to the union (the observing proxy marks the key
-        // dirty; whether that push is needed is decided below).
-        adapter.applyWire(serverKey, merged);
+        // dirty; whether that push is needed is decided below). Merge-driven
+        // writes run under `applying` — they never fabricate tombstones.
+        runtime.applying = true;
+        try {
+          adapter.applyWire(serverKey, merged);
+        } finally {
+          runtime.applying = false;
+        }
+        detectDeletions(runtime, serverKey); // refresh the shadow post-apply
       }
       if (remoteSame) {
         // The server already holds the union — adopt it as the pushed value
@@ -542,38 +835,86 @@ async function pull(runtime: SyncRuntime): Promise<void> {
   }
 }
 
+async function deleteKeyItem(runtime: SyncRuntime, serverKey: string, itemId: string): Promise<boolean> {
+  try {
+    const response = await runtime.fetchImpl("/api/client-state", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: serverKey, itemId, deviceId: runtime.deviceId }),
+    });
+    if (response.ok) return true;
+    if (response.status === 409) runtime.conflictCount += 1;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Push every locally-unconfirmed tombstone for one server key. */
+async function pushTombstonesForKey(runtime: SyncRuntime, serverKey: string): Promise<void> {
+  const pending = listLocalTombstones(runtime.storage).filter(
+    (tombstone) => tombstone.serverKey === serverKey && !tombstone.ackedAt,
+  );
+  for (const tombstone of pending) {
+    const ok = await deleteKeyItem(runtime, serverKey, tombstone.itemId);
+    if (!ok) continue; // offline/server busy — retried on the next flush
+    upsertLocalTombstones(runtime.storage, (list) => {
+      const target = list.find(
+        (candidate) => candidate.serverKey === serverKey && candidate.itemId === tombstone.itemId,
+      );
+      if (target) target.ackedAt = runtime.now();
+      return list;
+    });
+  }
+}
+
 async function pushKey(runtime: SyncRuntime, serverKey: string, adapter: KeyAdapter): Promise<void> {
+  // Catch deletions that predate this push (engine just started, observe
+  // missed, etc.) so the value we push and the markers we send agree.
+  detectDeletions(runtime, serverKey);
   const local = adapter.readLocalWire(serverKey);
   if (!local) return;
   if (runtime.memo.get(serverKey)?.json === local.json) return; // echo guard
   const baseRev = runtime.baseRevHint.get(serverKey) ?? runtime.memo.get(serverKey)?.rev ?? 0;
   let outcome = await putKey(runtime, serverKey, local.value, baseRev);
   if (outcome.ok) {
+    runtime.lastPushAt = runtime.now();
     runtime.baseRevHint.delete(serverKey);
     runtime.memo.set(serverKey, { rev: outcome.rev, json: local.json });
-    return;
+  } else {
+    if (outcome.conflict) runtime.conflictCount += 1;
+    if (!outcome.conflict) return; // transient/other failure — give up until the next cycle
+    // 409: refetch the key, re-merge, retry ONCE with the fresh rev.
+    const remoteEntry = await fetchKey(runtime, serverKey);
+    if (!remoteEntry) return;
+    const merged = adapter.merge(local.value, remoteEntry.value, tombstonesForKey(runtime, serverKey));
+    const mergedJson = JSON.stringify(merged) ?? "null";
+    if (syncValuesEqual(merged, remoteEntry.value)) {
+      // The server already holds the union — adopt it as pushed.
+      runtime.baseRevHint.delete(serverKey);
+      runtime.memo.set(serverKey, { rev: remoteEntry.rev, json: mergedJson });
+    } else {
+      if (!syncValuesEqual(merged, local.value)) {
+        runtime.applying = true;
+        try {
+          adapter.applyWire(serverKey, merged); // converge local to the union first
+        } finally {
+          runtime.applying = false;
+        }
+        detectDeletions(runtime, serverKey);
+      }
+      outcome = await putKey(runtime, serverKey, merged, remoteEntry.rev);
+      if (outcome.ok) {
+        runtime.lastPushAt = runtime.now();
+        runtime.baseRevHint.delete(serverKey);
+        runtime.memo.set(serverKey, { rev: outcome.rev, json: mergedJson });
+      }
+    }
   }
-  if (!outcome.conflict) return; // transient/other failure — give up until the next cycle
-  // 409: refetch the key, re-merge, retry ONCE with the fresh rev.
-  const remoteEntry = await fetchKey(runtime, serverKey);
-  if (!remoteEntry) return;
-  const merged = adapter.merge(local.value, remoteEntry.value);
-  const mergedJson = JSON.stringify(merged) ?? "null";
-  if (syncValuesEqual(merged, remoteEntry.value)) {
-    // The server already holds the union — adopt it as pushed.
-    runtime.baseRevHint.delete(serverKey);
-    runtime.memo.set(serverKey, { rev: remoteEntry.rev, json: mergedJson });
-    return;
-  }
-  if (!syncValuesEqual(merged, local.value)) {
-    adapter.applyWire(serverKey, merged); // converge local to the union first
-  }
-  outcome = await putKey(runtime, serverKey, merged, remoteEntry.rev);
-  if (outcome.ok) {
-    runtime.baseRevHint.delete(serverKey);
-    runtime.memo.set(serverKey, { rev: outcome.rev, json: mergedJson });
-  }
-  // A second 409 (or any failure) gives up silently until the next poll.
+  // The value round-tripped — deliver this key's delete markers too (order
+  // does not matter: the server keeps values and tombstones independently
+  // and every client filters at merge time).
+  await pushTombstonesForKey(runtime, serverKey);
 }
 
 async function putKey(
@@ -629,6 +970,15 @@ async function flushPush(runtime: SyncRuntime): Promise<void> {
       if (!adapter) continue;
       await pushKey(runtime, serverKey, adapter);
     }
+    // Sweep delete markers whose value push was a no-op (echo guard) or that
+    // piled up offline — idempotent server-side, retried until acked.
+    const pendingByKeys = new Set(listLocalTombstones(runtime.storage).filter((t) => !t.ackedAt).map((t) => t.serverKey));
+    for (const serverKey of pendingByKeys) {
+      const adapter = adapterFor(runtime, serverKey);
+      if (!adapter) continue;
+      await pushTombstonesForKey(runtime, serverKey);
+    }
+    if (pendingByKeys.size > 0) runtime.lastPushAt = runtime.now();
   } catch {
     // never let sync break the page
   } finally {
@@ -690,6 +1040,12 @@ export function initClientStateSync(options: ClientStateSyncOptions = {}): () =>
     memo: new Map(),
     baseRevHint: new Map(),
     dirty: new Set(),
+    shadowItems: new Map(),
+    applying: false,
+    deviceId: getDeviceId(),
+    lastPullAt: null,
+    lastPushAt: null,
+    conflictCount: 0,
     pushTimer: null,
     pollTimer: null,
     lastServerRev: null,
@@ -723,6 +1079,14 @@ export function initClientStateSync(options: ClientStateSyncOptions = {}): () =>
 
   // Poll loop: 15 s while visible + visibilitychange/online refreshes
   // (the useNotifyFeed discipline).
+  // Baseline the item shadows so the FIRST user deletion after engine start
+  // is already diffable (no tombstone is fabricated for the baseline).
+  const baselineShadow = () => {
+    for (const adapter of runtime.adapters) {
+      for (const serverKey of adapter.localServerKeys()) detectDeletions(runtime, serverKey);
+    }
+  };
+  baselineShadow();
   const tick = () => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
     void pull(runtime);

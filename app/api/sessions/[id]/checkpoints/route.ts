@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { parseJsonWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import {
@@ -8,6 +9,8 @@ import {
 } from "@/lib/file-access";
 import { invalidateSessionListCache, resolveSessionPath, getSessionEntries, readSessionHeader } from "@/lib/session-reader";
 import { loadCheckpoints } from "@/lib/checkpoints/store";
+import { recordRestoreLedgerEntry, type RestoreLedgerEntry } from "@/lib/checkpoints/ledger";
+import { notifyCheckpointRestore } from "@/lib/notify/emit";
 import {
   DirtyConflictError,
   findCheckpointForEntry,
@@ -115,10 +118,22 @@ export async function POST(
       body?: unknown;
       files?: unknown;
       base?: unknown;
+      correlationId?: unknown;
+      deviceId?: unknown;
     }>(req, MAX_CHECKPOINTS_REQUEST_BYTES);
     const entryId = typeof body.entryId === "string" ? body.entryId : "";
     const mode = typeof body.mode === "string" ? body.mode : "";
     const force = body.force === true;
+    // Wave 3 P4: the caller sends a fresh correlation id per attempt (dedup
+    // key in the durable ledger) plus its device label (presentation only).
+    const correlationId = typeof body.correlationId === "string"
+      && body.correlationId.length >= 8 && body.correlationId.length <= 128
+      && /^[\x21-\x7e]+$/.test(body.correlationId)
+      ? body.correlationId
+      : randomUUID();
+    const deviceId = typeof body.deviceId === "string" && body.deviceId.trim() !== ""
+      ? body.deviceId.trim().slice(0, 80)
+      : undefined;
     if (!entryId) {
       return NextResponse.json({ error: "entryId is required", code: "entry_id_required" }, { status: 400 });
     }
@@ -145,6 +160,41 @@ export async function POST(
       return NextResponse.json({ error: "No checkpoint exists at or before this entry", code: "checkpoint_not_found" }, { status: 404 });
     }
 
+    // Wave 3 P4 (R3-01): every mutating attempt writes ONE durable ledger
+    // record + one notify row — success or failure. Never changes the result.
+    const recordRestore = (
+      ledgerMode: RestoreLedgerEntry["mode"],
+      outcome: RestoreLedgerEntry["outcome"],
+      summary: string,
+      extra: Partial<RestoreLedgerEntry> = {},
+    ): void => {
+      try {
+        recordRestoreLedgerEntry({
+          id: correlationId,
+          sessionId,
+          seq: checkpoint.seq,
+          mode: ledgerMode,
+          outcome,
+          ts: new Date().toISOString(),
+          cwd,
+          ...(deviceId ? { device: deviceId } : {}),
+          ...extra,
+        });
+        notifyCheckpointRestore(
+          { sessionId, sessionTitle: header?.title ?? sessionId, projectRoot: cwd },
+          correlationId,
+          { mode: ledgerMode, outcome, summary },
+        );
+      } catch {
+        // audit plumbing must never change the restore result
+      }
+    };
+    const shortRestoreError = (error: unknown): string => {
+      if (error instanceof DirtyConflictError) return "working tree has uncommitted changes";
+      const message = error instanceof Error ? error.message : String(error);
+      return message.replace(/\s+/g, " ").slice(0, 240);
+    };
+
     if (mode === "preview") {
       const preview = await previewRestore(cwd, checkpoint.treeHash);
       return NextResponse.json({
@@ -154,8 +204,14 @@ export async function POST(
     }
 
     if (mode === "restore") {
-      const result = await restoreInPlace(cwd, checkpoint.treeHash, { force });
-      return NextResponse.json({ success: true, data: { checkpoint, ...result } });
+      try {
+        const result = await restoreInPlace(cwd, checkpoint.treeHash, { force });
+        recordRestore("in-place", "success", `restored checkpoint ${checkpoint.seq}`);
+        return NextResponse.json({ success: true, data: { checkpoint, ...result } });
+      } catch (error) {
+        recordRestore("in-place", "failed", `restore of checkpoint ${checkpoint.seq} failed`, { error: shortRestoreError(error) });
+        throw error;
+      }
     }
 
     if (mode === "pr-draft") {
@@ -223,6 +279,10 @@ export async function POST(
           prUrl,
           created.branch,
         );
+        recordRestore("pr", "success", `pull request opened for checkpoint ${checkpoint.seq}`, {
+          prUrl,
+          branch: created.branch,
+        });
         // A new worktree just became browsable — same refresh the
         // restore-worktree path performs.
         invalidateSessionListCache();
@@ -231,6 +291,10 @@ export async function POST(
           data: { checkpoint, branch: created.branch, prUrl, worktreePath: created.worktreePath },
         });
       } catch (error) {
+        recordRestore("pr", "failed", `pull request for checkpoint ${checkpoint.seq} failed`, {
+          branch: created.branch,
+          error: shortRestoreError(error),
+        });
         if (error instanceof PrError) throw error;
         // Commit succeeded but push/gh did not — surface with the branch so
         // the user can recover manually (the envelope carries a fixCommand
@@ -239,11 +303,21 @@ export async function POST(
       }
     }
 
-    const result = await restoreToWorktree(cwd, checkpoint.treeHash, sessionId, checkpoint.seq);
-    // A new worktree just became browsable — same refresh the /api/worktrees
-    // POST performs so the project's worktree switcher picks it up.
-    invalidateSessionListCache();
-    return NextResponse.json({ success: true, data: { checkpoint, ...result } });
+    try {
+      const result = await restoreToWorktree(cwd, checkpoint.treeHash, sessionId, checkpoint.seq);
+      recordRestore("worktree", "success", `restore worktree created for checkpoint ${checkpoint.seq}`, {
+        branch: result.branch,
+      });
+      // A new worktree just became browsable — same refresh the /api/worktrees
+      // POST performs so the project's worktree switcher picks it up.
+      invalidateSessionListCache();
+      return NextResponse.json({ success: true, data: { checkpoint, ...result } });
+    } catch (error) {
+      recordRestore("worktree", "failed", `restore worktree for checkpoint ${checkpoint.seq} failed`, {
+        error: shortRestoreError(error),
+      });
+      throw error;
+    }
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {
       return NextResponse.json({ error: "Checkpoint request is too large", code: "request_too_large" }, { status: 413 });

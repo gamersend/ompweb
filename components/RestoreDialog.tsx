@@ -24,6 +24,20 @@ import { toast } from "@/components/ui/toast";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
 import { isSafeExternalUrl } from "@/lib/safe-url";
+import { getDeviceId } from "@/lib/device-id";
+
+/** One correlation id per restore ATTEMPT — the durable restore ledger
+ *  (wave 3 P4) dedups by it, so a 409 retry must never reuse the failed
+ *  attempt's id. */
+function restoreCorrelationId(): string {
+  try {
+    const uuid = crypto.randomUUID?.();
+    if (uuid) return uuid;
+  } catch {
+    // fall through to the hand-rolled id
+  }
+  return `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 export interface RestorePreviewFile {
   path: string;
@@ -236,7 +250,7 @@ export function RestoreDialog({ open, entryId, sessionId, cwd, onOpenChange, onR
         const response = await fetch(`/api/sessions/${encodeURIComponent(target.sessionId)}/checkpoints`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entryId: target.entryId, mode: "pr", title, body, base: trimmedBase, files: [...prSelected] }),
+          body: JSON.stringify({ entryId: target.entryId, mode: "pr", title, body, base: trimmedBase, files: [...prSelected], correlationId: restoreCorrelationId(), deviceId: getDeviceId() }),
         });
         const payload = await response.json().catch(() => null);
         if (!response.ok) {
@@ -264,6 +278,8 @@ export function RestoreDialog({ open, entryId, sessionId, cwd, onOpenChange, onR
           entryId: target.entryId,
           mode: mode === "worktree" ? "restore-worktree" : "restore",
           ...(force ? { force: true } : {}),
+          correlationId: restoreCorrelationId(),
+          deviceId: getDeviceId(),
         }),
       });
       const body = await response.json().catch(() => null);

@@ -6,6 +6,7 @@ import { dedupKeyFor, isWebhookFailureRow, type NotifyRow } from "./notify/notif
 import { dispatchWebhookForRow } from "./notify/webhook";
 import { getModelReport, type ModelReport } from "./insights/model-report";
 import { listAllSessions } from "./session-reader";
+import { loadCheckpointLedger, type RestoreLedgerEntry } from "./checkpoints/ledger";
 import { formatCompactNumber } from "./format";
 
 // ============================================================================
@@ -19,9 +20,8 @@ import { formatCompactNumber } from "./format";
 //   ∪ stats.db — native wins per group, est. fills gaps, source-badged);
 // - delegations: notify feed rows kind:"delegation" (the delegation ledger is
 //   tab/process-ephemeral — feed rows are the durable record);
-// - checkpoints restored: NOT recorded anywhere durable (checkpoint stores
-//   hold snapshots, not restores; no feed row exists for a restore) — the
-//   section is omitted honestly rather than estimated;
+// - checkpoints restored: wave 3 P4 ledger (web-checkpoint-ledger.json) —
+//   every restore attempt is recorded durably there; counts are per OUTCOME;
 // - top failures: feed kind:"error" rows + webhook-failure (`wherr-`) rows,
 //   grouped by title.
 //
@@ -340,6 +340,8 @@ export interface DigestSourceDeps {
   listSessions?: () => Promise<DigestSessionRow[]> | DigestSessionRow[];
   modelReport?: () => Promise<DigestModelReport> | DigestModelReport;
   notifyRows?: () => NotifyRow[];
+  /** Durable restore-ledger entries (wave 3 P4); sync + best-effort. */
+  restoreLedger?: () => RestoreLedgerEntry[];
   sourceTimeoutMs?: number;
 }
 
@@ -497,9 +499,23 @@ export async function composeDigest(opts: { nowMs?: number; deps?: DigestSourceD
     }
   }
 
-  // Checkpoint restores are intentionally absent: nothing durable records a
-  // restore (the checkpoint stores hold snapshots; no feed row exists for a
-  // restore) — omitted honestly rather than estimated.
+  // Checkpoint restores (wave 3 P4): counted from the DURABLE restore ledger
+  // by outcome — never inferred from snapshots. A ledger read failure omits
+  // the section with a note.
+  const restoreLines: string[] = [];
+  try {
+    const ledger = (deps.restoreLedger ?? (() => loadCheckpointLedger().entries))();
+    const restores = ledger.filter((entry) => inWindow(Date.parse(entry.ts), sinceMs, nowMs));
+    if (restores.length > 0) {
+      const ok = restores.filter((entry) => entry.outcome === "success").length;
+      const failed = restores.filter((entry) => entry.outcome === "failed").length;
+      const projects = new Set(restores.map((entry) => entry.cwd).filter(Boolean));
+      restoreLines.push(`- Checkpoint restores: ${restores.length} (${ok} ok${failed ? `, ${failed} failed` : ""})${projects.size ? ` across ${projects.size} project${projects.size === 1 ? "" : "s"}` : ""}`);
+    }
+  } catch {
+    unavailable.push("restores");
+    partial = true;
+  }
 
   const week = isoWeekKey(new Date(nowMs));
   const title = `omp-web weekly digest · ${week}`;
@@ -513,6 +529,7 @@ export async function composeDigest(opts: { nowMs?: number; deps?: DigestSourceD
     ...(sessionsLine ? [sessionsLine] : []),
     ...(usageLines ?? []),
     ...delegationLines,
+    ...restoreLines,
     ...failureLines,
   ].join("\n");
 

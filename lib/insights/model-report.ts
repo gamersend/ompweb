@@ -29,9 +29,11 @@
 //   history (lib/scheduler/store.ts). Those ids are matched against the
 //   stats.db session_file paths and the ompweb-side sessionId — scheduled
 //   sessions are BADGED with their job name.
-// - Delegated: the W2 live-delegation marker has not landed yet (P5/P6 in
-//   flight). The field is wired (`labeled.delegated`, always 0 for now);
-//   when the marker lands, register its session ids the same way.
+// - Delegated (wave 3 P5.2 / R3-08): /api/delegate records every delivered
+//   delegation in the durable web-delegations.json store keyed by TARGET
+//   session; those ids are matched the same way, so delegated sessions are
+//   BADGED as delegated. Delegated wins over scheduled when a session is
+//   both (the delegation is the more specific origin).
 //   Nothing is excluded today — every session counts in every row.
 //
 // computeModelReport() is pure (no fs/sqlite imports); getModelReport() is
@@ -41,6 +43,7 @@
 import { computeTimeRangeBounds } from "../usage-service";
 import { getUsageReport } from "../usage-service";
 import { loadScheduleStore } from "../scheduler/store";
+import { collectDelegatedSessions } from "../delegation-ledger";
 import { getNativeStats } from "../omp-stats-db";
 import type { ModelFactsBundle } from "../omp-stats-db";
 import type { ModelUsageSummary } from "../usage-types";
@@ -66,6 +69,8 @@ export interface ModelReportRow {
   sessions: number;
   /** Sessions with a known scheduler origin (badged, not excluded). */
   sessionsScheduled: number;
+  /** Sessions with a delegated origin — work that landed via /api/delegate. */
+  sessionsDelegated: number;
   completed: number;
   errors: number;
   aborted: number;
@@ -89,6 +94,8 @@ export interface ModelReportRow {
   toolErrors: number;
   /** Scheduler job name behind sessionsScheduled, when attributed. */
   scheduledBy?: string;
+  /** Source session behind sessionsDelegated, when attributed. */
+  delegatedBy?: string;
 }
 
 export interface ModelReport {
@@ -115,6 +122,8 @@ export interface ModelReportInput {
   usageModels: ModelUsageSummary[];
   /** sessionId → scheduler job name (empty map = no known origins). */
   scheduledSessions: ReadonlyMap<string, string>;
+  /** sessionId (delegation TARGET) → source session id (empty = none known). */
+  delegatedSessions?: ReadonlyMap<string, string>;
 }
 
 /** Injected collaborators for tests / refresh — defaults are the real ones. */
@@ -122,6 +131,7 @@ export interface ModelReportDeps {
   native?: Pick<ReturnType<typeof getNativeStats>, "available" | "partial" | "modelFacts">;
   usageModels?: () => Promise<ModelUsageSummary[]> | ModelUsageSummary[];
   scheduledSessions?: ReadonlyMap<string, string>;
+  delegatedSessions?: ReadonlyMap<string, string>;
 }
 
 interface GroupAcc {
@@ -130,6 +140,7 @@ interface GroupAcc {
   source: "native" | "ompweb";
   sessions: number;
   sessionsScheduled: number;
+  sessionsDelegated: number;
   completed: number;
   errors: number;
   aborted: number;
@@ -144,6 +155,7 @@ interface GroupAcc {
   toolCalls: number;
   toolErrors: number;
   scheduledBy?: string;
+  delegatedBy?: string;
 }
 
 const groupKey = (provider: string, model: string) => `${provider}\u0000${model}`;
@@ -154,7 +166,7 @@ function accFor(map: Map<string, GroupAcc>, provider: string, model: string): Gr
   if (!acc) {
     acc = {
       provider, model, source: "ompweb",
-      sessions: 0, sessionsScheduled: 0,
+      sessions: 0, sessionsScheduled: 0, sessionsDelegated: 0,
       completed: 0, errors: 0, aborted: 0,
       ttft: [],
       tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, tokens: 0,
@@ -178,6 +190,17 @@ function matchesScheduled(sessionPath: string, scheduledSessions: ReadonlyMap<st
   return undefined;
 }
 
+/** Same substring match for delegated origins: the ledger records the
+ * TARGET session id; the source id is the badge value. */
+function matchesDelegated(sessionPath: string, delegatedSessions: ReadonlyMap<string, string>): string | undefined {
+  if (!sessionPath || delegatedSessions.size === 0) return undefined;
+  const lower = sessionPath.toLowerCase();
+  for (const [targetSession, fromSession] of delegatedSessions) {
+    if (targetSession && lower.includes(targetSession.toLowerCase())) return fromSession;
+  }
+  return undefined;
+}
+
 function pct(part: number, total: number): number | null {
   if (total <= 0) return null;
   return Math.round((part / total) * 1000) / 10;
@@ -197,6 +220,7 @@ export function median(values: number[]): number | null {
 /** Pure merge core — see the module header for the rules. */
 export function computeModelReport(input: ModelReportInput): ModelReport {
   const { nativeFacts, scheduledSessions } = input;
+  const delegatedSessions = input.delegatedSessions ?? new Map<string, string>();
   const groups = new Map<string, GroupAcc>();
 
   // --- native stats.db sessions -------------------------------------------
@@ -215,10 +239,17 @@ export function computeModelReport(input: ModelReportInput): ModelReport {
     else if (fact.lastStopReason === "error") acc.errors += 1;
     else if (fact.lastStopReason === "aborted") acc.aborted += 1;
     // anything else (toolUse, null) = other: neither completed nor failed.
-    const jobName = matchesScheduled(fact.sessionPath, scheduledSessions);
-    if (jobName !== undefined) {
-      acc.sessionsScheduled += 1;
-      acc.scheduledBy = jobName;
+    // Delegated origin wins over scheduled (more specific).
+    const delegatedFrom = matchesDelegated(fact.sessionPath, delegatedSessions);
+    if (delegatedFrom !== undefined) {
+      acc.sessionsDelegated += 1;
+      acc.delegatedBy = delegatedFrom;
+    } else {
+      const jobName = matchesScheduled(fact.sessionPath, scheduledSessions);
+      if (jobName !== undefined) {
+        acc.sessionsScheduled += 1;
+        acc.scheduledBy = jobName;
+      }
     }
   }
 
@@ -259,6 +290,7 @@ export function computeModelReport(input: ModelReportInput): ModelReport {
   // --- assemble rows ---------------------------------------------------------
   const rows: ModelReportRow[] = [];
   let scheduledTotal = 0;
+  let delegatedTotal = 0;
   for (const acc of groups.values()) {
     const nativeSessions = acc.source === "native" && acc.sessions > 0;
     const sessions = nativeSessions ? acc.sessions : 0;
@@ -272,6 +304,7 @@ export function computeModelReport(input: ModelReportInput): ModelReport {
       source: nativeSessions ? "native" : "ompweb",
       sessions,
       sessionsScheduled: acc.sessionsScheduled,
+      sessionsDelegated: acc.sessionsDelegated,
       completed,
       errors: nativeSessions ? acc.errors : 0,
       aborted: nativeSessions ? acc.aborted : 0,
@@ -291,7 +324,9 @@ export function computeModelReport(input: ModelReportInput): ModelReport {
       toolErrors: acc.toolErrors,
     };
     if (acc.scheduledBy) row.scheduledBy = acc.scheduledBy;
+    if (acc.delegatedBy) row.delegatedBy = acc.delegatedBy;
     scheduledTotal += acc.sessionsScheduled;
+    delegatedTotal += acc.sessionsDelegated;
     rows.push(row);
   }
 
@@ -311,7 +346,7 @@ export function computeModelReport(input: ModelReportInput): ModelReport {
     partial: input.nativePartial || !input.nativeAvailable,
     tookMs: 0,
     rows,
-    labeled: { scheduled: scheduledTotal, delegated: 0 },
+    labeled: { scheduled: scheduledTotal, delegated: delegatedTotal },
   };
 }
 
@@ -388,6 +423,12 @@ export async function getModelReport(
   }
 
   const scheduledSessions = deps?.scheduledSessions ?? collectScheduledSessions(loadScheduleStore());
+  const delegatedSessions = deps?.delegatedSessions ?? (() => {
+    const byTarget = collectDelegatedSessions();
+    const bySource = new Map<string, string>();
+    for (const [target, entry] of byTarget) bySource.set(target, entry.fromSession);
+    return bySource;
+  })();
 
   const report = computeModelReport({
     now,
@@ -397,6 +438,7 @@ export async function getModelReport(
     nativeFacts,
     usageModels,
     scheduledSessions,
+    delegatedSessions,
   });
   report.tookMs = Date.now() - startedAt;
   // Route-level budget discipline (P7 pattern): a slow build degrades the

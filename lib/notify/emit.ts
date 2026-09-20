@@ -120,6 +120,32 @@ export function notifyDelegation(
   return row;
 }
 
+/** Checkpoint restore (wave 3 P4 / R3-01): one row per durable ledger record —
+ *  success or failure. The body is operator metadata only (mode, file counts,
+ *  device) — never a diff, never transcript text. */
+export function notifyCheckpointRestore(
+  ctx: NotifyEmitContext,
+  token: string,
+  detail: { mode: string; outcome: "success" | "failed" | "superseded"; summary: string },
+): NotifyRow | null {
+  const titles: Record<string, string> = {
+    "in-place": "files restored to checkpoint",
+    worktree: "restore worktree created",
+    pr: "pull request created from checkpoint",
+  };
+  const row = pushNotifyRow({
+    id: dedupKeyFor("checkpoint", ctx.sessionId, token),
+    kind: "checkpoint",
+    sessionId: ctx.sessionId,
+    sessionTitle: ctx.sessionTitle,
+    projectRoot: ctx.projectRoot,
+    title: `${ctx.sessionTitle} — ${detail.outcome === "failed" ? "restore failed" : titles[detail.mode] ?? "checkpoint restore"}`,
+    body: detail.summary.trim() ? truncate(detail.summary.trim(), 200) : "Checkpoint restore recorded.",
+  });
+  if (row) dispatchWebhookForRow(row);
+  return row;
+}
+
 function truncate(text: string, max: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;

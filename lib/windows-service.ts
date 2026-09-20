@@ -46,6 +46,49 @@ export const DEFAULT_WEB_SERVICE_CONFIG: WebServiceConfig = {
   autoRestart: true,
 };
 
+// Scheduled-task identity (wave 3 P5.1 / R3-04). The blessed name is
+// `ompweb-service` — what the current wave-2 installers register on this
+// machine. Older repo installers created `omp-web`; that name is detected
+// and REPORTED read-only (status + diagnostics), never deleted outside the
+// explicit uninstall flow.
+export const SERVICE_TASK_NAME = "ompweb-service";
+export const LEGACY_SERVICE_TASK_NAME = "omp-web";
+
+/** Does a scheduled task exist? Read-only probe via schtasks /query. */
+async function scheduledTaskExists(taskName: string): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  try {
+    await execFileAsync("schtasks.exe", ["/query", "/tn", taskName], {
+      timeout: 3000,
+      env: getWindowsExecutionEnv(),
+      windowsHide: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read-only task census for status/diagnostics: the blessed task and any
+ *  legacy-name leftovers. Never mutates anything. */
+export async function getScheduledTaskStatus(): Promise<{
+  isWindows: boolean;
+  taskName: string;
+  taskExists: boolean;
+  legacyTaskName: string;
+  legacyTaskExists: boolean;
+}> {
+  const isWindows = process.platform === "win32";
+  if (!isWindows) {
+    return { isWindows, taskName: SERVICE_TASK_NAME, taskExists: false, legacyTaskName: LEGACY_SERVICE_TASK_NAME, legacyTaskExists: false };
+  }
+  const [taskExists, legacyTaskExists] = await Promise.all([
+    scheduledTaskExists(SERVICE_TASK_NAME),
+    scheduledTaskExists(LEGACY_SERVICE_TASK_NAME),
+  ]);
+  return { isWindows, taskName: SERVICE_TASK_NAME, taskExists, legacyTaskName: LEGACY_SERVICE_TASK_NAME, legacyTaskExists };
+}
+
 export function getRepoRoot(): string {
   if (process.env.OMP_WEB_PACKAGE_DIR && existsSync(process.env.OMP_WEB_PACKAGE_DIR)) {
     return process.env.OMP_WEB_PACKAGE_DIR;
@@ -483,11 +526,15 @@ export async function startTrayService(options: { openBrowser?: boolean } = {}):
 
   // Prefer Scheduled Task (headless service) if it exists — more reliable than hidden wscript.
   try {
-    // Check if task exists: schtasks /query returns 0 if found.
-    try {
-      await execFileAsync("schtasks.exe", ["/query", "/tn", "omp-web"], { timeout: 3000, env: getWindowsExecutionEnv(), windowsHide: true });
-      // Task exists, try to run it (ONLOGON tasks can be triggered via /run even without logon trigger).
-      await execFileAsync("schtasks.exe", ["/run", "/tn", "omp-web"], { timeout: 5000, env: getWindowsExecutionEnv(), windowsHide: true });
+    // The blessed task name first; a legacy-name task still gets run so an
+    // un-migrated install keeps starting (renaming is the installer's job).
+    const taskName = (await scheduledTaskExists(SERVICE_TASK_NAME))
+      ? SERVICE_TASK_NAME
+      : (await scheduledTaskExists(LEGACY_SERVICE_TASK_NAME))
+        ? LEGACY_SERVICE_TASK_NAME
+        : null;
+    if (taskName) {
+      await execFileAsync("schtasks.exe", ["/run", "/tn", taskName], { timeout: 5000, env: getWindowsExecutionEnv(), windowsHide: true });
       invalidateTrayRunningCache();
       // Optionally open browser if requested.
       if (options.openBrowser) {
@@ -496,10 +543,10 @@ export async function startTrayService(options: { openBrowser?: boolean } = {}):
         try { await execFileAsync("cmd.exe", ["/c", "start", "", url], { timeout: 2000, windowsHide: true } as unknown as { timeout: number; windowsHide: boolean }); } catch { }
       }
       return { success: true };
-    } catch {
-      // Task doesn't exist or /run failed, fall through to wscript fallback.
     }
-  } catch { }
+  } catch {
+    // Task /run failed, fall through to the native-exe + wscript fallbacks.
+  }
   // Native tray exe (dotnet WinForms) — most reliable, no hidden wscript heap.
   const nativeExe = path.join(getRepoRoot(), "bin", "omp-web-tray.exe");
   if (existsSync(nativeExe)) {
@@ -586,9 +633,14 @@ export async function stopTrayService(): Promise<{ success: boolean; message?: s
     return { success: false, message: "Only supported on Windows." };
   }
   try {
-    // Try to end Scheduled Task first (headless service)
+    // End BOTH task names (stopping the blessed task is the supported stop;
+    // ending a legacy-name task only halts that process — the uninstaller is
+    // the only place a task is ever DELETED).
     try {
-      await execFileAsync("schtasks.exe", ["/end", "/tn", "omp-web"], { timeout: 3000, env: getWindowsExecutionEnv(), windowsHide: true });
+      await execFileAsync("schtasks.exe", ["/end", "/tn", SERVICE_TASK_NAME], { timeout: 3000, env: getWindowsExecutionEnv(), windowsHide: true });
+    } catch { }
+    try {
+      await execFileAsync("schtasks.exe", ["/end", "/tn", LEGACY_SERVICE_TASK_NAME], { timeout: 3000, env: getWindowsExecutionEnv(), windowsHide: true });
     } catch { }
     const taskkillExe = resolveTaskkillBin();
     const psCommand = `

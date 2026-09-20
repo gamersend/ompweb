@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { getAgentDir } from "../omp/paths";
+import { NOTIFY_KINDS, type NotifyKind } from "../notify/notify-shared";
 
 // ============================================================================
 // Web Push subscriptions (~/.omp/agent/web-push-subs.json).
@@ -9,6 +10,13 @@ import { getAgentDir } from "../omp/paths";
 // One browser push subscription per endpoint. Entries are keyed by the SHA-256
 // of the endpoint URL (fcm/xsalsa endpoints are long and carry their own
 // identifiers — we never need to search by raw endpoint, only dedupe/prune).
+//
+// Per-kind routing + device labels (wave 3 P3 / R3-03): each subscription may
+// carry `kinds` (the NotifyKind allowlist for THIS device — undefined means
+// "all kinds", the pre-P3 default, so existing subscribers keep their previous
+// behavior until they choose otherwise) and a user-facing `label`
+// (presentation metadata only — never a security identity). `lastSeenAt` is
+// refreshed on every registration so stale devices are visible in settings.
 //
 // Store pattern: versioned, atomic temp+rename, corrupt file quarantined to
 // *.bak-<ts> and rebuilt empty. Cap 20 subscriptions — a new one beyond the cap
@@ -19,14 +27,19 @@ import { getAgentDir } from "../omp/paths";
 
 export const PUSH_SUBS_FILE = "web-push-subs.json";
 export const PUSH_SUBS_CAP = 20;
+export const PUSH_LABEL_MAX_CHARS = 80;
 
 export interface PushSubscriptionEntry {
   /** sha256(endpoint) hex — the map key. */
   endpointHash: string;
   endpoint: string;
   keys: { p256dh: string; auth: string };
-  /** Optional user label (e.g. which browser); reserved, not set by the UI yet. */
+  /** User-facing device label ("iPhone", "iPad Safari"); presentation only. */
   label?: string;
+  /** Per-device kind allowlist; undefined = every kind (pre-P3 default). */
+  kinds?: NotifyKind[];
+  /** Last time this endpoint (re-)registered. */
+  lastSeenAt?: string;
   createdAt: string;
 }
 
@@ -37,6 +50,14 @@ export interface PushSubsFile {
 
 export function endpointHashFor(endpoint: string): string {
   return createHash("sha256").update(endpoint).digest("hex");
+}
+
+/** Clean an untrusted kinds array: drop unknown kinds; empty → undefined
+ *  (= all kinds). Order-normalized so a re-register never churns the file. */
+export function sanitizePushKinds(value: unknown): NotifyKind[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const cleaned = NOTIFY_KINDS.filter((kind) => value.includes(kind));
+  return cleaned.length === NOTIFY_KINDS.length ? undefined : cleaned.length > 0 ? cleaned : undefined;
 }
 
 function isEntryLike(value: unknown): value is PushSubscriptionEntry {
@@ -64,7 +85,13 @@ export function migratePushSubs(raw: unknown): PushSubsFile | null {
     // Last one wins per endpoint hash (file could hand-edit duplicates away).
     byHash.set(item.endpointHash, {
       ...item,
-      label: typeof item.label === "string" && item.label.length > 0 ? item.label : undefined,
+      label: typeof item.label === "string" && item.label.length > 0
+        ? item.label.slice(0, PUSH_LABEL_MAX_CHARS)
+        : undefined,
+      kinds: sanitizePushKinds(item.kinds),
+      lastSeenAt: typeof item.lastSeenAt === "string" && Number.isFinite(Date.parse(item.lastSeenAt))
+        ? item.lastSeenAt
+        : undefined,
       createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date(0).toISOString(),
     });
   }
@@ -172,24 +199,39 @@ export interface AddSubscriptionInput {
   endpoint: string;
   keys: { p256dh: string; auth: string };
   label?: string;
+  /** Per-device kind allowlist; omitted keeps the stored choice, []/invalid clears to "all". */
+  kinds?: NotifyKind[];
 }
 
 /** Insert or refresh one subscription (same endpoint → keys updated in place,
- * createdAt preserved). Returns the new store + whether anything changed. */
+ *  createdAt preserved, meta refreshed). Returns the new store + whether the
+ *  CREDENTIALS changed. */
 export function addPushSubscription(
   input: AddSubscriptionInput,
   current: PushSubsFile = ensureLoaded(),
 ): { subs: PushSubsFile; added: boolean } {
   const endpointHash = endpointHashFor(input.endpoint);
   const existing = current.subs.find((sub) => sub.endpointHash === endpointHash);
+  const nowIso = new Date().toISOString();
   const entry: PushSubscriptionEntry = existing
-    ? { ...existing, endpoint: input.endpoint, keys: { ...input.keys }, label: input.label ?? existing.label }
+    ? {
+      ...existing,
+      endpoint: input.endpoint,
+      keys: { ...input.keys },
+      label: input.label !== undefined
+        ? (input.label.trim() ? input.label.trim().slice(0, PUSH_LABEL_MAX_CHARS) : existing.label)
+        : existing.label,
+      kinds: input.kinds !== undefined ? sanitizePushKinds(input.kinds) : existing.kinds,
+      lastSeenAt: nowIso,
+    }
     : {
       endpointHash,
       endpoint: input.endpoint,
       keys: { ...input.keys },
-      ...(input.label ? { label: input.label } : {}),
-      createdAt: new Date().toISOString(),
+      ...(input.label && input.label.trim() ? { label: input.label.trim().slice(0, PUSH_LABEL_MAX_CHARS) } : {}),
+      ...(sanitizePushKinds(input.kinds) ? { kinds: sanitizePushKinds(input.kinds) } : {}),
+      lastSeenAt: nowIso,
+      createdAt: nowIso,
     };
   const rest = current.subs.filter((sub) => sub.endpointHash !== endpointHash);
   // Cap 20: the OLDEST subscription is evicted (newest first, entry appended
@@ -205,6 +247,49 @@ export function addPushSubscription(
     || existing.keys.auth !== input.keys.auth;
   if (changed) savePushSubs(subs);
   return { subs, added: changed };
+}
+
+/** Update presentation meta (label / kinds) for one subscription BY HASH —
+ *  the settings panel edits devices whose endpoint it never saw. Returns the
+ *  new store + whether a row matched. */
+export function updatePushSubscriptionMeta(
+  endpointHash: string,
+  update: { label?: string; kinds?: NotifyKind[] },
+  current: PushSubsFile = ensureLoaded(),
+): { subs: PushSubsFile; updated: boolean } {
+  const subs: PushSubsFile = {
+    version: 1,
+    subs: current.subs.map((sub) => {
+      if (sub.endpointHash !== endpointHash) return sub;
+      const next = { ...sub };
+      if (update.label !== undefined) {
+        const label = update.label.trim().slice(0, PUSH_LABEL_MAX_CHARS);
+        if (label) next.label = label;
+        else delete next.label;
+      }
+      if (update.kinds !== undefined) {
+        const kinds = sanitizePushKinds(update.kinds);
+        if (kinds) next.kinds = kinds;
+        else delete next.kinds;
+      }
+      return next;
+    }),
+  };
+  const updated = JSON.stringify(subs.subs) !== JSON.stringify(current.subs);
+  if (updated) savePushSubs(subs);
+  return { subs, updated };
+}
+
+/** Remove one subscription by endpoint HASH (settings device cleanup — the
+ *  browser never shares raw endpoints across devices). */
+export function removePushSubscriptionByHash(
+  endpointHash: string,
+  current: PushSubsFile = ensureLoaded(),
+): { subs: PushSubsFile; removed: boolean } {
+  const subs: PushSubsFile = { version: 1, subs: current.subs.filter((sub) => sub.endpointHash !== endpointHash) };
+  const removed = subs.subs.length !== current.subs.length;
+  if (removed) savePushSubs(subs);
+  return { subs, removed };
 }
 
 /** Remove one subscription by raw endpoint. Returns the new store + whether a

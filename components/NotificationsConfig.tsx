@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BellRing, CalendarClock, FlaskConical, Send, X } from "lucide-react";
+import { BellRing, CalendarClock, Check, FlaskConical, Send, Trash2, X } from "lucide-react";
 import { toast } from "./ui/toast";
 import { useI18n } from "@/lib/i18n";
 import { useNotifyFeed } from "@/hooks/useNotifyFeed";
@@ -25,10 +25,20 @@ import {
 // - Feed preview + delivery counters.
 // ============================================================================
 
-const ALL_EVENTS: NotifyKind[] = ["agent_end", "approval", "error", "guardrail", "scheduler", "delegation", "digest"];
+const ALL_EVENTS: NotifyKind[] = ["agent_end", "approval", "error", "guardrail", "scheduler", "delegation", "digest", "checkpoint"];
 const PROVIDERS = ["ntfy", "discord", "telegram", "generic"] as const;
 /** Chip order Monday-first (matches the default Mon 08:00 digest slot). */
 const DIGEST_DAYS = [1, 2, 3, 4, 5, 6, 0];
+
+/** One registered push device (safe projection from /api/push/status —
+ *  never endpoints or keys, the hash is the handle). */
+interface PushDeviceRow {
+  endpointHash: string;
+  label?: string;
+  kinds?: NotifyKind[];
+  createdAt: string;
+  lastSeenAt?: string;
+}
 
 const selectStyle = {
   minHeight: 32,
@@ -107,6 +117,165 @@ function ToggleRow({ id, checked, disabled, label, description, onChange }: {
   );
 }
 
+// ─── Push device manager (wave 3 P3 / R3-03) ─────────────────────────────────
+
+/** One device card: label edit + per-kind chips + test/remove. `kinds` is an
+ *  explicit allowlist; undefined = every kind. The last active chip cannot be
+ *  unchecked (empty allowlist would silently mean "all" — a trap). */
+function PushDeviceCard({ device, onChanged }: { device: PushDeviceRow; onChanged: () => void }) {
+  const { t } = useI18n();
+  const [labelDraft, setLabelDraft] = useState(device.label ?? "");
+  const [kindsDraft, setKindsDraft] = useState<NotifyKind[] | null>(device.kinds ?? null);
+  const [busy, setBusy] = useState(false);
+  const effectiveKinds = kindsDraft; // null = all kinds
+  const activeKinds = effectiveKinds ?? ALL_EVENTS;
+
+  const toggleKind = (kind: NotifyKind) => {
+    const base = activeKinds;
+    if (base.includes(kind)) {
+      if (base.length === 1) return; // never collapse to "everything off"
+      const next = base.filter((candidate) => candidate !== kind);
+      setKindsDraft(next.length === ALL_EVENTS.length ? null : next);
+    } else {
+      const next = [...base, kind];
+      setKindsDraft(next.length === ALL_EVENTS.length ? null : next);
+    }
+  };
+
+  const patch = async (body: Record<string, unknown>) => {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/push/subscriptions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpointHash: device.endpointHash, ...body }),
+      });
+      const payload = await response.json().catch(() => null) as { success?: boolean } | null;
+      if (!payload?.success) toast.error(t("push.devices.saveFailed"));
+      else onChanged();
+    } catch {
+      toast.error(t("push.devices.saveFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/push/subscriptions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpointHash: device.endpointHash }),
+      });
+      const payload = await response.json().catch(() => null) as { success?: boolean } | null;
+      if (!payload?.success) toast.error(t("push.devices.saveFailed"));
+      else onChanged();
+    } catch {
+      toast.error(t("push.devices.saveFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpointHash: device.endpointHash, kind: "agent_end" }),
+      });
+      const payload = await response.json().catch(() => null) as { success?: boolean; data?: { delivered?: number; skipped?: number } } | null;
+      if (payload?.success && (payload.data?.delivered ?? 0) > 0) toast.success(t("push.devices.testOk"));
+      else if (payload?.success && (payload.data?.skipped ?? 0) > 0) toast.info(t("push.devices.testMuted"));
+      else toast.error(t("push.devices.testFail"));
+    } catch {
+      toast.error(t("push.devices.testFail"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const lastSeen = device.lastSeenAt || device.createdAt;
+  const seenLabel = (() => {
+    try {
+      return new Date(lastSeen).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    } catch {
+      return "";
+    }
+  })();
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <input
+          value={labelDraft}
+          onChange={(event) => setLabelDraft(event.target.value)}
+          placeholder={t("push.devices.labelPlaceholder")}
+          aria-label={t("push.devices.labelAria")}
+          maxLength={80}
+          style={{ ...inputStyle, flex: "1 1 140px" }}
+        />
+        <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }} title={device.endpointHash}>
+          {device.endpointHash.slice(0, 8)}
+        </span>
+        {seenLabel && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{seenLabel}</span>}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} role="group" aria-label={t("push.devices.kindsAria")}>
+        {ALL_EVENTS.map((kind) => {
+          const on = activeKinds.includes(kind);
+          return (
+            <button
+              key={kind}
+              type="button"
+              aria-pressed={on}
+              onClick={() => toggleKind(kind)}
+              style={{
+                padding: "2px 9px",
+                fontSize: 11,
+                borderRadius: 999,
+                border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
+                color: on ? "var(--accent)" : "var(--text-muted)",
+                background: on ? "transparent" : "var(--bg-subtle)",
+                cursor: "pointer",
+              }}
+            >
+              {t(`notify.kind.${kind}`)}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void patch({ label: labelDraft, kinds: kindsDraft ?? ALL_EVENTS })}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg-subtle)", color: "var(--text)", cursor: busy ? "wait" : "pointer", fontSize: 11 }}
+        >
+          <Check size={11} aria-hidden="true" /> {t("push.devices.save")}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void test()}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg-subtle)", color: "var(--text)", cursor: busy ? "wait" : "pointer", fontSize: 11 }}
+        >
+          <BellRing size={11} aria-hidden="true" /> {t("push.devices.test")}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void remove()}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg-subtle)", color: "var(--text)", cursor: busy ? "wait" : "pointer", fontSize: 11 }}
+        >
+          <Trash2 size={11} aria-hidden="true" /> {t("push.devices.remove")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function NotificationsConfig() {
   const { t } = useI18n();
   const feed = useNotifyFeed();
@@ -125,14 +294,19 @@ export function NotificationsConfig() {
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushTestBusy, setPushTestBusy] = useState(false);
+  // Wave 3 P3: every registered device (safe fields only — hash/label/kinds).
+  const [pushDevices, setPushDevices] = useState<PushDeviceRow[]>([]);
 
   const config = feed.config;
 
   const refreshPushState = useCallback(async () => {
     try {
       const response = await fetch("/api/push/status", { cache: "no-store" });
-      const payload = await response.json().catch(() => null) as { success?: boolean; data?: { subscriptionCount?: number } } | null;
-      if (payload?.success && payload.data) setPushCount(payload.data.subscriptionCount ?? 0);
+      const payload = await response.json().catch(() => null) as { success?: boolean; data?: { subscriptionCount?: number; subscriptions?: PushDeviceRow[] } } | null;
+      if (payload?.success && payload.data) {
+        setPushCount(payload.data.subscriptionCount ?? 0);
+        setPushDevices(payload.data.subscriptions ?? []);
+      }
     } catch {
       // status stays unknown; the toggle still works off the local subscription
     }
@@ -441,6 +615,17 @@ export function NotificationsConfig() {
             <BellRing size={12} aria-hidden="true" /> {t("push.test")}
           </button>
         </div>
+        {/* Per-device routing (wave 3 P3): label each device and pick which
+            event kinds it receives. Labels are presentation metadata only. */}
+        {pushDevices.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600 }}>{t("push.devices.title")}</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.45 }}>{t("push.devices.desc")}</div>
+            {pushDevices.map((device) => (
+              <PushDeviceCard key={device.endpointHash} device={device} onChanged={() => void refreshPushState()} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Quiet hours */}

@@ -1,0 +1,22 @@
+{
+  "type": "available_commands_update",
+  "commands": [
+    { "name": "prompt", "source": "builtin", "description": "Send a prompt to the agent." },
+    { "name": "compact", "source": "builtin", "description": "Compact the session context." },
+    { "name": "model", "source": "builtin", "description": "Switch the active model." },
+    { "name": "security_scan_plan", "source": "builtin", "description": "Plan a native security scan." },
+    { "name": "security_scan_status", "source": "builtin", "description": "Status of a native security scan." },
+    { "name": "jobs", "source": "builtin", "description": "List native background jobs." },
+    { "name": "trace", "source": "builtin", "description": "Show the session trace view." },
+    { "name": "stats", "source": "builtin", "description": "Summarize session statistics." },
+    { "name": "memory_view", "source": "extension", "description": "Show injected memory context." },
+    { "name": "todo_import", "source": "builtin", "description": "Import a todo list." },
+    { "name": "handoff", "source": "builtin", "description": "Hand the session to another agent." },
+    { "name": "retry", "source": "builtin", "description": "Retry the failed turn." },
+    { "name": "task_batch", "source": "builtin", "description": "Launch named parallel tasks." },
+    { "name": "sanitized-command-with-long-description",
+      "source": "extension",
+      "description": "Structural sample only — no transcript text, tokens, or file contents live in these fixtures."
+    }
+  ]
+}

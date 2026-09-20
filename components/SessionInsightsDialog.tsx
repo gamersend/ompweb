@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
-import type { InsightsToolRow, InsightsTimelinePoint, SessionInsights } from "@/lib/insights/session-insights";
+import type { InsightsToolRow, InsightsTimelinePoint, SessionInsights, SessionRestoreRecord } from "@/lib/insights/session-insights";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "./ui/primitives";
 
 type InsightsPayload = SessionInsights & { tookMs?: number };
@@ -43,6 +43,10 @@ function normalizeInsights(value: unknown): InsightsPayload | null {
       : [],
     tools: Array.isArray(raw.tools)
       ? raw.tools.filter((row) => row && typeof row === "object" && typeof row.tool === "string")
+      : [],
+    restores: Array.isArray(raw.restores)
+      ? raw.restores.filter((row): row is SessionRestoreRecord =>
+        !!row && typeof row === "object" && typeof (row as { seq?: unknown }).seq === "number")
       : [],
     tookMs: typeof raw.tookMs === "number" ? raw.tookMs : undefined,
   } as InsightsPayload;
@@ -334,6 +338,7 @@ export function SessionInsightsDialog({ sessionId, open, onClose }: {
   const totals = insights?.totals;
   const timeline = insights?.timeline ?? [];
   const tools = insights?.tools ?? [];
+  const restores = insights?.restores ?? [];
   const native = insights?.native;
   const tiles: Array<{ label: string; value: string }> = totals
     ? [
@@ -455,6 +460,40 @@ export function SessionInsightsDialog({ sessionId, open, onClose }: {
                   <ToolTable rows={tools} />
                 )}
               </section>
+
+              {/* Restore ledger (wave 3 P4): durable checkpoint-restore facts */}
+              {restores.length > 0 && (
+                <section style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-card)", background: "var(--bg-panel)", padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--text-dim)", textTransform: "uppercase", marginBottom: 6 }}>
+                    {t("insights.restoresTitle")}
+                  </div>
+                  <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+                    {restores.map((entry) => (
+                      <li key={`${entry.seq}-${entry.ts}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontSize: 10,
+                            padding: "1px 6px",
+                            borderRadius: 999,
+                            border: "1px solid",
+                            borderColor: entry.outcome === "success" ? "var(--accent)" : entry.outcome === "failed" ? "var(--danger, #b91c1c)" : "var(--border)",
+                            color: entry.outcome === "success" ? "var(--accent)" : entry.outcome === "failed" ? "var(--danger, #b91c1c)" : "var(--text-muted)",
+                          }}
+                        >
+                          {t(`insights.restoreOutcome.${entry.outcome}`)}
+                        </span>
+                        <span style={{ color: "var(--text)" }}>{t(`insights.restoreMode.${entry.mode}`)} #{entry.seq}</span>
+                        {entry.device && <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{entry.device.slice(0, 8)}</span>}
+                        <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>
+                          {new Date(entry.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                        {entry.error && <span style={{ width: "100%", fontSize: 11, color: "var(--text-muted)" }} title={entry.error}>{entry.error}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
 
               {typeof insights.tookMs === "number" && (
                 <div style={{ fontSize: 10.5, color: "var(--text-dim)", textAlign: "right" }}>

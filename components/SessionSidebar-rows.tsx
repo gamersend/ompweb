@@ -4,8 +4,13 @@ import { memo, useCallback, useEffect, useRef, useState, type Dispatch, type Rea
 import type { AgentMessage, ManagedProject, ProjectLaunchConfig, SessionInfo } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
 import { comparableProjectPath } from "@/lib/comparable-path";
-import { Check, ChevronDown, ChevronRight, Folder, GitBranch, MoreHorizontal, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowRightLeft, CalendarClock, Check, ChevronDown, ChevronRight, Folder, GitBranch, MoreHorizontal, Plus, Star, Trash2 } from "lucide-react";
 import { Tooltip } from "./ui/primitives";
+import type { SessionOrigin } from "@/lib/origin";
+
+/** Origin lookup handed down from SessionSidebar (stable callback over a
+ *  ref-backed map — never breaks row memoization). */
+export type GetSessionOrigin = (sessionId: string) => SessionOrigin | undefined;
 import { ConfirmDialog } from "./ui/field";
 import { copyText } from "@/lib/clipboard";
 import { bookmarkCountFor, subscribeBookmarks } from "@/lib/bookmarks";
@@ -46,6 +51,7 @@ interface ProjectRowProps {
   hiddenCount: number;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  getOrigin?: GetSessionOrigin;
   unreadSessionIds: Set<string>;
   relativeTimeNow: number;
   onActivate: (path: string) => void;
@@ -85,6 +91,7 @@ function ProjectRow({
   hiddenCount,
   selectedSessionId,
   runningSessionIds,
+  getOrigin,
   unreadSessionIds,
   relativeTimeNow,
   onActivate,
@@ -422,6 +429,7 @@ function ProjectRow({
                   node={node}
                   selectedSessionId={selectedSessionId}
                   runningSessionIds={runningSessionIds}
+                  origin={getOrigin?.(node.session.id)}
                   unreadSessionIds={unreadSessionIds}
                   relativeTimeNow={relativeTimeNow}
                   onSelectSession={onSelectSession}
@@ -727,6 +735,7 @@ const SessionTreeItem = memo(function SessionTreeItem({
   node,
   selectedSessionId,
   runningSessionIds,
+  origin,
   unreadSessionIds,
   relativeTimeNow,
   onSelectSession,
@@ -738,6 +747,8 @@ const SessionTreeItem = memo(function SessionTreeItem({
   node: SessionTreeNode;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  /** Origin badge (wave 3 P5.3) — resolved by the parent, passed as data. */
+  origin?: SessionOrigin;
   unreadSessionIds: Set<string>;
   relativeTimeNow: number;
   onSelectSession: (s: SessionInfo) => void;
@@ -790,6 +801,8 @@ const SessionTreeItem = memo(function SessionTreeItem({
           session={node.session}
           isSelected={isSelected}
           isRunning={isRunning}
+          originKind={origin?.kind}
+          originLabel={origin?.label}
           isUnread={isUnread}
           relativeTimeNow={relativeTimeNow}
           onClick={handleClick}
@@ -850,6 +863,8 @@ const SessionItem = memo(function SessionItem({
   session,
   isSelected,
   isRunning,
+  originKind,
+  originLabel,
   isUnread,
   onClick,
   onRenamed,
@@ -864,6 +879,9 @@ const SessionItem = memo(function SessionItem({
   session: SessionInfo;
   isSelected: boolean;
   isRunning?: boolean;
+  /** Origin badge primitives (wave 3 P5.3) — memo-stable strings. */
+  originKind?: "delegated" | "scheduled" | "direct";
+  originLabel?: string;
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
@@ -1033,6 +1051,17 @@ const SessionItem = memo(function SessionItem({
             <span title={title} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)", fontSize: 12.5, fontWeight: isSelected ? 600 : 500, lineHeight: 1.35, letterSpacing: "-0.005em" }}>
               {title}
             </span>
+            {(originKind === "delegated" || originKind === "scheduled") && (
+              <span
+                aria-label={t("origin." + originKind, originLabel ? { label: originLabel.slice(0, 12) } : undefined)}
+                title={t("origin." + originKind, originLabel ? { label: originLabel.slice(0, 12) } : undefined)}
+                style={{ display: "flex", alignItems: "center", flexShrink: 0, color: "var(--text-dim)" }}
+              >
+                {originKind === "delegated"
+                  ? <ArrowRightLeft size={10} strokeWidth={2} aria-hidden="true" />
+                  : <CalendarClock size={10} strokeWidth={2} aria-hidden="true" />}
+              </span>
+            )}
           </button>
           {bookmarkCount > 0 && (
             <span

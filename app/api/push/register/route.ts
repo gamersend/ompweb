@@ -3,18 +3,26 @@ import { parseJsonWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-fo
 import { ensurePushKeys } from "@/lib/push/keys";
 import { addPushSubscription, loadPushSubs, validatePushSubscriptionInput } from "@/lib/push/subs";
 import { updateNotifyConfig } from "@/lib/notify/notify-config";
+import type { NotifyKind } from "@/lib/notify/notify-shared";
 
 export const runtime = "nodejs";
 
 // ============================================================================
-// POST /api/push/register {subscription, label?}
+// POST /api/push/register {subscription, label?, kinds?}
 //
 // Stores one browser push subscription (keyed by endpoint hash, cap 20) and
 // flips the notify config's push section ON — a successful registration IS
-// the enable action. Returns {ok, count}. Never echoes keys back.
+// the enable action. `label` is the user-facing device name; `kinds` is the
+// per-device event allowlist (omitted/empty = all kinds — the pre-P3 default
+// keeps existing subscribers' behavior). Returns {ok, count}. Never echoes
+// keys back.
 // ============================================================================
 
 const REGISTER_BODY_MAX_BYTES = 8 * 1024;
+
+function parseKinds(value: unknown): NotifyKind[] | undefined {
+  return Array.isArray(value) ? (value.filter((kind): kind is NotifyKind => typeof kind === "string") as NotifyKind[]) : undefined;
+}
 
 export async function POST(req: Request): Promise<NextResponse> {
   let body: unknown;
@@ -31,6 +39,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
   const source = body as Record<string, unknown>;
   const label = typeof source.label === "string" && source.label.trim() !== "" ? source.label.trim().slice(0, 80) : undefined;
+  const kinds = parseKinds(source.kinds);
   const check = validatePushSubscriptionInput(source.subscription);
   if (!check.ok) {
     return NextResponse.json(
@@ -42,7 +51,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   try {
     // The VAPID keys must exist before any send; registration implies enabling.
     ensurePushKeys();
-    const { subs } = addPushSubscription({ endpoint: check.endpoint, keys: check.keys, label });
+    const { subs } = addPushSubscription({ endpoint: check.endpoint, keys: check.keys, label, kinds });
     const update = updateNotifyConfig({ push: { enabled: true } });
     if (!update.ok) {
       return NextResponse.json({ error: "Could not enable push in the notify config", code: "invalid_config" }, { status: 500 });

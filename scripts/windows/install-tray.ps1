@@ -240,7 +240,9 @@ Log-Message "Tray Launcher   : $LaunchVbs"
 $ServicePs1 = Join-Path $RepoRoot "scripts\windows\omp-web-service.ps1"
 if (!$NoAutostart -and (Test-Path $ServicePs1)) {
     try {
-        $taskName = "omp-web"
+        # Blessed task name (wave 3 P5.1). The legacy "omp-web" name is only
+        # cleaned up here because THIS is the explicit (re)install action.
+        $taskName = "ompweb-service"
         $actionArg = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ServicePs1`""
         # Use schtasks for compatibility (no admin required for current user ONLOGON)
         $createArgs = "/create /tn `"$taskName`" /tr `"powershell $actionArg`" /sc onlogon /f"
@@ -261,10 +263,18 @@ if (!$NoAutostart -and (Test-Path $ServicePs1)) {
                 Log-Message "  [WARN] Failed to create Scheduled Task: $($_.Exception.Message)"
             }
         }
+        # Migrate: drop the legacy-name task ONLY when the blessed one now exists.
+        try {
+            if (schtasks /query /tn "ompweb-service" 2>$null) {
+                schtasks /delete /tn "omp-web" /f 2>$null | Out-Null
+                Log-Message "  [OK] Legacy task 'omp-web' removed (migrated to ompweb-service)"
+            }
+        } catch { }
     } catch {
         Log-Message "  [WARN] Scheduled Task creation failed: $($_.Exception.Message)"
     }
 } elseif ($NoAutostart) {
+    try { schtasks /delete /tn "ompweb-service" /f 2>$null | Out-Null } catch { }
     try { schtasks /delete /tn "omp-web" /f 2>$null | Out-Null } catch { }
 }
 
