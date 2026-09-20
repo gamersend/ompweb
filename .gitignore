@@ -92,3 +92,6 @@ bin/tray-publish/
 
 # npm packaging archives
 *.tgz
+
+# browser-tool scratch
+.playwright-mcp/

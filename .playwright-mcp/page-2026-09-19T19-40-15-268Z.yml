@@ -1,6 +1,0 @@
-- generic [active] [ref=f4e1]:
-  - alert [ref=f4e101]
-  - generic [ref=f4e102]:
-    - heading "Something went wrong" [level=2] [ref=f4e105]
-    - paragraph [ref=f4e106]: An unexpected error occurred while rendering the interface. You can try again or reload the page.
-    - button "Try again" [ref=f4e107] [cursor=pointer]
