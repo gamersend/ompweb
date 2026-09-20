@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 81 API routes, 80 components, 22 hooks, 115 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 87 API routes, 82 components, 22 hooks, 119 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -1356,6 +1356,61 @@ gesture — the autoplay-unlock discipline from `useAudio`.
   columns from the live snapshot, cards open the existing
   `SubagentTranscriptDialog`, and each run card carries a "Send output…"
   target picker fed by `/api/sessions`.
+
+### Weekly digest (`lib/digest.ts`, `/api/notify digest`, NotificationsConfig) (W2-P10)
+- `lib/digest.ts` composes the weekly digest from EXISTING data only:
+  sessions run (session store scan), usage + top-3 models (P9 model report
+  7d — stats.db ∪ usage-service; native-unavailable says "estimates only"),
+  delegations (notify feed rows), top failures (feed error + `wherr-` rows).
+  Checkpoint restores are NOT recorded anywhere durable and are therefore
+  omitted, never estimated. Each async source races a 4 s timeout inside
+  `Promise.allSettled`; a missed source is omitted with a note and the
+  digest flagged `partial`; total compose budget 10 s. Markdown capped at
+  8 KB (code-point-safe truncate + explicit `[truncated]` note).
+- Publication is ONE notify row (`kind:"digest"`, id `digest:ompweb:<ISO
+  week>`) + the existing webhook dispatch path (event-allowlist gated, so
+  digest must be ticked in the webhook events to leave the machine). Quiet
+  hours suppress the browser ping only.
+- Schedule lives in `~/.omp/agent/web-digest.json` (Store pattern: migrate/
+  quarantine/atomic 0600 writes; default Mon 08:00, disabled; `lastDigestSent`
+  ISO-week marker + `nextRunAt`). Config UI: Settings → Notifications
+  ("Weekly digest"); `POST /api/notify {action:"digest-now"}` composes a
+  manual digest that never claims the week's slot.
+- The digest timer is a dedicated globalThis singleton following the wave-1
+  scheduler discipline: armed ONLY in `instrumentation.register()` (never
+  bin/omp-web.js), 30–60 s clamped ticks, re-arm first, missed slots fire
+  once if < 24 h old (older: skip + advance), claim (marker + advance) is
+  one atomic write BEFORE composing so restarts/processes can never
+  double-fire a week. Async marker writes go through `withDigestStore` (the
+  `withScheduleStore` write-chain pattern).
+- PUT `/api/notify` persists BOTH the notify config and the digest section
+  (validated before either writes). The pre-existing missing
+  `saveNotifyConfig()` on PUT was fixed here — settings toggles persist now.
+
+### Device-local lock (`lib/device-lock*.ts`, `/api/device-lock/*`, `proxy.ts`, `/device-lock`) (W2-P12)
+- **Off by default and off unless `OMP_WEB_DEVICE_LOCK === "1"`** — every
+  route, the proxy block, and the settings section are gated on it; the unset
+  env app is byte-identical (tests pin the matrix + source-level gating).
+- The gate is an additional passkey layer in FRONT of password auth: pages
+  redirect to `/device-lock`, APIs 401 `device_locked`; exemptions are
+  `/device-lock`, `/api/device-lock/*` (self-authorizing: bootstrap-once
+  loopback-only first credential, then verified-unlock) and
+  `/api/web-auth/session` while `OMP_WEB_PASSWORD` is set.
+- Credentials live in `~/.omp/agent/web-authz.json` (0600, atomic, `version`
+  field, corrupt files quarantined to `.bak-<ts>`, cap 20). It also holds the
+  `unlockKey` random secret that HMAC-signs the short-lived (12 h)
+  `omp_web_unlock` cookie minted after a successful WebAuthn verify — never a
+  password. Challenges: memory only, 2-min TTL, single-use. UV required on
+  both ceremonies; counters persisted (replay defense).
+- rpID/origin derive from the request host — per-device passkeys per origin;
+  any reachable device may register AFTER bootstrap (the point), proxied
+  bootstrap is blocked. Recovery from lock-out: delete web-authz.json on the
+  server and restart (documented in the UI, the revoke response, and the
+  store header).
+- Settings → Safety renders `components/DeviceLockConfig.tsx`, which fetches
+  `/api/device-lock/status` and renders NOTHING unless `enabled` — in the
+  default app it is invisible. `@simplewebauthn/server` + `/browser` are the
+  wave's only new runtime deps (pure JS).
 
 ## omp Session File Format (v3)
 
