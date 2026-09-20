@@ -1684,6 +1684,8 @@
   "settingsConfig.promptHistory": "Global prompt history",
   "settingsConfig.promptHistoryDesc": "Composer recall across sessions. Clearing removes every stored prompt.",
   "settingsConfig.promptHistoryDescCount": "Composer recall across sessions ({count} stored). Clearing removes every stored prompt.",
+  "sync.label": "Sync across devices",
+  "sync.desc": "Keep bookmarks, prompt history, last-open sessions, and composer preferences identical on every device that opens this ompweb server.",
   "tts.speak": "Read reply aloud",
   "tts.stop": "Stop reading",
   "tts.failed": "Read-aloud failed: {detail}",

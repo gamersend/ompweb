@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { getSubmitDuringRunBehavior, setSubmitDuringRunBehavior, type SubmitDuringRunBehavior } from "@/lib/composer-prefs";
 import { clearPromptHistory, promptHistoryCount as promptHistoryCountStored } from "@/lib/prompt-history";
+import { isSyncEnabled, setSyncEnabled } from "@/lib/client-state-sync";
 import { readTtsEnabled, unlockSharedTtsAudio, writeTtsEnabled } from "@/hooks/useTts";
 import dynamic from "next/dynamic";
 import { ArrowLeft, Copy, Download, ExternalLink, RefreshCw, RotateCcw, Search, Monitor, Play, Square, Trash2, X } from "lucide-react";
@@ -141,6 +142,7 @@ const SETTING_INDEX: SettingIndexEntry[] = [
   { id: "ui-scale", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.uiScale", descKey: "settingsConfig.uiScaleDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Interface Scale", fallbackDesc: "Adjust overall UI zoom and display density across sidebars, dialogs, buttons, and toolbars.", scope: "UI" },
   { id: "message-during-active-run", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.messageDuringActiveRun", descKey: "settingsConfig.messageDuringActiveRunDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Message during active run", fallbackDesc: "What composer does on submit while agent runs. Steer interrupts; Queue follow-up delivers after finish.", scope: "UI" },
   { id: "clear-prompt-history", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "settingsConfig.promptHistory", descKey: "settingsConfig.promptHistoryDesc", fallbackSection: "Interface & Behavior", fallbackLabel: "Global prompt history", fallbackDesc: "Composer recall across sessions. Clearing removes every stored prompt.", scope: "UI" },
+  { id: "sync-across-devices", tab: "general", sectionKey: "settingsConfig.interfaceBehavior", labelKey: "sync.label", descKey: "sync.desc", fallbackSection: "Interface & Behavior", fallbackLabel: "Sync across devices", fallbackDesc: "Keep bookmarks, prompt history, last-open sessions, and composer preferences identical on every device that opens this ompweb server.", scope: "UI" },
   // Tool Safety & Approvals
   { id: "approval-mode", tab: "safety", sectionKey: "settingsConfig.toolSafetyApprovals", labelKey: "settingsConfig.approvalMode", descKey: "settingsConfig.approvalModeDesc", fallbackSection: "Tool Safety & Approvals", fallbackLabel: "Approval Mode", fallbackDesc: "Choose when OMP asks before tool calls.", scope: "Native OMP" },
   { id: "bash-override", tab: "safety", sectionKey: "settingsConfig.toolSafetyApprovals", labelKey: "settingsConfig.bashOverride", descKey: "settingsConfig.bashOverrideDesc", fallbackSection: "Tool Safety & Approvals", fallbackLabel: "Bash Override", fallbackDesc: "Override default approval policy specifically for terminal commands.", scope: "Native OMP" },
@@ -391,6 +393,9 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
   const [submitBehavior, setSubmitBehavior] = useState<SubmitDuringRunBehavior>(() => getSubmitDuringRunBehavior());
   // 6e global prompt history: live entry count for the clear-history row.
   const [promptHistoryCount, setPromptHistoryCount] = useState<number>(() => promptHistoryCountStored());
+  // Wave 2 P1 client-state sync: bookmarks/prompt-history/last-open/composer
+  // prefs across devices (default ON; OFF stops pushing AND pulling).
+  const [syncAcrossDevices, setSyncAcrossDevices] = useState<boolean>(() => isSyncEnabled());
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     try {
@@ -839,6 +844,17 @@ export function SettingsConfig({ activeTab, toolCallsDefaultCollapsed, onToolCal
                       <option value="steer" style={nativeOptionStyle}>{t("settingsConfig.steerCurrentRun")}</option>
                       <option value="queue" style={nativeOptionStyle}>{t("settingsConfig.queueFollowUp")}</option>
                     </select>
+                  </NativeSetting>
+                  <NativeSetting searchId="sync-across-devices" label={t("sync.label")} description={t("sync.desc")} scope="UI">
+                    <ToggleSwitch
+                      checked={syncAcrossDevices}
+                      onChange={(next) => {
+                        setSyncAcrossDevices(next);
+                        // Persists localStorage + fires SYNC_ENABLED_EVENT; the
+                        // sync engine in AppShell stops/starts pushing+pulling.
+                        setSyncEnabled(next);
+                      }}
+                    />
                   </NativeSetting>
                   <NativeSetting searchId="clear-prompt-history" label={t("settingsConfig.promptHistory")} description={t("settingsConfig.promptHistoryDescCount", { count: promptHistoryCount })} scope="UI">
                     <button

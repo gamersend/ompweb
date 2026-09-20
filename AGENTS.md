@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 73 API routes, 79 components, 22 hooks, 110 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/`, 13 `bin/` scripts.
+Counts: 73 API routes, 79 components, 22 hooks, 111 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -604,6 +604,41 @@ handled or safely ignored.
   `ompweb-service`: `powershell -Command "Start-ScheduledTask -TaskName 'ompweb-service'"`
   (or `Stop-ScheduledTask`). The `ompweb-tray` CLI flags
   (`--start`/`--stop`/`--tray`) still work but are legacy.
+
+### Client-state sync (`lib/client-state-*.ts`, `/api/client-state`) (W2-P1)
+- Bookmarks, prompt history, workspace last-open, and the composer steer/queue
+  pref sync across devices through `~/.omp/agent/web-client-state.json`
+  (omp-web's own store — wave-1 Store pattern: version + migrate + atomic
+  temp+rename + corrupt-file quarantine to `*.bak-<ts>`). `rev` is one
+  store-wide monotonic counter, per-key revs gate optimistic concurrency:
+  `PUT {key,value,baseRev?}` → 409 `{error:{code:"conflict",currentRev}}` on
+  mismatch. Caps: 256 keys (evict lowest-rev), 256 KB/value
+  (`value_too_large`). Mutations flush through a 1 s debounced write
+  (globalThis `__ompClientStateRuntime`, hot-reload safe).
+- `GET /api/client-state?since=<rev>` returns keys with per-key rev > since
+  (`Cache-Control: no-store`); bodies bounded via `parseJsonWithinLimit`.
+- Client engine `lib/client-state-sync.ts`: ONE `initClientStateSync()` mounted
+  from AppShell (idempotent, returns dispose). It installs an observing
+  storage proxy into the four storage seams (`setBookmarksStorage`,
+  `setPromptHistoryStorage`, `setWorkspaceMemoryStorage`,
+  `setComposerPrefsStorage`) — local writes always land first, then a 1 s
+  debounced PUT. Pulls: 15 s while visible + visibilitychange/online, then
+  merge via pure `lib/client-state-merge.ts` (bookmarks union by entryId,
+  newer ts, longer note; prompts dedupe on text max-ts cap 200; workspace
+  memory per-key LWW over comparable-path identity; prefs whole-value LWW with
+  a `{value, ts}` wrapper). 409 → refetch, re-merge, retry once, then stay
+  silent until the next cycle. ALL sync failures are silent; offline is
+  byte-for-byte today's behavior.
+- Loop guards: per-key lastPushed `{rev, json}` memo + `syncValuesEqual`
+  (key- AND array-order-insensitive — merge outputs are canonically sorted, so
+  equivalent-but-reordered server values never re-push).
+- Settings → general toggle "Sync across devices" (`omp-web:sync-enabled`,
+  default ON; OFF stops pushing AND pulling, queued local changes flush on
+  re-enable). i18n keys under `sync.` in all three locales.
+- NOT synced by design: composer drafts (tab-scoped sessionStorage),
+  `omp-web:notify-last-read` (per-device unread cursor), and true deletions —
+  the merge is additive union/LWW, so any device still holding an entry
+  resurrects it (tombstones would be a later phase).
 
 ### Auth and model config
 - Auth flows go through RPC commands (`get_login_providers`, `login`) against the omp child process; credentials live in omp's `agent.db` (SQLite) which omp-web never touches directly.

@@ -1684,6 +1684,8 @@
   "settingsConfig.promptHistory": "全局提示词历史",
   "settingsConfig.promptHistoryDesc": "跨会话的输入框召回记录。清空将删除所有已存储的提示词。",
   "settingsConfig.promptHistoryDescCount": "跨会话的输入框召回记录（已存 {count} 条）。清空将删除所有已存储的提示词。",
+  "sync.label": "跨设备同步",
+  "sync.desc": "在打开此 ompweb 服务器的所有设备间保持书签、提示历史、上次打开的会话和输入偏好一致。",
   "tts.speak": "朗读回复",
   "tts.stop": "停止朗读",
   "tts.failed": "朗读失败：{detail}",

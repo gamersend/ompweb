@@ -31,6 +31,7 @@ import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText }
 import { getInitialNavigation, type InitialAnchor } from "@/lib/initial-navigation";
 import { comparableProjectPath } from "@/lib/comparable-path";
 import { clearDraft } from "@/lib/draft-store";
+import { initClientStateSync } from "@/lib/client-state-sync";
 import { showCompletionNotification } from "@/lib/browser-notifications";
 import { openPalette } from "@/lib/palette-bus";
 import type { SearchResultItem } from "./PaletteSearch";
@@ -155,6 +156,10 @@ export function AppShell() {
       // Keep the compact default when storage is unavailable.
     }
   }, []);
+  // Wave 2 P1 client-state sync: bookmarks / prompt history / workspace
+  // last-open / composer prefs across devices (Settings → general toggle).
+  // Idempotent init; the dispose keeps Strict Mode's double-mount clean.
+  useEffect(() => initClientStateSync(), []);
   const handleToolCallsDefaultCollapsedChange = useCallback((collapsed: boolean) => {
     setToolCallsDefaultCollapsed(collapsed);
     try {
