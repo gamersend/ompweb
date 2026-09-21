@@ -1,4 +1,4 @@
-# Wave 3 — P2–P9 implementation notes
+# Wave 3 — P2–P12 implementation notes
 
 Per-phase knowledge lives in the W3 sections of AGENTS.md (authoritative).
 This file is the delivery record: what shipped, what was verified, and what
@@ -109,8 +109,29 @@ was deliberately left alone.
   existing process-exit/rpc-error feed rows — no new emission authority.
   Built by a background agent.
 
-## Gates at the P9 checkpoint (2026-09-21, both lanes merged)
+## P10–P12 — parallel batch (R3-09/R3-22, R3-11, R3-15/R3-14)
 
-- tsc 0 · eslint 0/0 · npm test 1710 tests / 1708 pass / 0 fail / 2 skips
-- check:parity green (2193 keys × 3; envelope ratchet 0 new / 92 routes)
-- file-map green (92 routes / 86 components / 22 hooks / 128 lib)
+Built by three background agents with disjoint file ownership; orchestrator
+applied the 67 reported i18n keys ×3, ran all gates, and committed.
+
+- **P10**: lib/omp/native-insights.ts (fixed-argv omp usage --clients /
+  stats --summary adapters, Tier-B negative cache, injectable exec) +
+  /api/usage clients+statsSummary sections + model-report labeled.direct +
+  UsageConfig origin chips + "By client" collapsible. Top-sessions drill-down
+  deferred until /api/usage exposes per-session rows.
+- **P11**: lib/task-batch.ts (validate/decide/store) + POST /api/task-batch
+  (capability probe → discovered command or task_batch_unsupported) +
+  TaskBatchDialog on the runs board. Dispatch via lib/omp/rpc-utility.ts
+  runUtilityCommand because AgentSessionWrapper.send's closed switch refuses
+  unknown command types; upgrade path = PASSTHROUGH_COMMANDS entry.
+- **P12**: lib/result-records.ts (pure status-ladder normalizer) +
+  ResultsTable (sortable/filterable compare dialog from the subagent roster
+  at ≥2 terminal entries) + lib/patch-inspector.ts + GET /api/patch-inspector
+  (read-only, reuses git-changes/worktree libs, 25-file diffstat cap with
+  statsPartial) + RestoreDialog PR-mode evidence strip.
+
+## Gates at the P12 checkpoint (2026-09-21, three-lane batch merged)
+
+- tsc 0 · eslint 0/0 · npm test 1746 tests / 1744 pass / 0 fail / 2 skips
+- check:parity green (2260 keys × 3; envelope ratchet 0 new / 94 routes)
+- file-map green (94 routes / 88 components / 22 hooks / 131 lib)

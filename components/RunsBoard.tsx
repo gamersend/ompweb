@@ -21,6 +21,7 @@ import {
   CircleStop,
   Folder,
   Layers,
+  ListChecks,
   Play,
   Send,
   SquareKanban,
@@ -33,6 +34,7 @@ import { Dialog, DialogContent, DialogTitle } from "./ui/primitives";
 import { toast } from "./ui/toast";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { RecoveryPanel } from "./RecoveryPanel";
+import { TaskBatchDialog } from "./TaskBatchDialog";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -88,6 +90,8 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
   const [delegateSource, setDelegateSource] = useState<BoardRun | null>(null);
   // Handoff manifest (wave 3 P6): durable delegation settle states.
   const [handoffs, setHandoffs] = useState<HandoffRecord[]>([]);
+  // Native task-batch launch (wave 3 P11): dialog entry point.
+  const [batchOpen, setBatchOpen] = useState(false);
 
   // Elapsed timers tick every second while the board is open.
   useEffect(() => {
@@ -296,6 +300,22 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
         </button>
         <button
           type="button"
+          onClick={() => setBatchOpen(true)}
+          className="ui-focus-ring"
+          aria-label={t("taskBatch.openBoard")}
+          title={t("taskBatch.openBoard")}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 5, height: 28,
+            padding: "0 10px", flexShrink: 0,
+            border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+            background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 12,
+          }}
+        >
+          <ListChecks size={14} strokeWidth={1.8} aria-hidden="true" />
+          {t("taskBatch.openBoardShort")}
+        </button>
+        <button
+          type="button"
           onClick={() => void refresh()}
           className="ui-focus-ring"
           aria-label={t("runsBoard.refresh")}
@@ -416,6 +436,9 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
       />
 
       <DelegateDialog run={delegateSource} onClose={() => setDelegateSource(null)} />
+
+      {/* Native task-batch launch (wave 3 P11): specs + live-session picker. */}
+      <TaskBatchDialog open={batchOpen} onClose={() => setBatchOpen(false)} runs={runs} />
 
       {/* Session recovery (Phase P9 / R3-07): stale running children + orphaned
           sessions, read-only probe below the grid. Open/Interrupt reuse this

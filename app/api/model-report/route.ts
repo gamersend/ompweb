@@ -16,7 +16,7 @@ function emptyReport(range: string): ModelReport {
     partial: true,
     tookMs: 0,
     rows: [],
-    labeled: { scheduled: 0, delegated: 0 },
+    labeled: { scheduled: 0, delegated: 0, direct: 0 },
   };
 }
 

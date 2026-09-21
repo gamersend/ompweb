@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ChevronDown, Database, Loader2, RefreshCw, Timer, TriangleAlert } from "lucide-react";
+import { AlertCircle, ChevronDown, Database, Loader2, RefreshCw, Timer, TriangleAlert, Users } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type {
   UsageBreakdownView,
@@ -12,9 +12,16 @@ import type {
 } from "@/lib/usage-types";
 import type { QuotaCardSample, NativeUsageMeta } from "@/lib/usage-native";
 import type { ModelReport, ModelReportRange, ModelReportRow } from "@/lib/insights/model-report";
+import type { StatsSummarySection, UsageClientsSection } from "@/lib/omp/native-insights";
 
-/** The usage route response: the base report plus the P7 native union fields. */
-type UsageConfigReport = UsageReport & { native?: NativeUsageMeta; quota?: QuotaCardSample[] };
+/** The usage route response: the base report plus the P7 native union fields
+ * and the P10 native CLI insight sections. */
+type UsageConfigReport = UsageReport & {
+  native?: NativeUsageMeta;
+  quota?: QuotaCardSample[];
+  clients?: UsageClientsSection;
+  statsSummary?: StatsSummarySection;
+};
 
 function NativeBadge({ label }: { label: string }) {
   return (
@@ -114,7 +121,151 @@ function ReportSparkBar({ value, max }: { value: number; max: number }) {
   );
 }
 
-function ModelReportCard() {
+/** P10: origin chip — same treatment as the scheduled/delegated badges in the
+ * table, with the origin name + session count. */
+function OriginChip({ label, count, accent = false }: { label: string; count: number; accent?: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0,
+        fontSize: 10, fontWeight: 600, letterSpacing: "0.04em",
+        color: accent ? "var(--accent)" : "var(--text-muted)",
+        border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+        padding: "0 6px", lineHeight: "16px", background: "var(--bg-subtle)",
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      {label}
+      <span style={{ fontWeight: 700 }}>{count.toLocaleString()}</span>
+    </span>
+  );
+}
+
+/** P10: per-client usage section (native `omp usage --clients`), rendered
+ * collapsed like the other secondary panels. */
+function ByClientSection({ clients }: { clients: UsageClientsSection | null }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState<boolean>(false);
+  const rows = clients?.supported ? clients.clients : [];
+  const countLabel = clients
+    ? clients.supported
+      ? rows.length > 0
+        ? String(rows.length)
+        : undefined
+      : "—"
+    : undefined;
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-control)",
+        background: "var(--bg-subtle)",
+        overflow: "hidden",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        style={{
+          display: "flex", alignItems: "center", gap: 7, width: "100%",
+          padding: "7px 10px", border: "none", background: "transparent",
+          cursor: "pointer", textAlign: "left",
+        }}
+      >
+        <Users size={13} style={{ color: "var(--text-dim)", flexShrink: 0 }} aria-hidden="true" />
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>
+          {t("usageNative.clientsTitle")}
+        </span>
+        {countLabel && (
+          <span style={{ fontSize: 10, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+            {countLabel}
+          </span>
+        )}
+        <ChevronDown
+          size={12}
+          aria-hidden="true"
+          style={{
+            marginLeft: "auto", color: "var(--text-dim)", flexShrink: 0,
+            transform: open ? "rotate(180deg)" : "none",
+            transition: "transform var(--dur-fast) var(--ease-out-warm)",
+          }}
+        />
+      </button>
+      {open && (
+        <div style={{ padding: "0 10px 10px" }}>
+          {!clients ? (
+            <div style={{ fontSize: 11, color: "var(--text-dim)", padding: "2px 0 4px" }}>
+              {t("usageNative.clientsUnsupported", { reason: "—" })}
+            </div>
+          ) : !clients.supported ? (
+            <div
+              role="status"
+              style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: "var(--text-muted)", padding: "2px 0 4px" }}
+            >
+              <TriangleAlert size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} aria-hidden="true" />
+              {t("usageNative.clientsUnsupported", { reason: clients.reason })}
+            </div>
+          ) : rows.length === 0 ? (
+            <div style={{ fontSize: 11, color: "var(--text-dim)", padding: "2px 0 4px" }}>
+              {t("usageNative.clientsEmpty")}
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--text-dim)", textAlign: "left" }}>
+                    <th style={{ padding: "4px 4px", fontWeight: 500 }}>{t("usageNative.clientsTitle")}</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 500, textAlign: "right" }}>{t("report.colSessions")}</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 500, textAlign: "right" }}>{t("usageConfig.tokens")}</th>
+                    <th style={{ padding: "4px 4px", fontWeight: 500, textAlign: "right" }}>{t("usageConfig.cost")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr
+                      key={row.clientId}
+                      title={
+                        row.lastActive !== undefined
+                          ? `${t("usageNative.clientsLastActive")}: ${typeof row.lastActive === "number"
+                            ? new Date(row.lastActive).toLocaleString()
+                            : row.lastActive}`
+                          : undefined
+                      }
+                      style={{ borderBottom: "1px solid var(--border)" }}
+                    >
+                      <td style={{ padding: "4px 4px", color: "var(--text)", fontWeight: 500 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                          <span
+                            style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          >
+                            {row.label ?? row.clientId}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "4px 8px", textAlign: "right", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+                        {row.sessions != null ? row.sessions.toLocaleString() : "—"}
+                      </td>
+                      <td style={{ padding: "4px 8px", textAlign: "right", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+                        {row.tokens != null ? formatTokens(row.tokens) : "—"}
+                      </td>
+                      <td style={{ padding: "4px 4px", textAlign: "right", color: row.costUsd != null ? "var(--text)" : "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>
+                        {row.costUsd != null ? formatCurrency(row.costUsd) : "n/a"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModelReportCard({ clients = null }: { clients?: UsageClientsSection | null }) {
   const { t } = useI18n();
   const [range, setRange] = useState<ModelReportRange>("30d");
   const [report, setReport] = useState<ModelReport | null>(null);
@@ -154,6 +305,16 @@ function ModelReportCard() {
   );
   const maxTokens = useMemo(() => Math.max(...rows.map((r) => r.tokens), 0), [rows]);
   const maxCost = useMemo(() => Math.max(...rows.map((r) => r.costUsd ?? 0), 0), [rows]);
+  // P10: direct/scheduled/delegated total the native session count by
+  // construction (labeled.direct = sessions − scheduled − delegated).
+  const origins = report
+    ? {
+        direct: report.labeled.direct,
+        scheduled: report.labeled.scheduled,
+        delegated: report.labeled.delegated,
+        total: report.labeled.direct + report.labeled.scheduled + report.labeled.delegated,
+      }
+    : null;
 
   const header = (key: ReportSortKey, label: string, align: "left" | "right" = "right") => {
     const active = sortKey === key;
@@ -390,6 +551,22 @@ function ModelReportCard() {
           </table>
         </div>
       )}
+
+      {/* P10: origin summary — counts always total the window's native
+          sessions, so the split stays consistent by construction */}
+      {origins && origins.total > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            {t("usageNative.originsLabel")}
+          </span>
+          {origins.direct > 0 && <OriginChip label={t("usageNative.originDirect")} count={origins.direct} />}
+          {origins.scheduled > 0 && <OriginChip label={t("usageNative.originScheduled")} count={origins.scheduled} accent />}
+          {origins.delegated > 0 && <OriginChip label={t("usageNative.originDelegated")} count={origins.delegated} accent />}
+        </div>
+      )}
+
+      {/* P10: per-client native usage, collapsed by default */}
+      <ByClientSection clients={clients} />
 
       {/* Labeling honesty footer: what is badged and how metrics are derived */}
       {report && report.rows.length > 0 && (
@@ -1661,8 +1838,10 @@ export function UsageConfig() {
         )}
       </div>
 
-      {/* P9: Model report card — per-model comparison over 7d/30d/90d */}
-      <ModelReportCard />
+      {/* P9: Model report card — per-model comparison over 7d/30d/90d.
+          P10: the native CLI client section rides along (fetched with the
+          usage report, 7-day window independent of the card's range). */}
+      <ModelReportCard clients={report?.clients ?? null} />
 
       {/* 5. Footer: Transcript Scan Status */}
       {scanInfo && (

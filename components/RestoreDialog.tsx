@@ -25,6 +25,7 @@ import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
 import { isSafeExternalUrl } from "@/lib/safe-url";
 import { getDeviceId } from "@/lib/device-id";
+import type { PatchInspectorState } from "@/lib/patch-inspector";
 
 /** One correlation id per restore ATTEMPT — the durable restore ledger
  *  (wave 3 P4) dedups by it, so a 409 retry must never reuse the failed
@@ -139,6 +140,10 @@ export function RestoreDialog({ open, entryId, sessionId, cwd, onOpenChange, onR
   const [prBase, setPrBase] = useState("");
   const [prSelected, setPrSelected] = useState<Set<string>>(new Set());
   const [prResult, setPrResult] = useState<PrResult | null>(null);
+  // P12.5 hardening: read-only working-tree evidence fetched alongside the
+  // PR draft (current branch / dirty files / worktree count), so the strip
+  // above the curated file list shows what the wizard is ABOUT to leave.
+  const [patchEvidence, setPatchEvidence] = useState<{ ok: boolean; state: PatchInspectorState | null } | null>(null);
   // Capture the target at open time so composer keystrokes / re-renders
   // behind the overlay never retarget an in-flight restore.
   const targetRef = useRef<{ sessionId: string; entryId: string } | null>(null);
@@ -158,6 +163,7 @@ export function RestoreDialog({ open, entryId, sessionId, cwd, onOpenChange, onR
     setPrBase("");
     setPrSelected(new Set());
     setPrResult(null);
+    setPatchEvidence(null);
   }, []);
 
   useEffect(() => {
@@ -232,6 +238,28 @@ export function RestoreDialog({ open, entryId, sessionId, cwd, onOpenChange, onR
     // Draft is fetched once per dialog open when the PR mode is first chosen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode]);
+
+  // Evidence fetch: one read-only probe per PR-draft load. Failures are not
+  // errors — the strip degrades to an explicit "evidence missing" line.
+  useEffect(() => {
+    if (!open || mode !== "pr" || !cwd || !prDraft || prResult || patchEvidence) return;
+    let cancelled = false;
+    fetch(`/api/patch-inspector?cwd=${encodeURIComponent(cwd)}`)
+      .then(async (response) => {
+        const body = await response.json().catch(() => null);
+        if (!response.ok || !body?.success) throw new Error("evidence unavailable");
+        return body.data as PatchInspectorState;
+      })
+      .then((state) => {
+        if (!cancelled) setPatchEvidence({ ok: true, state });
+      })
+      .catch(() => {
+        if (!cancelled) setPatchEvidence({ ok: false, state: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode, cwd, prDraft, prResult, patchEvidence]);
 
   const handleConfirm = useCallback(async () => {
     const target = targetRef.current;
@@ -416,6 +444,46 @@ export function RestoreDialog({ open, entryId, sessionId, cwd, onOpenChange, onR
 
             {prDraft && !prResult && (
               <>
+                {patchEvidence && (
+                  <div
+                    role="status"
+                    style={{
+                      marginBottom: 10, padding: "7px 10px",
+                      border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+                      background: "var(--bg-subtle)", fontSize: 11.5, lineHeight: 1.5,
+                      display: "flex", flexWrap: "wrap", gap: "2px 12px",
+                      color: "var(--text-muted)", fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    {patchEvidence.ok && patchEvidence.state?.isRepo ? (
+                      <>
+                        <span>
+                          {t("patchInspector.branch")}:{" "}
+                          <strong style={{ color: "var(--text)", fontWeight: 600 }}>
+                            {patchEvidence.state.currentBranch ?? t("patchInspector.detached")}
+                          </strong>
+                        </span>
+                        <span>{t("patchInspector.dirtyFiles", { count: patchEvidence.state.dirtyFiles })}</span>
+                        <span>
+                          {t("patchInspector.worktrees", { count: patchEvidence.state.worktrees.length })}
+                        </span>
+                        {patchEvidence.state.statsPartial && (
+                          <span style={{ color: "var(--text-dim)" }}>
+                            ≈ +{patchEvidence.state.insertions} / −{patchEvidence.state.deletions} ({t("patchInspector.partial")})
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ color: "var(--status-warning)" }}>
+                        {t("patchInspector.evidenceMissing")}
+                        {patchEvidence.ok && patchEvidence.state && !patchEvidence.state.isRepo
+                          ? ` — ${t("patchInspector.notRepo")}`
+                          : ""}
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {prDraft.gh && !prDraft.gh.available && (
                   <div role="status" style={{ marginBottom: 10, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)", background: "var(--bg-subtle)", fontSize: 12, color: "var(--status-warning)" }}>
                     <div>{t("pr.ghWarning", { detail: prDraft.gh.detail ?? "" })}</div>

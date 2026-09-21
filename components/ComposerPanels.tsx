@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity, Bot, Check, ChevronDown, Copy,
   CircleDollarSign, Clock3, Cpu, Gauge, GitBranch, Network, RefreshCw,
-  UserRound, Wrench, type LucideIcon,
+  Table, UserRound, Wrench, type LucideIcon,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { SubagentInfo } from "@/hooks/useAgentSession";
@@ -13,7 +13,10 @@ import type { GenerationSpeedInfo, SessionStatsInfo, TodoPhase } from "@/lib/pi-
 import { countNestedSubagents, formatCost, formatDuration, formatTokens, shortModel } from "@/lib/subagent-format";
 import { formatCompactNumber, formatPercent, getCacheHitRate } from "@/lib/format";
 import { copyText } from "@/lib/clipboard";
+import { compareResultRecords, toResultRecords } from "@/lib/result-records";
+import { Dialog, DialogContent, DialogTitle } from "./ui/primitives";
 import { GoalRail } from "./GoalRail";
+import { ResultsTable } from "./ResultsTable";
 import { TodoList } from "./TodoList";
 import { SubagentStatusIcon } from "./SubagentStatusIcon";
 
@@ -156,7 +159,16 @@ function SubagentsPanel({ subagents, onSelectSubagent, defaultExpanded = false }
 }) {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(() => loadCollapsed(SUBAGENTS_COLLAPSED_STORAGE_KEY, defaultExpanded));
+  const [compareOpen, setCompareOpen] = useState(false);
   const runningCount = subagents.filter((subagent) => subagent.source !== "history" && subagent.status === "started").length;
+  // P12 compare view: normalize the TERMINAL roster entries into result
+  // records; the table affordance only appears with ≥2 to compare.
+  const resultRecords = useMemo(
+    () => toResultRecords(subagents.filter((subagent) => subagent.status !== "started")),
+    [subagents],
+  );
+  const compareVisible = resultRecords.length >= 2;
+  const resultCounts = useMemo(() => compareResultRecords(resultRecords), [resultRecords]);
 
   if (subagents.length === 0) return null;
 
@@ -166,33 +178,51 @@ function SubagentsPanel({ subagents, onSelectSubagent, defaultExpanded = false }
       className="overflow-hidden border border-border bg-bg-subtle"
       style={{ borderRadius: "var(--radius-card)" }}
     >
-      <button
-        type="button"
-        onClick={() => setCollapsed((value) => { saveCollapsed(SUBAGENTS_COLLAPSED_STORAGE_KEY, !value); return !value; })}
-        title={collapsed ? t("chatWindow.expandPanel") : t("chatWindow.collapsePanel")}
-        className={`ui-focus-ring flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-xs text-text-muted ${collapsed ? "" : "border-b border-border"}`}
-        style={{ background: "none" }}
-      >
-        <Network size={14} strokeWidth={1.8} aria-hidden />
-        <strong className="font-medium text-text">{t("chatWindow.subagentsPanel")}</strong>
-        <span
-          className="ml-auto inline-flex items-center gap-1.5"
-          aria-label={t("chatWindow.subagentSummary", { running: runningCount, total: subagents.length })}
-          title={t("chatWindow.subagentSummary", { running: runningCount, total: subagents.length })}
+      <div className={`flex items-stretch ${collapsed ? "" : "border-b border-border"}`}>
+        <button
+          type="button"
+          onClick={() => setCollapsed((value) => { saveCollapsed(SUBAGENTS_COLLAPSED_STORAGE_KEY, !value); return !value; })}
+          title={collapsed ? t("chatWindow.expandPanel") : t("chatWindow.collapsePanel")}
+          className="ui-focus-ring flex flex-1 cursor-pointer items-center gap-2 px-3 py-2 text-left text-xs text-text-muted"
+          style={{ background: "none" }}
         >
-          <span>{runningCount}/{subagents.length}</span>
-        </span>
-        <ChevronDown
-          size={14}
-          strokeWidth={1.8}
-          aria-hidden
-          style={{
-            color: "var(--text-dim)",
-            transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
-            transition: "transform var(--dur-med) var(--ease-out-warm)",
-          }}
-        />
-      </button>
+          <Network size={14} strokeWidth={1.8} aria-hidden />
+          <strong className="font-medium text-text">{t("chatWindow.subagentsPanel")}</strong>
+          <span
+            className="ml-auto inline-flex items-center gap-1.5"
+            aria-label={t("chatWindow.subagentSummary", { running: runningCount, total: subagents.length })}
+            title={t("chatWindow.subagentSummary", { running: runningCount, total: subagents.length })}
+          >
+            <span>{runningCount}/{subagents.length}</span>
+          </span>
+          <ChevronDown
+            size={14}
+            strokeWidth={1.8}
+            aria-hidden
+            style={{
+              color: "var(--text-dim)",
+              transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
+              transition: "transform var(--dur-med) var(--ease-out-warm)",
+            }}
+          />
+        </button>
+        {compareVisible && (
+          <button
+            type="button"
+            onClick={() => setCompareOpen(true)}
+            aria-label={t("results.title")}
+            title={`${t("results.title")} — ${t("results.countLine", {
+              complete: resultCounts.complete,
+              partial: resultCounts.partial,
+              failed: resultCounts.failed,
+            })}`}
+            className="ui-focus-ring flex cursor-pointer items-center px-2.5 text-text-dim hover:text-text"
+            style={{ background: "none", borderLeft: "1px solid var(--border)" }}
+          >
+            <Table size={14} strokeWidth={1.8} aria-hidden />
+          </button>
+        )}
+      </div>
       {!collapsed && (
         <div
           className="flex flex-wrap gap-1.5 px-3 py-2.5 animate-slide-down"
@@ -254,6 +284,24 @@ function SubagentsPanel({ subagents, onSelectSubagent, defaultExpanded = false }
             );
           })}
         </div>
+      )}
+      {compareVisible && (
+        <Dialog open={compareOpen} onOpenChange={setCompareOpen}>
+          <DialogContent
+            ariaLabel={t("results.title")}
+            style={{ width: 720, maxWidth: "min(94vw, 720px)", padding: 20 }}
+          >
+            <DialogTitle style={{ fontSize: 17, marginBottom: 6 }}>{t("results.title")}</DialogTitle>
+            <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--text-muted)" }}>
+              {t("results.countLine", {
+                complete: resultCounts.complete,
+                partial: resultCounts.partial,
+                failed: resultCounts.failed,
+              })}
+            </p>
+            <ResultsTable records={resultRecords} />
+          </DialogContent>
+        </Dialog>
       )}
     </section>
   );

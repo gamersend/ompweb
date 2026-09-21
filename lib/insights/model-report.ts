@@ -108,7 +108,9 @@ export interface ModelReport {
   partial: boolean;
   tookMs: number;
   rows: ModelReportRow[];
-  labeled: { scheduled: number; delegated: number };
+  /** Origin rollup so direct/scheduled/delegated always total the native
+   * session count: direct = sessions − scheduled − delegated (P10). */
+  labeled: { scheduled: number; delegated: number; direct: number };
 }
 
 /** Payload the pure core consumes — tests fabricate these. */
@@ -291,6 +293,7 @@ export function computeModelReport(input: ModelReportInput): ModelReport {
   const rows: ModelReportRow[] = [];
   let scheduledTotal = 0;
   let delegatedTotal = 0;
+  let sessionsTotal = 0;
   for (const acc of groups.values()) {
     const nativeSessions = acc.source === "native" && acc.sessions > 0;
     const sessions = nativeSessions ? acc.sessions : 0;
@@ -327,6 +330,7 @@ export function computeModelReport(input: ModelReportInput): ModelReport {
     if (acc.delegatedBy) row.delegatedBy = acc.delegatedBy;
     scheduledTotal += acc.sessionsScheduled;
     delegatedTotal += acc.sessionsDelegated;
+    sessionsTotal += sessions;
     rows.push(row);
   }
 
@@ -346,7 +350,11 @@ export function computeModelReport(input: ModelReportInput): ModelReport {
     partial: input.nativePartial || !input.nativeAvailable,
     tookMs: 0,
     rows,
-    labeled: { scheduled: scheduledTotal, delegated: delegatedTotal },
+    labeled: {
+      scheduled: scheduledTotal,
+      delegated: delegatedTotal,
+      direct: Math.max(0, sessionsTotal - scheduledTotal - delegatedTotal),
+    },
   };
 }
 

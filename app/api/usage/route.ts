@@ -3,6 +3,7 @@ import { apiErrorResponse } from "@/lib/api-utils";
 import { statsDbExists } from "@/lib/omp-stats-db";
 import { getUsageReport } from "@/lib/usage-service";
 import { applyNativeUsage } from "@/lib/usage-native";
+import { getStatsSummary, getUsageClients } from "@/lib/omp/native-insights";
 import type { UsageGranularity, UsageTimeRange } from "@/lib/usage-types";
 
 export const dynamic = "force-dynamic";
@@ -48,16 +49,27 @@ export async function GET(req: Request) {
 
     const report = await getUsageReport(query);
 
+    // P10 (R3-09): native CLI insight sections — per-client usage over the
+    // last 7 days plus whole-store stats totals. Additive over the report
+    // shape; each degrades to { supported: false, reason } (Tier B) and never
+    // throws. ?refresh=1 busts their 60 s caches alongside the report scan.
+    const [clients, statsSummary] = await Promise.all([
+      getUsageClients({ refresh: forceRefresh }),
+      getStatsSummary({ refresh: forceRefresh }),
+    ]);
+
     if (!includeNative) {
       // Explicit exclusion still reports availability so the toggle can show
       // a disabled state when stats.db is absent.
       return NextResponse.json({
         ...report,
         native: { available: statsDbExists(), partial: false, included: false, cost: 0, tokens: 0, records: 0 },
+        clients,
+        statsSummary,
       });
     }
 
-    return NextResponse.json(applyNativeUsage(report, query));
+    return NextResponse.json({ ...applyNativeUsage(report, query), clients, statsSummary });
   } catch (error) {
     return apiErrorResponse(error);
   }

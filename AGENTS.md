@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 92 API routes, 86 components, 22 hooks, 128 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 94 API routes, 88 components, 22 hooks, 131 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -153,6 +153,8 @@ app/api/
   store-diagnostics/route.ts      GET read-only health census of the ompweb-owned stores (W3-P5)
   goals/route.ts                  GET/PUT/DELETE per-session durable goals (W3-P8)
   recovery/route.ts               GET read-only recovery read model (stale runs + orphans) (W3-P9)
+  task-batch/route.ts             POST launch native task.batch (capability-gated) | GET history (W3-P11)
+  patch-inspector/route.ts        GET read-only branch/dirty/worktree facts for a cwd (W3-P12)
   client-state/route.ts           GET ?since= incremental pull | PUT {key,value,baseRev} | DELETE tombstone (W3-P2)
   push/register/route.ts          POST {subscription,label?,kinds?} per-device registration (W3-P3)
   push/subscriptions/route.ts     PATCH/DELETE {endpointHash} device meta / removal (W3-P3)
@@ -288,6 +290,9 @@ lib/
   goals.ts                durable web-goals.json per-session goal/plan store (W3-P8)
   goals-client.ts         silent goals sync client (debounced push, server-wins pull) (W3-P8)
   session-health.ts       pure session-health/freshness classification (W3-P9)
+  task-batch.ts           native task.batch contracts + web-task-batches.json store (W3-P11)
+  result-records.ts       pure ResultRecord normalizer over subagent/task results (W3-P12)
+  patch-inspector.ts      read-only branch/dirty/worktree adapter over existing git libs (W3-P12)
   session-activity.ts     bounded redacted per-session lifecycle ring (W3-P7)
   browser-notifications.ts  completion notifications with permission handling
   notify/feed.ts          server-side notify feed: 500-row ring + atomic tail at ~/.omp/agent/web-notify.json
@@ -339,6 +344,8 @@ components/
   StoreDiagnosticsPanel.tsx  settings system-tab store health census (copy-safe, read-only) (W3-P5)
   GoalRail.tsx         collapsible durable goal/plan rail above the composer panels (W3-P8)
   RecoveryPanel.tsx    runs-board recovery section (stale runs + orphans, dismiss) (W3-P9)
+  TaskBatchDialog.tsx  runs-board native task.batch launch dialog (capability-gated) (W3-P11)
+  ResultsTable.tsx     sortable/filterable subagent-result compare table (W3-P12)
   SplitPane.tsx       two-pane split view (draggable divider, active-pane ring, mobile falls back to single)
   MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
   MessageView-diff-view.tsx   split diff rendering for edit toolResults
@@ -1673,6 +1680,62 @@ palette (`components/CommandPalette.tsx`, ⌘K/Ctrl+K) is built on `cmdk`.
   liveness; `FreshnessChip` renders live/recent/stale/degraded with a single
   30 s tick — no new fetch loops. Recovery events ride the EXISTING
   process-exit / rpc-error feed rows (P9.5) — no new emission authority.
+
+### Usage-by-origin + native clients (W3-P10)
+- `lib/omp/native-insights.ts`: read-only adapters over the INSTALLED omp CLI
+  with FIXED argv (`omp usage --clients --json --days N` days clamped 1–90;
+  `omp stats --summary --json`), 5 s timeout, injectable exec seam.
+  Tier-B discipline: any failure → `{supported:false, reason}` cached for the
+  process lifetime (only `?refresh=1` re-probes) — a bad probe is never
+  re-guessed. Parsers are type-guard pure; cost stays null when the source
+  didn't provide it. No estimates invented; observational only.
+- `/api/usage` attaches `clients` + `statsSummary` additively (existing shape
+  untouched). The model report's `labeled` gained `direct` =
+  Σ(row.sessions) − scheduled − delegated, so the three origin counts total
+  the native session count by construction.
+- UsageConfig's existing Model report card gains the origin chip line and a
+  collapsible "By client" section (explicit unsupported-reason and empty
+  states). No second dashboard was created; "top sessions" drill-down is
+  deferred until /api/usage exposes per-session rows.
+
+### Native task.batch launch (W3-P11)
+- `lib/task-batch.ts`: `validateBatchSpecs` (≤6 specs, slug ids, ≤4000-char
+  prompts, `provider:modelId` shape), `decideBatchLaunch` (Tier B — exact
+  case-insensitive match on `task_batch`/`task-batch` against the live
+  child's get_available_commands; otherwise explicit
+  `task_batch_unsupported`), plus `web-task-batches.json` (cap 50 LRU).
+- `POST /api/task-batch` validates → 404/409 session gates → capability
+  probe → ONE dispatch under the DISCOVERED command name with specs in the
+  payload (never argv) → `launched` + resultIds; failures record
+  `state:"failed"` + 502. Unsupported records `state:"unsupported"` — history
+  makes the capability gap visible.
+- ⚠️ Dispatch goes through `lib/omp/rpc-utility.ts` `runUtilityCommand`
+  (AgentSessionWrapper.send refuses command types outside its switch — that
+  file is load-bearing for source-contract tests). If a future omp build's
+  batch command is strictly session-scoped, the utility child may reject →
+  honest `task_batch_failed`; the one-line upgrade path is adding the
+  discovered name to rpc-manager's PASSTHROUGH_COMMANDS.
+- UI: runs-board "Batch" button → `TaskBatchDialog` (one task per line,
+  optional per-line `#model=` prefix, live-session picker, outcome +
+  recent-batch history). The Launch button IS the explicit confirmation.
+
+### Structured results + patch inspector (W3-P12)
+- `lib/result-records.ts` (pure): `normalizeResultRecord` over shapes that
+  already flow (SubagentInfo roster entries + task toolResult details).
+  Fixed-precedence status ladder: aborted → canceled; error → failed;
+  detached/async → partial; completed+no error → complete; else unknown.
+  Nothing invented — files/tests stay null unless carried. Summary ≤300.
+- `ResultsTable` (opened from the subagent roster at ≥2 terminal entries):
+  sortable status/tokens/cost columns (`aria-sort`, nulls sink), status
+  filter chips with counts, 620px min-width horizontal-scroll wrapper so
+  phones scroll instead of crushing.
+- `lib/patch-inspector.ts` + `GET /api/patch-inspector?cwd=`: read-only
+  branch/dirty/diffstat/worktree facts REUSING lib/git-changes + lib/worktree
+  (no new git subprocess patterns, same allow-root gate as git/status);
+  diffstat capped at 25 files with an explicit `statsPartial` flag — never
+  silent zeros. RestoreDialog's PR mode renders an evidence strip (branch,
+  dirty count, worktree count, "evidence missing" on failure) — P12.5's
+  show-missing-evidence-not-guessing.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
