@@ -12,7 +12,7 @@
  * series are distinguished by dash pattern + text legend, never color alone.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
+import { Activity, AlertTriangle, ChevronDown, RefreshCw, Shuffle, Sparkles } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
 import type { InsightsToolRow, InsightsTimelinePoint, SessionActivityRecord, SessionInsights, SessionRestoreRecord } from "@/lib/insights/session-insights";
@@ -55,6 +55,32 @@ function normalizeInsights(value: unknown): InsightsPayload | null {
       : [],
     tookMs: typeof raw.tookMs === "number" ? raw.tookMs : undefined,
   } as InsightsPayload;
+}
+
+// ---------------------------------------------------------------------------
+// advisor / prewalk evidence (P15) — fetched separately from the insights
+// payload (GET /api/sessions/<id>/advisor) when the dialog opens.
+// ---------------------------------------------------------------------------
+
+type AdvisorObservation = { ts: string | null; kind: "advisor" | "prewalk"; summary?: string };
+type AdvisorPayload = { observations: AdvisorObservation[]; truncated: boolean; droppedCount?: number };
+
+function normalizeAdvisor(value: unknown): AdvisorPayload {
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  const observations = Array.isArray(raw.observations)
+    ? raw.observations.filter((row): row is AdvisorObservation =>
+      !!row && typeof row === "object"
+      && ((row as { kind?: unknown }).kind === "advisor" || (row as { kind?: unknown }).kind === "prewalk"))
+    : [];
+  return {
+    observations,
+    truncated: raw.truncated === true,
+    ...(typeof raw.droppedCount === "number" && Number.isFinite(raw.droppedCount)
+      ? { droppedCount: raw.droppedCount }
+      : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +366,37 @@ export function SessionInsightsDialog({ sessionId, open, onClose }: {
     };
   }, [open, sessionId, load]);
 
+  // Advisor & prewalk evidence (P15): fetched once per dialog open, no polling.
+  // A failed fetch is a muted line inside the section — never a dialog error.
+  const [advisor, setAdvisor] = useState<AdvisorPayload | null>(null);
+  const [advisorStatus, setAdvisorStatus] = useState<"loading" | "error" | "ready">("loading");
+  const [advisorOpen, setAdvisorOpen] = useState(true);
+
+  useEffect(() => {
+    if (!open || !sessionId) return;
+    let cancelled = false;
+    setAdvisor(null);
+    setAdvisorStatus("loading");
+    void (async () => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/advisor`);
+        const payload = await res.json().catch(() => null) as ({ data?: unknown; success?: boolean } | null);
+        if (cancelled) return;
+        if (!res.ok || !payload || payload.success !== true) {
+          setAdvisorStatus("error");
+          return;
+        }
+        setAdvisor(normalizeAdvisor(payload.data));
+        setAdvisorStatus("ready");
+      } catch {
+        if (!cancelled) setAdvisorStatus("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sessionId]);
+
   const totals = insights?.totals;
   const timeline = insights?.timeline ?? [];
   const tools = insights?.tools ?? [];
@@ -527,6 +584,68 @@ export function SessionInsightsDialog({ sessionId, open, onClose }: {
                   </ul>
                 </section>
               )}
+
+              {/* Advisor & prewalk evidence (P15 / R3-16): what the advisor and
+                  prewalk passes observed in this session — newest 20, summaries
+                  redacted server-side. Collapsible; observability only. */}
+              <section style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-card)", background: "var(--bg-panel)", padding: "10px 12px" }}>
+                <button
+                  type="button"
+                  onClick={() => setAdvisorOpen((prev) => !prev)}
+                  aria-expanded={advisorOpen}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6, width: "100%",
+                    background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit", textAlign: "left",
+                  }}
+                >
+                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--text-dim)", textTransform: "uppercase" }}>
+                    {t("advisor.title")}
+                  </span>
+                  <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, color: "var(--text-dim)", flexShrink: 0 }}>
+                    {advisor && advisor.observations.length > 0 && (
+                      <span style={{ fontSize: 10.5, fontVariantNumeric: "tabular-nums" }}>{advisor.observations.length}</span>
+                    )}
+                    <ChevronDown size={13} aria-hidden="true" style={{ transform: advisorOpen ? "none" : "rotate(-90deg)" }} />
+                  </span>
+                </button>
+                {advisorOpen && (
+                  <div style={{ marginTop: 6 }}>
+                    {advisorStatus === "loading" ? (
+                      <div style={{ fontSize: 12, color: "var(--text-dim)", fontStyle: "italic" }}>{t("advisor.loading")}</div>
+                    ) : advisorStatus === "error" ? (
+                      <div style={{ fontSize: 12, color: "var(--text-dim)", fontStyle: "italic" }}>{t("advisor.error")}</div>
+                    ) : !advisor || advisor.observations.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "var(--text-dim)", fontStyle: "italic" }}>{t("advisor.empty")}</div>
+                    ) : (
+                      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                        {advisor.observations.map((obs, index) => (
+                          <li key={`${obs.ts ?? "ts"}-${index}`} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12, flexWrap: "wrap", minWidth: 0 }}>
+                            <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
+                              {obs.kind === "advisor"
+                                ? <Sparkles size={12} strokeWidth={1.8} aria-hidden="true" />
+                                : <Shuffle size={12} strokeWidth={1.8} aria-hidden="true" />}
+                              {t(`advisor.kind.${obs.kind}`)}
+                            </span>
+                            {obs.summary && (
+                              <span
+                                style={{ color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}
+                                title={obs.summary}
+                              >
+                                {obs.summary}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {advisor && advisor.truncated && advisor.observations.length > 0 && (
+                      <div style={{ marginTop: 5, fontSize: 10.5, color: "var(--text-dim)" }}>
+                        {t("advisor.truncated", { count: advisor.droppedCount ?? advisor.observations.length })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
 
               {typeof insights.tookMs === "number" && (
                 <div style={{ fontSize: 10.5, color: "var(--text-dim)", textAlign: "right" }}>

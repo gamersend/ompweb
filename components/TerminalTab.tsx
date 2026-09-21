@@ -32,7 +32,7 @@
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardCopy, MessageSquarePlus, Radio, RotateCw, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardCopy, MessageSquarePlus, Radio, RefreshCw, RotateCw, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -44,6 +44,7 @@ import { insertIntoComposer } from "@/lib/composer-insert";
 import { TERMINAL_INSERT_MAX_BYTES, truncateToByteCap } from "@/lib/terminal/select-insert";
 import { asBracketedPaste, toTerminalKeyData, type TerminalKeyEventLike } from "@/lib/terminal-input";
 import { planPaneRender, type HerdrPaneMeta } from "@/lib/terminal/herdr-plan";
+import type { CollabPeerRow, JobRow, ProcessRow } from "@/lib/omp/native-jobs";
 import { Dialog, DialogContent, DialogTitle } from "./ui/primitives";
 import { toast } from "./ui/toast";
 
@@ -109,6 +110,100 @@ async function readJson(response: Response): Promise<{ ok: boolean; status: numb
   return { ok: response.ok, status: response.status, body };
 }
 
+// ---------------------------------------------------------------------------
+// P14: read-only native jobs/processes/peers section (above the terminal).
+// Pure display helpers — the section renders whatever /api/jobs returned and
+// offers NO action buttons; a pid is shown only as a tooltip and only when
+// the source confirmed it.
+// ---------------------------------------------------------------------------
+
+/** Max rows rendered per group; the rest collapse into a "+N more" line. */
+const PROCESSES_ROW_CAP = 20;
+
+/** Group id → i18n key for the three compact lists. */
+const PROCESSES_GROUP_LABEL_KEYS = {
+  jobs: "processes.jobsGroup",
+  processes: "processes.processesGroup",
+  collab: "processes.collabGroup",
+} as const;
+
+type NativeJobsUnsupported = { unsupported: true; reason: string };
+
+function isUnsupportedSection(value: unknown): value is NativeJobsUnsupported {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && (value as { unsupported?: unknown }).unsupported === true;
+}
+
+/** One flattened display row for the section lists. */
+interface ProcessDisplayRow {
+  key: string;
+  /** The stable identity shown first (always present — rows without ids were
+   * already dropped server-side). */
+  primary: string;
+  /** Owner / kind / name detail, dimmed after the id. */
+  secondary?: string;
+  /** Status chip text, verbatim from the source. */
+  status?: string;
+  /** Trailing cell: formatted age, or the peer's lastSeen. */
+  trailing?: string;
+  /** Tooltip-only pid — displayed nowhere else, and only when confirmed. */
+  pid?: number | null;
+}
+
+/** Compact human age for a source-provided ageMs (never computed from
+ * anything else — absent means absent). */
+function formatAge(ageMs: number | null | undefined): string | undefined {
+  if (typeof ageMs !== "number" || !Number.isFinite(ageMs) || ageMs < 0) return undefined;
+  if (ageMs < 1000) return "<1s";
+  const s = Math.floor(ageMs / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+/** Chip color by status keyword — whitelist over the source's own text,
+ * neutral when unrecognized. */
+function statusColor(status: string | undefined): string {
+  const s = status?.toLowerCase() ?? "";
+  if (/running|active|ok|healthy|ready|online|up/.test(s)) return "var(--status-success)";
+  if (/stop|kill|error|fail|dead|crash|down|exited|disabled/.test(s)) return "var(--accent-hover)";
+  return "var(--text-dim)";
+}
+
+function jobDisplayRows(jobs: JobRow[]): ProcessDisplayRow[] {
+  return jobs.map((job) => ({
+    key: job.id,
+    primary: job.id,
+    secondary: job.owner ?? job.summary,
+    status: job.status,
+    trailing: formatAge(job.ageMs),
+  }));
+}
+
+function processDisplayRows(processes: ProcessRow[]): ProcessDisplayRow[] {
+  return processes.map((proc) => ({
+    key: proc.id,
+    primary: proc.id,
+    secondary: proc.kind,
+    status: proc.status,
+    trailing: formatAge(proc.ageMs),
+    pid: proc.pid,
+  }));
+}
+
+function peerDisplayRows(peers: CollabPeerRow[]): ProcessDisplayRow[] {
+  return peers.map((peer) => ({
+    key: peer.id,
+    primary: peer.id,
+    secondary: peer.name ?? peer.role,
+    status: peer.role,
+    trailing: typeof peer.lastSeen === "string" ? peer.lastSeen : formatAge(peer.lastSeen),
+  }));
+}
+
 export default function TerminalTab({ cwd, active, composerDraftKey }: Props) {
   const { t } = useI18n();
   const { fontSizePx } = useFontSize();
@@ -143,6 +238,83 @@ export default function TerminalTab({ cwd, active, composerDraftKey }: Props) {
   const [pickerLoading, setPickerLoading] = useState(false);
   const [panes, setPanes] = useState<HerdrPaneMeta[]>([]);
   const terminalIdRef = useRef<string | null>(null);
+
+  // P14: read-only native jobs/processes section — fetched ONLY while the
+  // section is expanded, manual Refresh only (never polled). No action
+  // buttons anywhere in it: this slice is observation only.
+  const [processesOpen, setProcessesOpen] = useState(false);
+  const [jobsData, setJobsData] = useState<{
+    jobs: JobRow[] | NativeJobsUnsupported;
+    processes: ProcessRow[] | NativeJobsUnsupported;
+    collabPeers: CollabPeerRow[] | NativeJobsUnsupported;
+  } | null>(null);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsError, setJobsError] = useState(false);
+  const jobsInFlightRef = useRef(false);
+
+  const fetchJobsData = useCallback(async () => {
+    if (jobsInFlightRef.current) return;
+    jobsInFlightRef.current = true;
+    setJobsLoading(true);
+    setJobsError(false);
+    try {
+      const { ok, body } = await readJson(await fetch("/api/jobs"));
+      if (!ok) {
+        setJobsError(true);
+        return;
+      }
+      const data = body.data as {
+        jobs: JobRow[] | NativeJobsUnsupported;
+        processes: ProcessRow[] | NativeJobsUnsupported;
+        collabPeers: CollabPeerRow[] | NativeJobsUnsupported;
+      } | undefined;
+      if (data) {
+        setJobsData({
+          jobs: data.jobs ?? { unsupported: true, reason: "missing section" },
+          processes: data.processes ?? { unsupported: true, reason: "missing section" },
+          collabPeers: data.collabPeers ?? { unsupported: true, reason: "missing section" },
+        });
+      } else {
+        setJobsError(true);
+      }
+    } catch {
+      setJobsError(true);
+    } finally {
+      jobsInFlightRef.current = false;
+      setJobsLoading(false);
+    }
+  }, []);
+
+  // First expansion fetches once; a failed fetch stays failed until the
+  // manual Refresh (or close+reopen) retries it.
+  useEffect(() => {
+    if (processesOpen && !jobsData) void fetchJobsData();
+  }, [processesOpen, jobsData, fetchJobsData]);
+
+  const jobsGroups = useMemo(() => {
+    if (!jobsData) return null;
+    const cap = <T,>(rows: T[]): T[] => rows.slice(0, PROCESSES_ROW_CAP);
+    return [
+      {
+        id: "jobs" as const,
+        unsupported: isUnsupportedSection(jobsData.jobs) ? jobsData.jobs : null,
+        rows: Array.isArray(jobsData.jobs) ? cap(jobDisplayRows(jobsData.jobs)) : [],
+        total: Array.isArray(jobsData.jobs) ? jobsData.jobs.length : 0,
+      },
+      {
+        id: "processes" as const,
+        unsupported: isUnsupportedSection(jobsData.processes) ? jobsData.processes : null,
+        rows: Array.isArray(jobsData.processes) ? cap(processDisplayRows(jobsData.processes)) : [],
+        total: Array.isArray(jobsData.processes) ? jobsData.processes.length : 0,
+      },
+      {
+        id: "collab" as const,
+        unsupported: isUnsupportedSection(jobsData.collabPeers) ? jobsData.collabPeers : null,
+        rows: Array.isArray(jobsData.collabPeers) ? cap(peerDisplayRows(jobsData.collabPeers)) : [],
+        total: Array.isArray(jobsData.collabPeers) ? jobsData.collabPeers.length : 0,
+      },
+    ];
+  }, [jobsData]);
 
   const sendResize = useCallback(async (cols: number, rows: number) => {
     if (mode.kind !== "local") return;
@@ -716,6 +888,112 @@ export default function TerminalTab({ cwd, active, composerDraftKey }: Props) {
           </button>
         </div>
       )}
+
+      {/* P14: read-only native jobs/processes/peers — collapsed by default,
+          fetched only while expanded, manual refresh only. NO action buttons:
+          this slice is observation only (safe controls are a later phase). */}
+      <div
+        role="region"
+        aria-label={t("processes.section")}
+        style={{ flexShrink: 0, borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "1px 8px", minHeight: 24 }}>
+          <button
+            onClick={() => setProcessesOpen((open) => !open)}
+            aria-expanded={processesOpen}
+            title={t("processes.section")}
+            style={{
+              display: "flex", alignItems: "center", gap: 5, flex: 1, minWidth: 0,
+              padding: "3px 0", background: "none", border: "none",
+              color: "var(--text-dim)", fontSize: 11, cursor: "pointer", textAlign: "left",
+            }}
+          >
+            {processesOpen
+              ? <ChevronDown size={13} strokeWidth={2} aria-hidden="true" />
+              : <ChevronRight size={13} strokeWidth={2} aria-hidden="true" />}
+            <span>{t("processes.section")}</span>
+          </button>
+          {processesOpen && (
+            <button
+              onClick={() => void fetchJobsData()}
+              disabled={jobsLoading}
+              title={t("processes.refresh")}
+              aria-label={t("processes.refresh")}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                width: 24, height: 22, padding: 0, background: "none", border: "none",
+                borderRadius: "var(--radius-control)", color: "var(--text-dim)",
+                cursor: jobsLoading ? "default" : "pointer", opacity: jobsLoading ? 0.5 : 1,
+              }}
+            >
+              <RefreshCw size={12} strokeWidth={2} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+        {processesOpen && (
+          <div style={{ maxHeight: 220, overflowY: "auto", padding: "0 10px 8px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("processes.readOnlyHint")}</div>
+            {jobsError && (
+              <div style={{ fontSize: 11, color: "var(--accent-hover)" }}>{t("processes.loadFailed")}</div>
+            )}
+            {jobsLoading && !jobsData && (
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{t("processes.loading")}</div>
+            )}
+            {jobsGroups?.map((group) => (
+              <div key={group.id}>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 600, marginBottom: 2 }}>
+                  {t(PROCESSES_GROUP_LABEL_KEYS[group.id])}
+                </div>
+                {group.unsupported ? (
+                  <div style={{ fontSize: 11, color: "var(--text-dim)", overflowWrap: "anywhere" }}>
+                    {t("processes.unsupported", { reason: group.unsupported.reason })}
+                  </div>
+                ) : group.rows.length === 0 ? (
+                  <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("processes.empty")}</div>
+                ) : (
+                  <ul role="list" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                    {group.rows.map((row) => (
+                      <li key={row.key} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap", fontSize: 11, lineHeight: 1.5 }}>
+                        <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: statusColor(row.status) }} />
+                        <span
+                          title={row.pid != null ? t("processes.pidTooltip", { pid: row.pid }) : row.primary}
+                          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flexShrink: 1, color: "var(--text)", fontFamily: "var(--font-mono)" }}
+                        >
+                          {row.primary}
+                        </span>
+                        {row.secondary && (
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0, color: "var(--text-dim)", fontSize: 10 }}>
+                            {row.secondary}
+                          </span>
+                        )}
+                        {row.status && (
+                          <span style={{
+                            flexShrink: 0, color: statusColor(row.status), fontSize: 10,
+                            border: "1px solid var(--border)", borderRadius: 999, padding: "0 6px",
+                            maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            {row.status}
+                          </span>
+                        )}
+                        {row.trailing && (
+                          <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}>
+                            {row.trailing}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                    {group.total > group.rows.length && (
+                      <li style={{ fontSize: 10, color: "var(--text-dim)", padding: "2px 0" }}>
+                        {t("processes.more", { count: group.total - group.rows.length })}
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Terminal surface (wrapped so the selection toolbar can float without
           reflowing the xterm grid mid-drag) */}

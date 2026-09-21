@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 94 API routes, 88 components, 22 hooks, 131 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 97 API routes, 89 components, 22 hooks, 133 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -155,6 +155,9 @@ app/api/
   recovery/route.ts               GET read-only recovery read model (stale runs + orphans) (W3-P9)
   task-batch/route.ts             POST launch native task.batch (capability-gated) | GET history (W3-P11)
   patch-inspector/route.ts        GET read-only branch/dirty/worktree facts for a cwd (W3-P12)
+  lineage/route.ts                GET cycle-safe fork+delegation lineage graph (W3-P13)
+  jobs/route.ts                   GET read-only native jobs/processes/collab (Tier-B) (W3-P14)
+  sessions/[id]/advisor/route.ts  GET redacted advisor/prewalk observations (W3-P15)
   client-state/route.ts           GET ?since= incremental pull | PUT {key,value,baseRev} | DELETE tombstone (W3-P2)
   push/register/route.ts          POST {subscription,label?,kinds?} per-device registration (W3-P3)
   push/subscriptions/route.ts     PATCH/DELETE {endpointHash} device meta / removal (W3-P3)
@@ -293,6 +296,8 @@ lib/
   task-batch.ts           native task.batch contracts + web-task-batches.json store (W3-P11)
   result-records.ts       pure ResultRecord normalizer over subagent/task results (W3-P12)
   patch-inspector.ts      read-only branch/dirty/worktree adapter over existing git libs (W3-P12)
+  lineage.ts              pure cycle-safe fork+delegation lineage graph builder (W3-P13)
+  advisor-evidence.ts     redacted advisor/prewalk extraction from session entries (W3-P15)
   session-activity.ts     bounded redacted per-session lifecycle ring (W3-P7)
   browser-notifications.ts  completion notifications with permission handling
   notify/feed.ts          server-side notify feed: 500-row ring + atomic tail at ~/.omp/agent/web-notify.json
@@ -346,6 +351,7 @@ components/
   RecoveryPanel.tsx    runs-board recovery section (stale runs + orphans, dismiss) (W3-P9)
   TaskBatchDialog.tsx  runs-board native task.batch launch dialog (capability-gated) (W3-P11)
   ResultsTable.tsx     sortable/filterable subagent-result compare table (W3-P12)
+  LineagePanel.tsx     runs-board lineage tree/list (forks + delegations, cycles marked) (W3-P13)
   SplitPane.tsx       two-pane split view (draggable divider, active-pane ring, mobile falls back to single)
   MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
   MessageView-diff-view.tsx   split diff rendering for edit toolResults
@@ -1736,6 +1742,49 @@ palette (`components/CommandPalette.tsx`, ⌘K/Ctrl+K) is built on `cmdk`.
   silent zeros. RestoreDialog's PR mode renders an evidence strip (branch,
   dirty count, worktree count, "evidence missing" on failure) — P12.5's
   show-missing-evidence-not-guessing.
+
+### Agent lineage graph (W3-P13)
+- `lib/lineage.ts` (pure, cycle-safe): combines fork edges (`parentSession`),
+  delegation-ledger pairs, and handoff records into one graph. Missing
+  parents → explicit `kind:"missing"` placeholder nodes (deleted sessions
+  render as gaps, never silently drop); duplicate edges dedupe
+  (from/to/kind); iterative DFS cycle detection returns cycle members
+  (A→B→A → `["a","b","a"]`, always terminates); 500-session input cap →
+  `truncated:true`.
+- `GET /api/lineage`: read model joining listAllSessions + delegation ledger
+  + handoffs + `runningSessionIds`; each source degrades to [] independently.
+- `LineagePanel` (runs board, under RecoveryPanel): collapsed by default,
+  fetch-on-expand, indented tree list with live dots, AlertTriangle
+  missing/cycle chips, ArrowRightLeft delegation rows, click → open session.
+  Related nodes only, 50-node render cap. The indented list IS the phone
+  fallback — no canvas/SVG.
+
+### Read-only jobs/processes/collab center (W3-P14)
+- `lib/omp/native-jobs.ts`: three fixed-argv adapters (`omp jobs --json`,
+  `omp ps --json`, `omp collab --json`) copying native-insights.ts's
+  discipline (injectable exec, 5 s timeout, Tier-B negative cache, 60 s
+  positive cache, in-flight dedupe). Live probe finding: `omp ps` and
+  `omp collab` (returns `{version:1,hosts:[]}`) exist on 18.2.6; `omp jobs`
+  is NOT a top-level command — its unsupported path is verified live.
+- `GET /api/jobs`: three independent sections, each `Array` or
+  `{unsupported, reason}`; GET-only, no mutation endpoints exist (P14.3's
+  safe controls are a later slice — this phase is observation only).
+- UI: collapsible "Processes" section above the xterm pane in
+  TerminalTab.tsx — fetch-on-expand + manual Refresh, no polling, no action
+  buttons, 20-row caps, pid tooltip-only.
+
+### Advisor/prewalk evidence (W3-P15)
+- `lib/advisor-evidence.ts`: extracts advisor observations from session
+  entries (message `role:"custom"`+`customType:"advisor"` plus on-disk
+  `type:"custom_message"` shapes; advisor customType wins over a prewalk
+  text mention) — summaries flattened → `redactSnippet` → 200-char
+  code-point-safe cap, newest-20 bounded with `truncated` + `droppedCount`.
+  Pure function + a degrading fs wrapper; no subprocesses.
+- `GET /api/sessions/[id]/advisor`: read-only envelope over the extractor.
+- UI: "Advisor & prewalk" collapsible section in SessionInsightsDialog
+  (fetch-once-on-open, Sparkles/Shuffle icons, redacted summaries,
+  bounded-note). P15.3/P15.4 collab-observer surface deferred; collab
+  PEER LISTING is covered read-only by W3-P14's adapter.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

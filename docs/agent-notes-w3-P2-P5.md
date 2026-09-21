@@ -1,4 +1,4 @@
-# Wave 3 — P2–P12 implementation notes
+# Wave 3 — P2–P15 implementation notes
 
 Per-phase knowledge lives in the W3 sections of AGENTS.md (authoritative).
 This file is the delivery record: what shipped, what was verified, and what
@@ -130,8 +130,28 @@ applied the 67 reported i18n keys ×3, ran all gates, and committed.
   (read-only, reuses git-changes/worktree libs, 25-file diffstat cap with
   statsPartial) + RestoreDialog PR-mode evidence strip.
 
-## Gates at the P12 checkpoint (2026-09-21, three-lane batch merged)
+## P13–P15 — parallel batch (R3-12, R3-13/R3-23, R3-16)
 
-- tsc 0 · eslint 0/0 · npm test 1746 tests / 1744 pass / 0 fail / 2 skips
-- check:parity green (2260 keys × 3; envelope ratchet 0 new / 94 routes)
-- file-map green (94 routes / 88 components / 22 hooks / 131 lib)
+Built by three background agents with disjoint file ownership; orchestrator
+applied the 31 reported i18n keys ×3, ran all gates, and committed.
+
+- **P13**: lib/lineage.ts (pure cycle-safe graph: forks + delegations +
+  handoffs, missing-parent placeholders, duplicate-edge dedupe, iterative
+  DFS, 500-session cap) + /api/lineage + LineagePanel (runs board, indented
+  tree list — the list IS the phone fallback; no canvas/SVG).
+- **P14**: lib/omp/native-jobs.ts (jobs/ps/collab fixed-argv adapters, Tier-B
+  negative cache) + /api/jobs (three independent sections, GET-only) +
+  collapsible Processes section above the terminal pane (fetch-on-expand, no
+  polling, NO action buttons). Live probe: omp ps + collab exist on 18.2.6;
+  omp jobs is not a top-level command — its unsupported path verified live.
+- **P15**: lib/advisor-evidence.ts (advisor/prewalk extraction from session
+  entries, redactSnippet + 200-char/20-item caps) + GET
+  /api/sessions/[id]/advisor + "Advisor & prewalk" section in
+  SessionInsightsDialog. Collab-observer SURFACE deferred; peer listing is
+  covered read-only by P14's collab adapter.
+
+## Gates at the P15 checkpoint (2026-09-21, three-lane batch merged)
+
+- tsc 0 · eslint 0/0 · npm test 1778 tests / 1776 pass / 0 fail / 2 skips
+- check:parity green (2290 keys × 3; envelope ratchet 0 new / 97 routes)
+- file-map green (97 routes / 89 components / 22 hooks / 133 lib)

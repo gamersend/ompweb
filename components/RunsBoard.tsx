@@ -34,6 +34,7 @@ import { Dialog, DialogContent, DialogTitle } from "./ui/primitives";
 import { toast } from "./ui/toast";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { RecoveryPanel } from "./RecoveryPanel";
+import { LineagePanel } from "./LineagePanel";
 import { TaskBatchDialog } from "./TaskBatchDialog";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
@@ -445,6 +446,13 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
           board's existing paths. */}
       <div style={{ borderTop: "1px solid var(--border)", flexShrink: 0 }}>
         <RecoveryPanel onOpenSession={onOpenSession} onInterrupt={interruptSession} />
+      </div>
+
+      {/* Agent lineage (Phase P13 / R3-12): fork + delegation dependency graph,
+          collapsed by default; fetches once on expand. Open reuses the board's
+          onOpenSession path. */}
+      <div style={{ borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+        <LineagePanel onOpenSession={onOpenSession} />
       </div>
 
       {/* Handoff manifest (wave 3 P6): settled delegation states, newest
