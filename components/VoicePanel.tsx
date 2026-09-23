@@ -28,7 +28,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Ear, EarOff, Mic, MicOff, PhoneCall, PhoneOff, Radio, SendHorizontal } from "lucide-react";
+import { Ear, EarOff, ListChecks, Mic, MicOff, PhoneCall, PhoneOff, Radio, SendHorizontal } from "lucide-react";
 
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/primitives";
 import { Alert } from "@/components/ui/field";
@@ -56,6 +56,7 @@ import {
 } from "@/lib/live/protocol";
 import { buildLiveSessionContext } from "@/lib/live/session-context";
 import { initialProgressState, nextProgressUpdate } from "@/lib/live/progress";
+import { buildVoiceProgressSummary } from "@/lib/live/voice-progress";
 import { setLiveCallActive } from "@/lib/live/live-indicator";
 import { readHandsFreeEnabled, writeHandsFreeEnabled } from "@/lib/live/handsfree";
 import {
@@ -65,6 +66,7 @@ import {
 import { speakElResultOnce, unlockSharedTtsAudio } from "@/hooks/useTts";
 import {
   decideDelegationRouting,
+  delegationCountInStates,
   newestDelegationInState,
   oldestDelegationInState,
   patchDelegation,
@@ -507,6 +509,23 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
     if (engine.injectUserText(text.slice(0, LIVE_MAX_USER_TEXT_CHARS)) > 0) setTextInput("");
   }, [textInput]);
 
+  // P19 (R3-10) "What's the status?": one explicit, user-invoked query fed
+  // by the panel's OWN progress reducer state + pending-delegation count
+  // (no goal plumbing — goal: null everywhere the panel has no access). The
+  // summary rides the EXISTING text-into-voice injection (engine.injectUserText:
+  // chunked session.context.append commentary frames + a closed local user
+  // line) — no new transport, no server calls, nothing persisted.
+  const announceStatus = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine || !engine.isLive) return;
+    const summary = buildVoiceProgressSummary({
+      progress: progressStateRef.current,
+      goal: null,
+      pendingApprovals: delegationCountInStates(delegationsRef.current, ["pending"]),
+    });
+    engine.injectUserText(summary.line);
+  }, []);
+
   const phase = liveState.phase;
   const callActive = phase === "connecting" || phase === "live" || phase === "reconnecting";
   const gateBlocked = gate !== null && !gate.enabled;
@@ -652,6 +671,33 @@ export function VoicePanel({ open, onClose, delegation }: VoicePanelProps) {
                     {handsFree ? <Ear size={14} aria-hidden="true" /> : <EarOff size={14} aria-hidden="true" />}
                     {t("live.handsFree")}
                   </button>
+                  {/* P19 (R3-10) explicit "What's the status?" — user-invoked
+                      only, and only while the call is actually up (the inject
+                      path needs the open data channel). Icon-only to keep the
+                      row from wrapping; the tooltip + aria-label carry it. */}
+                  {phase === "live" && (
+                    <button
+                      type="button"
+                      onClick={announceStatus}
+                      aria-label={t("voiceProgress.statusButton")}
+                      title={t("voiceProgress.statusButton")}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 32,
+                        height: 32,
+                        background: "var(--bg-panel)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "var(--radius-control)",
+                        color: "var(--accent)",
+                        cursor: "pointer",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <ListChecks size={14} aria-hidden="true" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={stopCall}

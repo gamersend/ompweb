@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 97 API routes, 89 components, 22 hooks, 133 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 99 API routes, 90 components, 22 hooks, 135 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -158,6 +158,8 @@ app/api/
   lineage/route.ts                GET cycle-safe fork+delegation lineage graph (W3-P13)
   jobs/route.ts                   GET read-only native jobs/processes/collab (Tier-B) (W3-P14)
   sessions/[id]/advisor/route.ts  GET redacted advisor/prewalk observations (W3-P15)
+  command-browser/route.ts        GET live command index (degraded-200 on transport loss) (W3-P16)
+  native-memory/route.ts          GET read-only omp memory stats/diagnostics + TTSR rules (W3-P17)
   client-state/route.ts           GET ?since= incremental pull | PUT {key,value,baseRev} | DELETE tombstone (W3-P2)
   push/register/route.ts          POST {subscription,label?,kinds?} per-device registration (W3-P3)
   push/subscriptions/route.ts     PATCH/DELETE {endpointHash} device meta / removal (W3-P3)
@@ -298,6 +300,10 @@ lib/
   patch-inspector.ts      read-only branch/dirty/worktree adapter over existing git libs (W3-P12)
   lineage.ts              pure cycle-safe fork+delegation lineage graph builder (W3-P13)
   advisor-evidence.ts     redacted advisor/prewalk extraction from session entries (W3-P15)
+  command-browser.ts      pure command-index builder over available_commands (W3-P16)
+  native-memory.ts        read-only omp memory stats/diagnostics + TTSR adapters (W3-P17)
+  web-share.ts            Web Share capability + invocation helpers for exports (W3-P18)
+  live/voice-progress.ts  pure voice-safe status summary selector (W3-P19)
   session-activity.ts     bounded redacted per-session lifecycle ring (W3-P7)
   browser-notifications.ts  completion notifications with permission handling
   notify/feed.ts          server-side notify feed: 500-row ring + atomic tail at ~/.omp/agent/web-notify.json
@@ -352,6 +358,7 @@ components/
   TaskBatchDialog.tsx  runs-board native task.batch launch dialog (capability-gated) (W3-P11)
   ResultsTable.tsx     sortable/filterable subagent-result compare table (W3-P12)
   LineagePanel.tsx     runs-board lineage tree/list (forks + delegations, cycles marked) (W3-P13)
+  CommandBrowserDialog.tsx  slash-palette command browser (search/filter, view-only) (W3-P16)
   SplitPane.tsx       two-pane split view (draggable divider, active-pane ring, mobile falls back to single)
   MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
   MessageView-diff-view.tsx   split diff rendering for edit toolResults
@@ -1785,6 +1792,55 @@ palette (`components/CommandPalette.tsx`, ⌘K/Ctrl+K) is built on `cmdk`.
   (fetch-once-on-open, Sparkles/Shuffle icons, redacted summaries,
   bounded-note). P15.3/P15.4 collab-observer surface deferred; collab
   PEER LISTING is covered read-only by W3-P14's adapter.
+
+### Metadata-driven command browser (W3-P16)
+- `lib/command-browser.ts` (pure): `buildCommandIndex` over the live
+  `get_available_commands` surface — slug validation with junk drop,
+  source validated against the known RpcAvailableSlashCommandSource set,
+  `KNOWN_MUTATING_COMMANDS` prefix labeling (INFORMATIONAL — the browser
+  executes nothing), curated domain map, source-then-name sort. Degrades:
+  disconnected → `transport_disconnected`; connected+empty → `no_commands`.
+- `GET /api/command-browser`: one `runUtilityCommand` get_available_commands
+  probe (15 s) on the shared utility seam; ANY failure → degraded-200 with
+  the reason (never a 500); 60 s cache on globalThis.
+- `CommandBrowserDialog`, opened from a fixed footer button at the end of
+  the slash palette (closes the palette + clears a partial /token): search
+  across name/description/aliases, source chips, mutating-only toggle,
+  view-only footer hint. No command is executed from the browser.
+
+### omp-native memory + TTSR inspectors (W3-P17)
+- `lib/omp/native-memory.ts`: `memory stats --json`, `memory diagnose
+  --json`, `ttsr list --json` adapters (native-insights discipline).
+  PRIVACY RULES enforced in-module: NO `memory view` (content is never
+  read); diagnose details cross `redactSnippet` + 200-char cap INSIDE the
+  parser (the cache can never hold unredacted bytes); TTSR rule BODIES are
+  never parsed — list metadata only.
+- `GET /api/native-memory`: three independent degrading sections + note.
+- UI: collapsible "omp native memory" section in MemoryPanel (the right-panel
+  memory tab), separate-from-mem0 hint line, fetch-on-expand + manual
+  Refresh, stats chips / diagnostics rows (pass-fail chips + redacted
+  detail) / TTSR metadata rows, 15-row caps.
+- LIVE PROBE on omp 18.2.6: `memory stats --json` is not a CLI subcommand on
+  this build (all three sections render their Tier-B unsupported reason);
+  `ttsr list --json` runs clean. An omp update restores support via the
+  refresh re-probe without restart.
+
+### Web Share exports + voice-safe status (W3-P18 / W3-P19)
+- `lib/web-share.ts`: capability + invocation helpers over an injectable
+  environment (shared / cancelled / unsupported mapping, file-share
+  capability detection). SessionExportMenu gains a "Share…" item — shown
+  only when `canWebShare()` (detected post-mount, no hydration flip) —
+  sharing the SAME `?format=md` fetch the Copy entry uses; no second
+  composer. P18.6 Capacitor share: deferred (needs shell rebuilds).
+- `lib/live/voice-progress.ts` (pure): `buildVoiceProgressSummary` — ≤2
+  sentences from the existing progress reducer state + optional goal +
+  pending-approval count. No transcripts/costs/paths; 120-char field caps.
+- VoicePanel: icon-only "What's the status?" button rendered only while the
+  call is live — injects the summary via `engine.injectUserText()` (the
+  round-2 text-into-voice mechanism: chunked session.context.append
+  commentary frames + closed local user line). PRIVACY GATE HELD: no new
+  transport, no server calls, nothing persisted; progress.ts/engine.ts
+  untouched.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

@@ -1,7 +1,10 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Brain, ClipboardCheck, Copy, Lock, MessageSquarePlus, RefreshCw, Search, TriangleAlert } from "lucide-react";
+import {
+  Brain, Check, ChevronDown, ChevronRight, ClipboardCheck, Copy, Database,
+  Lock, MessageSquarePlus, Minus, RefreshCw, Search, TriangleAlert, X,
+} from "lucide-react";
 import { MarkdownBody } from "./MarkdownBody";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
@@ -208,6 +211,10 @@ export const MemoryPanel = memo(function MemoryPanel({ active, composerDraftKey 
         </button>
       </form>
 
+      {/* omp native memory (P17): read-only stats/diagnostics/TTSR rules —
+          collapsible, fetch-on-expand only; mem0 flows above stay untouched. */}
+      <NativeMemorySection />
+
       {/* Results / states */}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 10px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
         {!configured ? (
@@ -285,6 +292,281 @@ function cardActionStyle(active: boolean): CSSProperties {
     color: active ? "var(--accent)" : "var(--text-dim)",
     cursor: "pointer",
   };
+}
+
+// ─── omp native memory (P17 / R3-20 + R3-21) ────────────────────────────────
+// Read-only inspectors for omp's OWN memory (distinct from the mem0 service
+// this panel browses): aggregate stats + diagnostics + TTSR rule LIST
+// metadata. Raw memory content is never fetched (`memory view` does not
+// exist here) and nothing mutates omp state. Fetches happen only on first
+// expand and on the manual Refresh button — never polled.
+
+interface NativeStatsShape { backend?: string; entries?: number; queueDepth?: number | null }
+interface NativeDiagnoseRow { check: string; ok: boolean; detail?: string }
+interface TtsrRuleShape { id: string; scope?: string; source?: string; enabled?: boolean | null }
+interface NativeMemoryPayload {
+  stats: { supported: true; stats: NativeStatsShape } | { supported: false; reason: string };
+  diagnose: { supported: true; checks: NativeDiagnoseRow[] } | { supported: false; reason: string };
+  ttsr: { supported: true; rules: TtsrRuleShape[] } | { supported: false; reason: string };
+}
+
+/** Per-group display cap: 15 rows then a "+N more" line. */
+const NATIVE_MAX_ROWS = 15;
+
+const NativeMemorySection = memo(function NativeMemorySection() {
+  const { t, tn } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const [data, setData] = useState<NativeMemoryPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const fetchedRef = useRef(false);
+
+  const load = useCallback(async (refresh: boolean) => {
+    setLoading(true);
+    setErrorText(null);
+    try {
+      const res = await fetch(`/api/native-memory${refresh ? "?refresh=1" : ""}`);
+      const payload = await res.json().catch(() => null) as { success?: boolean; data?: NativeMemoryPayload; error?: string; code?: string } | null;
+      if (!payload?.success || !payload.data) {
+        setErrorText(formatApiError(payload));
+        return;
+      }
+      fetchedRef.current = true;
+      setData(payload.data);
+    } catch {
+      setErrorText(formatApiError(null));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const toggle = useCallback(() => {
+    setExpanded((prev) => {
+      const next = !prev;
+      if (next && !fetchedRef.current) void load(false);
+      return next;
+    });
+  }, [load]);
+
+  return (
+    <div style={{ margin: "0 0 8px", flexShrink: 0, borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 10px", minWidth: 0 }}>
+        <button
+          onClick={toggle}
+          aria-expanded={expanded}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0,
+            padding: "4px 6px 4px 2px", background: "none", border: "none",
+            borderRadius: "var(--radius-control)", cursor: "pointer", textAlign: "left",
+          }}
+        >
+          {expanded
+            ? <ChevronDown size={12} strokeWidth={2} aria-hidden="true" style={{ color: "var(--text-dim)", flexShrink: 0 }} />
+            : <ChevronRight size={12} strokeWidth={2} aria-hidden="true" style={{ color: "var(--text-dim)", flexShrink: 0 }} />}
+          <Database size={12} strokeWidth={2} aria-hidden="true" style={{ color: "var(--accent)", flexShrink: 0 }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {t("nativeMemory.sectionTitle")}
+          </span>
+          {loading
+            ? <RefreshCw size={11} strokeWidth={2} aria-hidden="true" className="icon-spin" style={{ color: "var(--accent)", flexShrink: 0 }} />
+            : null}
+        </button>
+        {expanded ? (
+          <button
+            onClick={() => void load(true)}
+            title={t("nativeMemory.refresh")}
+            aria-label={t("nativeMemory.refresh")}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 24, height: 24, padding: 0, flexShrink: 0,
+              background: "none", border: "none", borderRadius: "var(--radius-control)",
+              color: loading ? "var(--accent)" : "var(--text-dim)", cursor: "pointer",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = loading ? "var(--accent)" : "var(--text-dim)"; e.currentTarget.style.background = "none"; }}
+          >
+            <RefreshCw size={12} strokeWidth={2} aria-hidden="true" className={loading ? "icon-spin" : undefined} />
+          </button>
+        ) : null}
+      </div>
+      {/* Persistent hint: omp's own memory, not the mem0 service; read-only here. */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 5, padding: "2px 10px 0", color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5, minWidth: 0 }}>
+        <Lock size={10} strokeWidth={2} aria-hidden="true" style={{ flexShrink: 0, marginTop: 1 }} />
+        <span style={{ minWidth: 0 }}>{t("nativeMemory.hint")}</span>
+      </div>
+
+      {expanded ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 10px 0", maxHeight: 280, overflowY: "auto", minWidth: 0 }}>
+          {errorText ? (
+            <div style={{ color: "var(--status-modified)", fontSize: 11, lineHeight: 1.5 }}>{errorText}</div>
+          ) : data ? (
+            <>
+              <NativeGroupLabel>{t("nativeMemory.stats")}</NativeGroupLabel>
+              {data.stats.supported ? (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  <NativeStatChip
+                    label={t("nativeMemory.backend")}
+                    value={data.stats.stats.backend ?? t("nativeMemory.notAvailable")}
+                  />
+                  <NativeStatChip
+                    label={t("nativeMemory.entries")}
+                    value={data.stats.stats.entries !== undefined ? String(data.stats.stats.entries) : t("nativeMemory.notAvailable")}
+                  />
+                  <NativeStatChip
+                    label={t("nativeMemory.queue")}
+                    value={data.stats.stats.queueDepth !== undefined && data.stats.stats.queueDepth !== null
+                      ? String(data.stats.stats.queueDepth)
+                      : t("nativeMemory.notAvailable")}
+                  />
+                </div>
+              ) : (
+                <NativeMutedLine>{t("nativeMemory.unsupported", { reason: data.stats.reason })}</NativeMutedLine>
+              )}
+
+              <NativeGroupLabel>{t("nativeMemory.diagnostics")}</NativeGroupLabel>
+              {data.diagnose.supported ? (
+                data.diagnose.checks.length === 0 ? (
+                  <NativeMutedLine>{t("nativeMemory.checksEmpty")}</NativeMutedLine>
+                ) : (
+                  <>
+                    {data.diagnose.checks.slice(0, NATIVE_MAX_ROWS).map((row) => (
+                      <div key={row.check} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span
+                          role="img"
+                          aria-label={row.ok ? t("nativeMemory.ok") : t("nativeMemory.notOk")}
+                          title={row.ok ? t("nativeMemory.ok") : t("nativeMemory.notOk")}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            width: 16, height: 16, flexShrink: 0, borderRadius: "var(--radius-control)",
+                            background: row.ok ? "color-mix(in srgb, var(--status-success) 15%, transparent)" : "color-mix(in srgb, var(--status-modified) 15%, transparent)",
+                            color: row.ok ? "var(--status-success)" : "var(--status-modified)",
+                          }}
+                        >
+                          {row.ok
+                            ? <Check size={10} strokeWidth={2.5} aria-hidden="true" />
+                            : <X size={10} strokeWidth={2.5} aria-hidden="true" />}
+                        </span>
+                        <span style={{ fontSize: 11, color: "var(--text)", flexShrink: 0, maxWidth: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.check}>
+                          {row.check}
+                        </span>
+                        {row.detail ? (
+                          <span style={{ fontSize: 10, color: "var(--text-dim)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.detail}>
+                            {row.detail}
+                          </span>
+                        ) : null}
+                      </div>
+                    ))}
+                    {data.diagnose.checks.length > NATIVE_MAX_ROWS ? (
+                      <NativeMutedLine>{tn("nativeMemory.more", data.diagnose.checks.length - NATIVE_MAX_ROWS)}</NativeMutedLine>
+                    ) : null}
+                  </>
+                )
+              ) : (
+                <NativeMutedLine>{t("nativeMemory.unsupported", { reason: data.diagnose.reason })}</NativeMutedLine>
+              )}
+
+              <NativeGroupLabel>{t("nativeMemory.rules")}</NativeGroupLabel>
+              {data.ttsr.supported ? (
+                data.ttsr.rules.length === 0 ? (
+                  <NativeMutedLine>{t("nativeMemory.rulesEmpty")}</NativeMutedLine>
+                ) : (
+                  <>
+                    {data.ttsr.rules.slice(0, NATIVE_MAX_ROWS).map((rule) => (
+                      <div key={rule.id} style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                        <span style={{ fontSize: 11, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }} title={rule.id}>
+                          {rule.id}
+                        </span>
+                        {rule.scope ? <NativeTagChip>{rule.scope}</NativeTagChip> : null}
+                        {rule.source ? <NativeTagChip>{rule.source}</NativeTagChip> : null}
+                        <span style={{ flex: 1 }} />
+                        <NativeEnabledMark enabled={rule.enabled} />
+                      </div>
+                    ))}
+                    {data.ttsr.rules.length > NATIVE_MAX_ROWS ? (
+                      <NativeMutedLine>{tn("nativeMemory.more", data.ttsr.rules.length - NATIVE_MAX_ROWS)}</NativeMutedLine>
+                    ) : null}
+                  </>
+                )
+              ) : (
+                <NativeMutedLine>{t("nativeMemory.unsupported", { reason: data.ttsr.reason })}</NativeMutedLine>
+              )}
+            </>
+          ) : (
+            <NativeMutedLine>{t("nativeMemory.loading")}</NativeMutedLine>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+function NativeGroupLabel({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: 0.4, marginTop: 2 }}>
+      {children}
+    </div>
+  );
+}
+
+function NativeMutedLine({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ fontSize: 10, color: "var(--text-dim)", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+      {children}
+    </div>
+  );
+}
+
+function NativeStatChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4, maxWidth: "100%",
+      padding: "2px 7px", fontSize: 10, color: "var(--text-dim)",
+      background: "var(--bg-panel)", border: "1px solid var(--border)",
+      borderRadius: "var(--radius-control)", minWidth: 0,
+    }}>
+      <span style={{ flexShrink: 0 }}>{label}</span>
+      <span style={{ color: "var(--text)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={value}>
+        {value}
+      </span>
+    </span>
+  );
+}
+
+function NativeTagChip({ children }: { children: ReactNode }) {
+  return (
+    <span style={{
+      display: "inline-block", flexShrink: 0, maxWidth: "30%",
+      padding: "1px 6px", fontSize: 9, color: "var(--accent)",
+      background: "var(--bg-panel)", border: "1px solid var(--border)",
+      borderRadius: "var(--radius-control)",
+      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    }}>
+      {children}
+    </span>
+  );
+}
+
+function NativeEnabledMark({ enabled }: { enabled: boolean | null | undefined }) {
+  const { t } = useI18n();
+  const label = enabled === true
+    ? t("nativeMemory.enabled")
+    : enabled === false
+      ? t("nativeMemory.disabled")
+      : t("nativeMemory.enabledUnknown");
+  const color = enabled === true
+    ? "var(--status-success)"
+    : enabled === false
+      ? "var(--status-modified)"
+      : "var(--text-dim)";
+  return (
+    <span role="img" aria-label={label} title={label} style={{ display: "flex", alignItems: "center", flexShrink: 0, color }}>
+      {enabled === true
+        ? <Check size={11} strokeWidth={2.5} aria-hidden="true" />
+        : enabled === false
+          ? <X size={11} strokeWidth={2.5} aria-hidden="true" />
+          : <Minus size={11} strokeWidth={2.5} aria-hidden="true" />}
+    </span>
+  );
 }
 
 function EmptyState({ icon, title, hint }: { icon: ReactNode; title: string; hint: string }) {

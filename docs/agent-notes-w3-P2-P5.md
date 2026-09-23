@@ -1,4 +1,4 @@
-# Wave 3 — P2–P15 implementation notes
+# Wave 3 — P2–P19 implementation notes
 
 Per-phase knowledge lives in the W3 sections of AGENTS.md (authoritative).
 This file is the delivery record: what shipped, what was verified, and what
@@ -150,8 +150,42 @@ applied the 31 reported i18n keys ×3, ran all gates, and committed.
   SessionInsightsDialog. Collab-observer SURFACE deferred; peer listing is
   covered read-only by P14's collab adapter.
 
-## Gates at the P15 checkpoint (2026-09-21, three-lane batch merged)
+## P16–P19 — parallel batch (R3-19, R3-20/R3-21, R3-26/R3-10)
 
-- tsc 0 · eslint 0/0 · npm test 1778 tests / 1776 pass / 0 fail / 2 skips
-- check:parity green (2290 keys × 3; envelope ratchet 0 new / 97 routes)
-- file-map green (97 routes / 89 components / 22 hooks / 133 lib)
+Built by three background agents with disjoint file ownership; orchestrator
+applied the 67 reported i18n keys ×3, ran all gates, and committed.
+
+- **P16**: lib/command-browser.ts (pure index: source/domain/mutability
+  labeling — informational only, nothing executes) + /api/command-browser
+  (single runUtilityCommand probe, degraded-200 on transport loss, 60s
+  cache) + CommandBrowserDialog mounted from the slash palette footer.
+- **P17**: lib/omp/native-memory.ts (memory stats/diagnose + ttsr list
+  adapters; NO memory view — content never read; diagnose details redacted
+  INSIDE the parser before caching; TTSR bodies never parsed) +
+  /api/native-memory + collapsible section in MemoryPanel. Live probe on
+  18.2.6: memory stats is not a CLI subcommand (Tier-B unsupported renders);
+  ttsr list runs clean.
+- **P18**: lib/web-share.ts + SessionExportMenu "Share…" item
+  (capability-detected post-mount, shares the existing ?format=md fetch).
+  Capacitor share deferred (shell rebuilds).
+- **P19**: lib/live/voice-progress.ts (pure ≤2-sentence selector) +
+  VoicePanel "What's the status?" button (live-only) injecting through
+  engine.injectUserText() — the existing commentary channel. PRIVACY GATE
+  HELD: no new transport, no server calls, nothing persisted.
+
+## Gates at the P19 checkpoint (2026-09-21, three-lane batch merged)
+
+- tsc 0 · eslint 0/0 · npm test 1821 tests / 1819 pass / 0 fail / 2 skips
+- check:parity green (2336 keys × 3; envelope ratchet 0 new / 99 routes)
+- file-map green (99 routes / 90 components / 22 hooks / 135 lib)
+
+## Remaining wave-3 phases (not started)
+
+- **P20**: mobile/PWA surfaces (device capability matrix, badging, share
+  target, state-only offline outbox, folder attach, mobile acceptance
+  matrix) — requires PHYSICAL devices; browser proof is not device proof.
+- **P21**: direct voice-call handoff — only after P19's privacy proof (held)
+  and P20's transport evidence; deferred if it cannot stay browser-direct.
+- **P22**: integration fixtures, browser acceptance pass, architecture/
+  privacy audit, local origin verification — ends at local verification,
+  NO publish (standing rule).

@@ -1,16 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, Download, FileCode2, FileText } from "lucide-react";
+import { Copy, Download, FileCode2, FileText, Share2 } from "lucide-react";
 import { toast } from "./ui/toast";
 import { translate, useI18n } from "@/lib/i18n";
 import { copyText } from "@/lib/clipboard";
+import { canWebShare, shareText } from "@/lib/web-share";
 
 /**
  * Session download menu (6c): the chat-header entry point that used to be the
  * single "full history" (HTML export) button. Offers the HTML export, the
- * in-process Markdown download (?format=md), and a session-level
- * "Copy as Markdown". Owns its open state so AppShell keeps a one-line
+ * in-process Markdown download (?format=md), a session-level
+ * "Copy as Markdown", and (P18/R3-26) a "Share…" entry for browsers with the
+ * Web Share API. Owns its open state so AppShell keeps a one-line
  * mount; closes on outside click, Esc and re-render-unmount with focus
  * returned to the trigger.
  */
@@ -23,11 +25,20 @@ export function SessionExportMenu({ sessionId, onViewHtml, disabled }: {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  // P18 (R3-26) capability, detected after mount so SSR and the first client
+  // render agree (both false) and hydration never flips the item in.
+  const [canShare, setCanShare] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  // P18: the Web Share entry only exists where the API exists (Firefox and
+  // most desktop browsers hide it entirely instead of failing at click time).
+  useEffect(() => {
+    setCanShare(canWebShare());
+  }, []);
 
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false);
@@ -84,10 +95,34 @@ export function SessionExportMenu({ sessionId, onViewHtml, disabled }: {
       .catch(() => toast.error(translate("errors.generic")));
   };
 
+  // P18 (R3-26) Web Share: the SAME markdown endpoint the Copy entry uses
+  // (never a second composer), handed to navigator.share via lib/web-share.
+  // "shared" toasts; "cancelled" (sheet dismissed / refused) is silent; the
+  // "unsupported" outcome cannot reach here — the item is hidden when the
+  // capability check fails at mount.
+  const shareMarkdown = () => {
+    if (!mdUrl) return;
+    close(true);
+    void fetch(mdUrl)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then((text) => shareText(t("exportShare.title"), text))
+      .then((outcome) => {
+        if (outcome === "shared") toast.success(translate("exportShare.shared"));
+        // cancelled: the user closed the share sheet — nothing to say.
+      })
+      .catch(() => toast.error(translate("errors.generic")));
+  };
+
   const items = [
     { key: "html", label: t("sessionExport.viewHtml"), Icon: FileCode2, onClick: () => { close(true); onViewHtml(); } },
     { key: "md", label: t("sessionExport.downloadMarkdown"), Icon: Download, onClick: downloadMarkdown },
     { key: "copy-md", label: copied ? t("sessionExport.copied") : t("sessionExport.copyMarkdown"), Icon: Copy, onClick: copyMarkdown },
+    ...(canShare && mdUrl
+      ? [{ key: "share-md", label: t("exportShare.menu"), Icon: Share2, onClick: shareMarkdown }]
+      : []),
   ];
 
   return (

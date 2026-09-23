@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, memo, KeyboardEvent } from "react";
-import { BookmarkPlus, ChevronDown, ListChecks, Loader2, Mic, Paperclip, Plus, Shrink, Sparkles, Wrench, Zap } from "lucide-react";
+import { BookmarkPlus, ChevronDown, Command, ListChecks, Loader2, Mic, Paperclip, Plus, Shrink, Sparkles, Wrench, Zap } from "lucide-react";
 import { getSubmitDuringRunBehavior } from "@/lib/composer-prefs";
 import { recentPrompts, type PromptHistoryEntry } from "@/lib/prompt-history";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
@@ -39,6 +39,7 @@ import {
 } from "./ChatInput-slash-commands";
 import { SnippetPlaceholderRow } from "./SnippetPlaceholderRow";
 import { SaveSnippetDialog, SnippetsManagerDialog } from "./SnippetDialogs";
+import { CommandBrowserDialog } from "./CommandBrowserDialog";
 import { fill, parsePlaceholders } from "@/lib/snippets/placeholders";
 import { resolveSlash } from "@/lib/snippets/scope";
 import {
@@ -331,6 +332,9 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const [attachedSnippet, setAttachedSnippet] = useState<{ item: SnippetScopeItem; values: Record<string, string> } | null>(null);
   const [saveSnippetOpen, setSaveSnippetOpen] = useState(false);
   const [snippetsManagerOpen, setSnippetsManagerOpen] = useState(false);
+  // P16 command browser: read-only metadata viewer over omp's full
+  // get_available_commands surface. Opened from the slash palette footer.
+  const [commandBrowserOpen, setCommandBrowserOpen] = useState(false);
   const snippetsFetchedAtRef = useRef(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1800,6 +1804,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
         onOpenChange={setSnippetsManagerOpen}
         onChanged={(items) => setSnippets(items)}
       />
+      <CommandBrowserDialog open={commandBrowserOpen} onOpenChange={setCommandBrowserOpen} />
       {/* Hidden file input */}
       <input
         ref={fileInputRef}
@@ -2351,6 +2356,38 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                     </section>
                   ))
                 )}
+              </div>
+              {/* P16: browse the FULL command surface (not just palette rows) in
+                  the read-only command browser; the composer is cleared because
+                  the partial "/…" token is not a runnable command itself. */}
+              <div style={{ borderTop: "1px solid var(--border)", flexShrink: 0, padding: "5px 8px" }}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setSlashMenuOpen(false);
+                    setSlashActiveIndex(0);
+                    setValue("");
+                    setCommandBrowserOpen(true);
+                  }}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                    padding: "6px 8px",
+                    border: "none",
+                    borderRadius: 6,
+                    background: "transparent",
+                    color: "var(--text-dim)",
+                    fontSize: 11.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Command size={12} aria-hidden="true" />
+                  {t("commandBrowser.openEntry")}
+                </button>
               </div>
             </div>
           )}
