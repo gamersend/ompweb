@@ -58,7 +58,10 @@ export function DialogContent({ children, className, style, ariaLabel }: {
           boxShadow: "var(--shadow-modal)",
           padding: 20,
           maxWidth: "min(92vw, 560px)",
-          maxHeight: "85dvh",
+          // Centered + 85% of the viewport would still reach into the notch /
+          // home-indicator strips on iOS; subtract the safe areas so tall
+          // dialogs clear both.
+          maxHeight: "calc(85dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",
           overflow: "auto",
           ...style,
         }}

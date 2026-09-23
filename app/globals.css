@@ -3569,9 +3569,12 @@ html.dark .dropdown-surface :is(select, option) {
   }
   .sidebar-container {
     position: fixed !important;
-    top: 0;
-    left: 0;
-    bottom: 0;
+    /* Fixed positioning is viewport-relative, so this drawer does NOT inherit
+       the shell's safe-area padding — inset it directly or its header and the
+       Settings row sit under the notch / home indicator on iOS. */
+    top: env(safe-area-inset-top, 0px);
+    left: env(safe-area-inset-left, 0px);
+    bottom: env(safe-area-inset-bottom, 0px);
     width: 280px;
     max-width: 85vw;
     transition: transform var(--dur-slow) var(--ease-out-warm), box-shadow var(--dur-slow) var(--ease-out-warm);

@@ -1994,7 +1994,21 @@ export function AppShell() {
         }
       }
     `}</style>
-    <div style={{ display: "flex", height: "100%", flex: 1, overflow: "hidden", background: "var(--bg)" }}>
+    <div style={{
+      display: "flex",
+      height: "100%",
+      flex: 1,
+      overflow: "hidden",
+      background: "var(--bg)",
+      // iOS shell/PWA: `viewport-fit: cover` runs the web view edge-to-edge,
+      // so the shell must inset itself — without this the topbar, session
+      // header and mobile drawer render under the notch/Dynamic Island.
+      // Bottom is deliberately NOT padded here: the composer and chat already
+      // apply `env(safe-area-inset-bottom)` themselves.
+      paddingTop: "env(safe-area-inset-top, 0px)",
+      paddingLeft: "env(safe-area-inset-left, 0px)",
+      paddingRight: "env(safe-area-inset-right, 0px)",
+    }}>
       {/* Left sidebar: hidden on full-page Settings and the runs board */}
       {!settingsTab && !runsBoardOpen && (
         <>
@@ -2625,7 +2639,12 @@ export function AppShell() {
       title={rightPanelOpen ? t("appShell.hideFilePanel") : t("appShell.showFilePanel")}
       aria-label={rightPanelOpen ? t("appShell.hideFilePanel") : t("appShell.showFilePanel")}
       style={{
-        position: "fixed", top: 0, right: 0, zIndex: 300,
+        // Floating chrome: `fixed`, so it must inset itself past the iOS
+        // notch/Dynamic Island and rounded corners.
+        position: "fixed",
+        top: "env(safe-area-inset-top, 0px)",
+        right: "env(safe-area-inset-right, 0px)",
+        zIndex: 300,
         display: "flex", alignItems: "center", justifyContent: "center",
         width: isMobile ? 44 : 36, height: isMobile ? 44 : 36, padding: 0,
         background: "var(--bg-panel)", border: "none", borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)",

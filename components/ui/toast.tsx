@@ -118,15 +118,17 @@ function Toaster() {
   const { toasts } = Toast.useToastManager<ToastData>();
   const isMobile = useIsMobile();
   // Clear the app chrome (topbar 36/44px + tab bar 36px) with a safe gap so
-  // toasts never cover the header, tabs, or chat content.
+  // toasts never cover the header, tabs, or chat content. The iOS safe-area
+  // inset is added on top: the viewport is `fixed`, so it does not inherit
+  // the shell's padding and would otherwise start under the notch.
   const topOffset = isMobile ? 88 : 80;
   return (
     <Toast.Portal>
       <Toast.Viewport
         style={{
           position: "fixed",
-          top: topOffset,
-          right: 16,
+          top: `calc(${topOffset}px + env(safe-area-inset-top, 0px))`,
+          right: "max(16px, env(safe-area-inset-right, 0px))",
           zIndex: 2100,
           display: "flex",
           flexDirection: "column",
