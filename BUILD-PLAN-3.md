@@ -1,41 +1,98 @@
- ⏸ deferred (capability detected, UI deferred) | Roadmap ID | Candidate | Planned phase |
+# ompweb Wave 3 Build Plan
+
+Status: **phases P0–P22 EXECUTED 2026-09-21/23** (AGENTS.md W3 sections +
+docs/agent-notes-w3-P2-P5.md are authoritative). All code phases landed;
+P20.1/P20.10 physical-device checks and P21 remain OPEN (physical devices
+required — documented defer); P22 closed at local verification per plan.
+No publish.
+
+This plan fully decomposes every candidate in ROADMAP-3.md into buildable work.
+It is intentionally ordered around the existing ompweb architecture and the
+user's couch, voice, parallel-agent, and three-device workflow.
+
+## 1. Standing constraints
+
+- Never add npm publishing, public-release, marketplace, or package-distribution work.
+- Never add spend caps, cost guardrails, auto-stop-on-budget, or enforced usage limits. Usage visibility is allowed.
+- Voice remains browser-direct to omp's Codex live /live route. No OpenAI Realtime naming, no API-key fallback, no server relay of live media, and no server transcript capture.
+- Node-only runtime. Do not import Bun-only oh-my-pi packages. Use the existing RPC/JSONL porting contract.
+- Reuse existing design tokens and components/ui. Use lucide icons only; no new icon system.
+- Every user-visible string is added to en, zh-CN, and ja in the existing i18n shape.
+- Every API response uses the existing { success, data } envelope, including failures where the current route convention permits it.
+- Cross-request registries use the existing globalThis registry pattern.
+- New durable web state is an atomic, versioned JSON store below ~/.omp/agent/. Never write omp's own files or databases.
+- Preserve the existing auth choice and LAN/fabric deployment shape. Do not widen the deployment model.
+- Keep each vertical slice reversible. Do not migrate or rewrite existing stores until the replacement has read compatibility.
+
+## 2. Baseline and source gates
+
+Wave 1 and Wave 2 are executed. Do not re-propose their shipped features as
+new work. The source candidate list and attribution are in
+ROADMAP-3.md. The important local baseline is:
+
+- Installed omp is omp/18.2.6 at C:\Users\blaze\AppData\Local\omp\omp.exe.
+- rpc-ui mode exposes ready frame protocol v1 and command families for
+  security, mcp, memory, jobs, trace, stats, process control, task batching,
+  and related inspection.
+- Existing UI patterns include session search, runs/swarm boards, delegation,
+  quick launch, client-state sync, notifications, checkpoint/PR flows,
+  schedules, split view, terminal, snippets, history, voice, and three locales.
+- Known local gaps include restore actions not being durable, client-state
+  deletion without tombstones, push labels/chips not being fully surfaced,
+  the tray task-name mismatch, delegated report attribution staying zero,
+  and a narrower browser RPC event surface than the installed omp.
+
+Source gates to re-check at implementation time:
+
+- Upstream omp repository: https://github.com/can1357/oh-my-pi
+- Upstream omp CLI/RPC reference: https://github.com/can1357/oh-my-pi/tree/main/packages/coding-agent
+- Next.js documentation: https://nextjs.org/docs
+- React documentation: https://react.dev/
+- Capacitor documentation: https://capacitorjs.com/docs
+- Web Push and service-worker documentation: https://developer.mozilla.org/en-US/docs/Web/API/Push_API
+- File System Access API: https://developer.mozilla.org/en-US/docs/Web/API/File_System_API
+- Background Sync: https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API
+
+## 3. Candidate coverage matrix
+
+| Roadmap ID | Candidate | Planned phase |
 | --- | --- | --- |
-| R3-01 | Durable checkpoint-restore ledger | P4 |
-| R3-02 | Client-state tombstones | P2 |
-| R3-03 | Per-kind Web Push chips and device labels | P3 |
-| R3-04 | Reconcile tray task name | P5 |
-| R3-05 | Durable cross-device goal and plan rail | P8 |
-| R3-06 | Honest event timeline and retry/fallback narration | P7 |
-| R3-07 | Session recovery center | P9 |
-| R3-08 | Delegated-origin attribution | P5 |
-| R3-09 | Usage by client and session dashboard | P10 |
-| R3-10 | Voice-safe progress summaries | P19 |
-| R3-11 | Native task.batch launch and compare | P11 |
-| R3-12 | Agent lineage and dependency graph | P13 |
-| R3-13 | Native jobs, peers, and process control center | P14 |
-| R3-14 | Isolation and patch-set inspector | P12 |
-| R3-15 | Structured result table for parallel agents | P12 |
-| R3-16 | Advisor and prewalk observability | P15 |
-| R3-17 | Cross-session handoff manifest | P6 |
-| R3-18 | Collab room as a private local observer | P15 |
-| R3-19 | Metadata-driven command browser | P16 |
-| R3-20 | OMP memory and mental-model inspector | P17 |
-| R3-21 | TTSR rule and injection timeline | P17 |
-| R3-22 | Native trace and stats deep links | P10 |
-| R3-23 | Background job and process tail | P14 |
-| R3-24 | Local browser-relay tab drawer | P18 |
-| R3-25 | MCP resources, prompts, and notification inspector | P17 |
-| R3-26 | Full local transcript export and native share | P18 |
-| R3-27 | Branch and context explorer | P17 |
-| R3-28 | Protocol fixture matrix against installed omp | P1 |
-| R3-29 | i18n and envelope parity gate | P1 |
-| R3-30 | Store recovery and diagnostics panel | P5 |
-| R3-31 | Mobile acceptance smoke matrix | P20 |
-| R3-32 | Session-list freshness and reconnect diagnostics | P9 |
-| R3-33 | Direct voice-call handoff phone to tablet | P21 |
-| R3-34 | PWA share target for prompt intake | P20 |
-| R3-35 | Offline state outbox with Background Sync | P20 |
-| R3-36 | Desktop Beast folder attach via File System Access | P20 |
+| R3-01 | Durable checkpoint-restore ledger | ✅ shipped (W3-P4) |
+| R3-02 | Client-state tombstones | ✅ shipped (W3-P2) |
+| R3-03 | Per-kind Web Push chips and device labels | ✅ shipped (W3-P3) |
+| R3-04 | Reconcile tray task name | ✅ shipped (W3-P5) |
+| R3-05 | Durable cross-device goal and plan rail | ✅ shipped (W3-P8) |
+| R3-06 | Honest event timeline and retry/fallback narration | ✅ shipped (W3-P7) |
+| R3-07 | Session recovery center | ✅ shipped (W3-P9) |
+| R3-08 | Delegated-origin attribution | ✅ shipped (W3-P5) |
+| R3-09 | Usage by client and session dashboard | ✅ shipped (W3-P10) |
+| R3-10 | Voice-safe progress summaries | ✅ shipped (W3-P19) |
+| R3-11 | Native task.batch launch and compare | ✅ shipped capability-gated (W3-P11; omp 18.2.6 does not announce) |
+| R3-12 | Agent lineage and dependency graph | ✅ shipped (W3-P13) |
+| R3-13 | Native jobs, peers, and process control center | ✅ shipped read-only slice (W3-P14) |
+| R3-14 | Isolation and patch-set inspector | ✅ shipped (W3-P12) |
+| R3-15 | Structured result table for parallel agents | ✅ shipped (W3-P12) |
+| R3-16 | Advisor and prewalk observability | ✅ shipped (W3-P15) |
+| R3-17 | Cross-session handoff manifest | ✅ shipped (W3-P6) |
+| R3-18 | Collab room as a private local observer | ⏸ deferred (peer listing via R3-13 adapter; surface deferred) |
+| R3-19 | Metadata-driven command browser | ✅ shipped (W3-P16) |
+| R3-20 | OMP memory and mental-model inspector | ✅ shipped stats/diagnostics (W3-P17; content view out by design) |
+| R3-21 | TTSR rule and injection timeline | ✅ shipped rules list (W3-P17; timeline deferred) |
+| R3-22 | Native trace and stats deep links | ✅ shipped (W3-P10) |
+| R3-23 | Background job and process tail | ✅ shipped read-only slice (W3-P14) |
+| R3-24 | Local browser-relay tab drawer | ⏸ deferred (stretch; capability absent) |
+| R3-25 | MCP resources, prompts, and notification inspector | ⏸ deferred (config surface exists; inspector not built) |
+| R3-26 | Full local transcript export and native share | ✅ shipped Web Share (W3-P18; Capacitor deferred) |
+| R3-27 | Branch and context explorer | ⏸ covered by existing P9 context inspector + P12 patch inspector |
+| R3-28 | Protocol fixture matrix against installed omp | ✅ shipped (W3-P1) |
+| R3-29 | i18n and envelope parity gate | ✅ shipped (W3-P1) |
+| R3-30 | Store recovery and diagnostics panel | ✅ shipped (W3-P5) |
+| R3-31 | Mobile acceptance smoke matrix | ⏸ OPEN — requires physical devices |
+| R3-32 | Session-list freshness and reconnect diagnostics | ✅ shipped (W3-P9) |
+| R3-33 | Direct voice-call handoff phone to tablet | ⏸ deferred (physical proof impossible this session) |
+| R3-34 | PWA share target for prompt intake | ✅ shipped (W3-P20) |
+| R3-35 | Offline state outbox with Background Sync | ✅ shipped (W3-P20) |
+| R3-36 | Desktop Beast folder attach via File System Access | ⏸ deferred (capability detected; UI mounting deferred) |
 
 ## 4. Delivery model
 
