@@ -2352,5 +2352,13 @@
   "runsBoard.external.listAria": "外部 omp クライアント（{count}）",
   "runsBoard.external.pid": "pid {pid}",
   "runsBoard.external.age": "{age}前",
-  "runsBoard.external.emptyCta": "{count} 件がこのアプリ外で実行中"
+  "runsBoard.external.emptyCta": "{count} 件がこのアプリ外で実行中",
+  "sessionSidebar.resetOrder": "ワークスペース順をリセット",
+  "sessionSidebar.resetOrderTitle": "手動の並び順を解除し、最近のアクティビティ順に戻します。",
+  "sessionSidebar.resetOrderConfirmTitle": "ワークスペース順をリセットしますか？",
+  "sessionSidebar.resetOrderConfirmDesc": "すべてのワークスペースの手動順序を解除し、最近のアクティビティ順に戻します。いつでも再度並べ替えできます。",
+  "sessionSidebar.resetOrderConfirmBtn": "リセット",
+  "sessionSidebar.resetOrderCancel": "この並び順を保持",
+  "sessionSidebar.resetOrderDone": "ワークスペース順をリセットしました — 最近のアクティビティ順です。",
+  "sessionSidebar.resetOrderFailed": "ワークスペース順をリセットできませんでした。"
 }

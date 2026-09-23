@@ -2352,5 +2352,13 @@
   "runsBoard.external.listAria": "外部 omp 客户端（{count}）",
   "runsBoard.external.pid": "pid {pid}",
   "runsBoard.external.age": "{age}前",
-  "runsBoard.external.emptyCta": "{count} 个在此应用外运行"
+  "runsBoard.external.emptyCta": "{count} 个在此应用外运行",
+  "sessionSidebar.resetOrder": "重置工作区排序",
+  "sessionSidebar.resetOrderTitle": "清除手动工作区排序，恢复按最近活动排序。",
+  "sessionSidebar.resetOrderConfirmTitle": "重置工作区排序？",
+  "sessionSidebar.resetOrderConfirmDesc": "将清除所有工作区的手动排序，列表重新按最近活动排序。之后仍可随时手动调整顺序。",
+  "sessionSidebar.resetOrderConfirmBtn": "重置排序",
+  "sessionSidebar.resetOrderCancel": "保留我的排序",
+  "sessionSidebar.resetOrderDone": "工作区排序已重置 —— 按最近活动排序。",
+  "sessionSidebar.resetOrderFailed": "无法重置工作区排序。"
 }

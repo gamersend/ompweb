@@ -8,10 +8,13 @@ import { DirectoryPicker } from "./DirectoryPicker";
 import { ProjectLaunchConfigDialog } from "./ProjectLaunchConfigDialog";
 import { ProviderUsageBar } from "./ProviderUsageBar";
 import { Tooltip } from "./ui/primitives";
+import { ConfirmDialog } from "./ui/field";
 import { toast } from "./ui/toast";
 import { clearLastOpenSession, setLastOpenSession, workspaceKeyOf } from "@/lib/workspace-memory";
 import {
+  buildOrderResetUpdates,
   groupSessionsByProject,
+  hasManualProjectOrder,
   loadProjectSortMode,
   projectActivityCounts,
   projectRecency,
@@ -20,7 +23,7 @@ import {
   type ProjectSortMode,
 } from "@/lib/project-ordering";
 import { comparableProjectPath } from "@/lib/comparable-path";
-import { Archive, Check, ChevronRight, Clock, FileUp, Plus, RefreshCw, Search, Settings2, SlidersHorizontal } from "lucide-react";
+import { Archive, Check, ChevronRight, Clock, FileUp, Plus, RefreshCw, RotateCcw, Search, Settings2, SlidersHorizontal } from "lucide-react";
 import { publishSessionsChanged } from "@/lib/session-change-bus";
 import {
   EMPTY_PROJECT_SET,
@@ -943,6 +946,39 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     }
   }, [loadProjects, t]);
 
+  /** True while any project carries a manual rank: the list is pinned, so
+   *  derived ordering (recent activity) no longer controls it. Only then do we
+   *  offer the reset — the button is meaningless in the unpinned state. */
+  const manualOrderPinned = useMemo(
+    () => hasManualProjectOrder(sortedProjects),
+    [sortedProjects],
+  );
+  const [resetOrderConfirm, setResetOrderConfirm] = useState(false);
+  const [resetOrderBusy, setResetOrderBusy] = useState(false);
+
+  /** Clear every project's manual rank in ONE atomic batched PATCH, then fall
+   *  back to the derived order. Reordering stays available afterwards — this
+   *  only unpins, it does not disable dragging. */
+  const handleResetProjectOrder = useCallback(async () => {
+    setResetOrderBusy(true);
+    try {
+      const response = await fetch("/api/projects", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildOrderResetUpdates(sortedProjects)),
+      });
+      if (!response.ok) throw new Error(t("sessionSidebar.resetOrderFailed"));
+      await loadProjects();
+      setProjectSortMode("recent");
+      toast.success(t("sessionSidebar.resetOrderDone"));
+      setResetOrderConfirm(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("sessionSidebar.resetOrderFailed"));
+    } finally {
+      setResetOrderBusy(false);
+    }
+  }, [sortedProjects, loadProjects, setProjectSortMode, t]);
+
   const handleProjectDrop = useCallback(async (targetPath: string) => {
     const sourcePath = draggedProjectPath;
     setDraggedProjectPath(null);
@@ -1251,6 +1287,16 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <ConfirmDialog
+        open={resetOrderConfirm}
+        onOpenChange={(open) => { if (!resetOrderBusy) setResetOrderConfirm(open); }}
+        title={t("sessionSidebar.resetOrderConfirmTitle")}
+        description={t("sessionSidebar.resetOrderConfirmDesc")}
+        confirmLabel={t("sessionSidebar.resetOrderConfirmBtn")}
+        cancelLabel={t("sessionSidebar.resetOrderCancel")}
+        busy={resetOrderBusy}
+        onConfirm={() => { void handleResetProjectOrder(); }}
+      />
       {addProjectOpen && (
         <DirectoryPicker
           busy={addProjectBusy}
@@ -1427,6 +1473,17 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         >
           <Clock size={15} strokeWidth={1.9} aria-hidden="true" />
         </SidebarIconButton>
+        {/* Reset order: only while a manual rank pins the list (a drag pins
+            EVERY project, which silently disables recent-activity sorting). */}
+        {manualOrderPinned && (
+          <SidebarIconButton
+            label={t("sessionSidebar.resetOrder")}
+            title={t("sessionSidebar.resetOrderTitle")}
+            onClick={() => setResetOrderConfirm(true)}
+          >
+            <RotateCcw size={15} strokeWidth={1.9} aria-hidden="true" />
+          </SidebarIconButton>
+        )}
         <SidebarIconButton
           label={t("projects.add")}
           title={t("projects.addTitle")}

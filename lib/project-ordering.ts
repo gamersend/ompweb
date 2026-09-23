@@ -266,3 +266,25 @@ export function saveProjectSortMode(mode: ProjectSortMode, storage?: SortModeSto
     // ignore storage quota / privacy-mode errors
   }
 }
+
+/**
+ * Batched updates that CLEAR every project's manual order: a null `sortOrder`
+ * is the registry's documented "no manual rank" value (see the applyProject
+ * Updates contract), so the list falls back to the derived order (recent
+ * activity, then addedAt, then path). Used by the sidebar's "reset order"
+ * action — a drag-reorder persists a rank for EVERY project, which pins the
+ * list and makes the recent/added toggle inert until the ranks are cleared.
+ *
+ * Update order mirrors the caller's list order purely for deterministic
+ * payloads in tests; the server applies every entry in one atomic save.
+ */
+export function buildOrderResetUpdates(
+  projects: Array<Pick<ManagedProject, "path">>,
+): { updates: Array<{ cwd: string; sortOrder: null }> } {
+  return { updates: projects.map((project) => ({ cwd: project.path, sortOrder: null })) };
+}
+
+/** True when any project carries a manual rank (the list is pinned). */
+export function hasManualProjectOrder(projects: Array<Pick<ManagedProject, "sortOrder">>): boolean {
+  return projects.some((project) => project.sortOrder !== undefined);
+}

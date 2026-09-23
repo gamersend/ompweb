@@ -2352,5 +2352,13 @@
   "runsBoard.external.listAria": "External omp clients ({count})",
   "runsBoard.external.pid": "pid {pid}",
   "runsBoard.external.age": "{age} ago",
-  "runsBoard.external.emptyCta": "{count} running outside this app"
+  "runsBoard.external.emptyCta": "{count} running outside this app",
+  "sessionSidebar.resetOrder": "Reset workspace order",
+  "sessionSidebar.resetOrderTitle": "Clear the manual workspace order and go back to sorting by recent activity.",
+  "sessionSidebar.resetOrderConfirmTitle": "Reset workspace order?",
+  "sessionSidebar.resetOrderConfirmDesc": "Removes the manual ordering for every workspace so the list follows recent activity again. You can reorder again at any time.",
+  "sessionSidebar.resetOrderConfirmBtn": "Reset order",
+  "sessionSidebar.resetOrderCancel": "Keep my order",
+  "sessionSidebar.resetOrderDone": "Workspace order reset — sorting by recent activity.",
+  "sessionSidebar.resetOrderFailed": "Could not reset the workspace order."
 }
