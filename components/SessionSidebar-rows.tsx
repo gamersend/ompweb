@@ -72,6 +72,10 @@ interface ProjectRowProps {
   activeWorktreeSwitcher?: ReactNode;
   /** Active worktree/branch label shown inline beside the workspace name. */
   worktreeBranch?: string | null;
+  /** Relative age of the project's newest session ("3h", "2d"), preformatted
+   *  by the sidebar with the shared session-row formatter. Rendered muted
+   *  beside the workspace name; omitted for projects with no sessions. */
+  lastActiveLabel?: string;
   worktreeToggleRef?: RefObject<HTMLButtonElement | null>;
   worktreeOpen?: boolean;
   onToggleWorktrees?: () => void;
@@ -110,6 +114,7 @@ function ProjectRow({
   onSplitSession,
   activeWorktreeSwitcher,
   worktreeBranch,
+  lastActiveLabel,
   worktreeToggleRef,
   worktreeOpen,
   onToggleWorktrees,
@@ -287,6 +292,17 @@ function ProjectRow({
             >
               {label}
             </span>
+            {/* Recency hint: how long ago this workspace last saw a session.
+                flexShrink 0 so the (ellipsizing) name yields first. */}
+            {lastActiveLabel && (
+              <span
+                title={t("sessionSidebar.projectLastActive", { time: lastActiveLabel })}
+                aria-label={t("sessionSidebar.projectLastActive", { time: lastActiveLabel })}
+                style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10, fontVariantNumeric: "tabular-nums", lineHeight: 1.25 }}
+              >
+                {lastActiveLabel}
+              </span>
+            )}
           </button>
           </Tooltip>
         )}

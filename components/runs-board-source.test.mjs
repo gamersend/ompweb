@@ -77,6 +77,63 @@ test("board: no NEW polling — the SSE watch stays inside useRunsBoard", () => 
   assert.ok(hookSource.includes('new EventSource("/api/runs/events?watch=1")'), "the watch query is the refcount");
 });
 
+// ─── bug 1: external omp clients + bug 2: the phone-width escape hatch ───────
+
+test("board: the header wraps and the close affordance is promoted on phones (bug 2)", () => {
+  const headerStart = boardSource.indexOf('className="runs-board-header"');
+  assert.ok(headerStart > 0, "the header carries a testable class");
+  const header = boardSource.slice(headerStart, boardSource.indexOf("{lastError &&"));
+  // flexWrap is the guarantee: a wrapping line can never push an item past the
+  // padding box, so nothing can land off-screen at any width.
+  assert.ok(header.includes('flexWrap: "wrap"'), "header wraps instead of overflowing");
+  assert.ok(header.includes('className="ui-focus-ring runs-board-icon-btn runs-board-close"'),
+    "close keeps its focus ring and carries the mobile classes");
+  assert.ok(header.includes('aria-label={t("runsBoard.close")}') && header.includes("onClick={onClose}"),
+    "still a real labelled button wired to onClose");
+  // Mobile rules: close ordered ahead of the filter/actions, 44px target.
+  assert.ok(boardSource.includes("@media (max-width: 640px)"));
+  assert.ok(boardSource.includes(".runs-board-close { order: 1; margin-left: auto; }"));
+  assert.ok(boardSource.includes(".runs-board-actions { order: 2; }"));
+  assert.ok(boardSource.includes(".runs-board-icon-btn { min-width: 44px; min-height: 44px; }"));
+  assert.ok(boardSource.includes("padding: \"10px 56px 10px 16px\""), "the 56px corner reserve is kept");
+  // The second escape is document-level Escape — never hover/pointer-gated.
+  assert.ok(boardSource.includes('document.addEventListener("keydown", onKeyDown)'));
+  assert.equal((boardSource.match(/onMouseEnter|onPointerEnter/g) ?? []).length, 0,
+    "the board has no hover-gated control that touch devices could never reach");
+});
+
+test("board: external omp clients render read-only (bug 1)", () => {
+  const start = boardSource.indexOf("function ExternalClientsSection");
+  assert.ok(start > 0, "the section exists");
+  const section = boardSource.slice(start, boardSource.indexOf("Delegate target picker"));
+  assert.ok(section.includes('t("runsBoard.external.title")'), "labelled section");
+  assert.ok(section.includes("client.pid") && section.includes("client.projectDir"), "pid + project shown");
+  assert.equal(/kill|interrupt|CircleStop|sendAgentCommand/i.test(section), false,
+    "observation only — no process control");
+  // The whole section is absent when there is nothing to show (the mount is
+  // controlled so the empty state can open it directly).
+  assert.ok(/externalClients\.length > 0 && \(\s*<ExternalClientsSection/.test(boardSource),
+    "section mounts only when clients exist");
+  assert.ok(boardSource.includes("open={externalOpen}") && boardSource.includes("onOpenChange={setExternalOpen}"),
+    "section is controlled (open state owned by the board)");
+  // The empty state must answer "0 running" honestly when omp sessions run
+  // outside this app — that mismatch was the reported bug.
+  assert.ok(boardSource.includes('t("runsBoard.external.emptyCta"'), "empty state surfaces external clients");
+});
+
+test("board: external clients ride the unfiltered snapshot, deduped server-side", () => {
+  const hook = readFileSync(join(here, "..", "hooks", "useRunsBoard.ts"), "utf8");
+  const aggregator = readFileSync(join(here, "..", "lib", "runs-board.ts"), "utf8");
+  assert.ok(hook.includes("externalClients") && hook.includes('from "@/lib/runs-board"'));
+  assert.ok(aggregator.includes("filterOwnedClients"), "own children are dropped, not listed twice");
+  assert.ok(aggregator.includes("getOwnedRpcProcessPids"), "the owned set comes from the live registry");
+  assert.ok(aggregator.includes("externalClientsSignature"), "change detection mirrors rows");
+  // The reader is cached: a 2 s board poll must not walk the registry each tick.
+  const reader = readFileSync(join(here, "..", "lib", "omp", "native-clients.ts"), "utf8");
+  assert.ok(reader.includes("EXTERNAL_CLIENTS_CACHE_TTL_MS = 5_000"));
+  assert.ok(reader.includes("EXTERNAL_CLIENTS_MAX_FILES"));
+});
+
 // ─── parseSubagentCards (aggregator-side parsing) ────────────────────────────
 
 test("parseSubagentCards: parses {subagents:[...]} and bare arrays into cards", () => {

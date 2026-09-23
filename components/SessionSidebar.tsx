@@ -10,9 +10,17 @@ import { ProviderUsageBar } from "./ProviderUsageBar";
 import { Tooltip } from "./ui/primitives";
 import { toast } from "./ui/toast";
 import { clearLastOpenSession, setLastOpenSession, workspaceKeyOf } from "@/lib/workspace-memory";
-import { groupSessionsByProject, projectActivityCounts, sortManagedProjects } from "@/lib/project-ordering";
+import {
+  groupSessionsByProject,
+  loadProjectSortMode,
+  projectActivityCounts,
+  projectRecency,
+  saveProjectSortMode,
+  sortManagedProjects,
+  type ProjectSortMode,
+} from "@/lib/project-ordering";
 import { comparableProjectPath } from "@/lib/comparable-path";
-import { Archive, Check, ChevronRight, FileUp, Plus, RefreshCw, Search, Settings2, SlidersHorizontal } from "lucide-react";
+import { Archive, Check, ChevronRight, Clock, FileUp, Plus, RefreshCw, Search, Settings2, SlidersHorizontal } from "lucide-react";
 import { publishSessionsChanged } from "@/lib/session-change-bus";
 import {
   EMPTY_PROJECT_SET,
@@ -21,6 +29,7 @@ import {
   MAX_PROJECT_SESSIONS,
   buildSessionTree,
   displayCwd,
+  formatRelativeTime,
   loadExpandedProjects,
   loadUnreadSessionIds,
   normalizeProjectKey,
@@ -32,6 +41,7 @@ import {
 } from "./SessionSidebar-helpers";
 import { LaunchChipRow, FreshnessChip, OmpWebTitle, SIDEBAR_BUTTON_TRANSITION, SidebarIconButton } from "./SessionSidebar-chrome";
 import { ProjectRow, ProjectWorktreeSwitcher, type GetSessionOrigin } from "./SessionSidebar-rows";
+import { RecentSessionsSection } from "./SessionSidebar-recent";
 import type { SessionOrigin } from "@/lib/origin";
 
 /** Deadline for one /api/sessions fetch. A wedged-but-listening server never
@@ -92,7 +102,7 @@ interface Props {
 export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onWorkspaceOptionsChange, addProjectOpen, setAddProjectOpen, usageVisible = true, onOpenSettings, onOpenArchive, updateAvailable, settingsOpen = false, onRunningIdsChange, onSplitSession, onLaunchProject }: Props) {
 
 
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   // Wave 3 P5.3: per-session origin badges (delegated/scheduled). Ref-backed
   // map + stable accessor so row memoization never breaks on identity.
@@ -145,7 +155,15 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [runningOnly, setRunningOnly] = useState(false);
+  // Project ordering mode (persisted): "recent" (default) puts the workspace
+  // with the newest session activity on top; "added" keeps the stable
+  // registration order. Storage is read defensively — corruption → recent.
+  const [projectSortMode, setProjectSortMode] = useState<ProjectSortMode>(() => loadProjectSortMode());
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    saveProjectSortMode(projectSortMode);
+  }, [projectSortMode]);
 
   // Phase 3 quick-launch: serialize chip clicks while one spawn is in flight.
   // onLaunchProject resolves on success AND failure — AppShell owns the error
@@ -685,11 +703,36 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
 
   // ---- Derived project list ---------------------------------------------------
   const selectedProject = useMemo(() => projectRootFor(selectedCwd), [projectRootFor, selectedCwd]);
+  // Newest session mtime per project (comparable-path key), for the "recent
+  // activity" sort and the per-project age hint. Keys are folded with
+  // comparableProjectPath inside projectRecency, matching what
+  // sortManagedProjects looks up — and because it derives from the session
+  // list alone it can never depend on the order it feeds.
+  const projectRecencyByPath = useMemo(() => projectRecency(visibleSessions), [visibleSessions]);
+  // Preformatted relative age per project for the row hint. Reuses the exact
+  // session-row formatter (never a second time formatter) and re-derives on
+  // the shared minute tick, so "3h" ages without any new timer.
+  const projectLastActiveLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const [key, ts] of projectRecencyByPath) {
+      const label = formatRelativeTime(new Date(ts).toISOString(), locale, relativeTimeNow);
+      if (label) labels.set(key, label);
+    }
+    return labels;
+  }, [projectRecencyByPath, locale, relativeTimeNow]);
   // While a fresh optimistic/placeholder is pending (JSONL not yet on disk),
   // freeze ordering so the new project row does not flicker optimistic ->
   // confirmed position. New projects are allowed to append at the end.
   const hasPendingNewSession = Boolean(optimisticSession || [...runningSessionIds].some((id) => !allSessions.some((ss) => ss.id === id)));
-  const sortedProjectsBase = useMemo(() => sortManagedProjects(visibleProjects), [visibleProjects]);
+  const sortedProjectsBase = useMemo(
+    () => sortManagedProjects(
+      visibleProjects,
+      // Only the "recent activity" mode opts into activity-aware ordering;
+      // "added" reproduces the historical registration order exactly.
+      projectSortMode === "recent" ? projectRecencyByPath : undefined,
+    ),
+    [visibleProjects, projectSortMode, projectRecencyByPath],
+  );
   const sortedProjectsRef = useRef<ManagedProject[] | null>(null);
   const sortedProjects = useMemo(() => {
     if (hasPendingNewSession && sortedProjectsRef.current) {
@@ -890,6 +933,11 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       });
       if (!response.ok) throw new Error(t("projects.reorderFailed"));
       await loadProjects();
+      // An explicit reorder puts the user's own order in effect: the registry
+      // now carries a manual sortOrder for every project, and manual order
+      // always beats derived ordering. Reflect that in the toggle instead of
+      // leaving "recent activity" lit over a list it no longer controls.
+      setProjectSortMode("added");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     }
@@ -1368,6 +1416,17 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         >
           <SlidersHorizontal size={15} strokeWidth={1.9} aria-hidden="true" />
         </SidebarIconButton>
+        {/* Project order toggle: active while the list is recency-sorted. The
+            label/tooltip name the CURRENT mode, so the button always answers
+            "what am I looking at?", and a click switches + persists it. */}
+        <SidebarIconButton
+          label={projectSortMode === "recent" ? t("sessionSidebar.projectSortRecent") : t("sessionSidebar.projectSortAdded")}
+          title={projectSortMode === "recent" ? t("sessionSidebar.projectSortTitleRecent") : t("sessionSidebar.projectSortTitleAdded")}
+          active={projectSortMode === "recent"}
+          onClick={() => setProjectSortMode((mode) => (mode === "recent" ? "added" : "recent"))}
+        >
+          <Clock size={15} strokeWidth={1.9} aria-hidden="true" />
+        </SidebarIconButton>
         <SidebarIconButton
           label={t("projects.add")}
           title={t("projects.addTitle")}
@@ -1421,6 +1480,20 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
             minHeight: 80,
           }}
         >
+          {/* Flat cross-project "Recent" rail — the first thing in the list,
+              scrolled with it (never pinned chrome). Explains itself away:
+              it renders nothing when there is nothing to show, and it honors
+              the same search/running-only filters as the workspace tree. */}
+          <RecentSessionsSection
+            sessions={visibleSessions}
+            selectedSessionId={selectedSessionId}
+            runningSessionIds={runningSessionIds}
+            unreadSessionIds={unreadSessionIds}
+            relativeTimeNow={relativeTimeNow}
+            searchQuery={deferredSearchQuery}
+            runningOnly={runningOnly}
+            onSelectSession={handleSelectSessionFromList}
+          />
           {loading && (
             <div style={{ padding: "10px 4px", color: "var(--text-muted)", fontSize: 12 }}>
               {t("sessionSidebar.loading")}
@@ -1456,6 +1529,12 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
             // repo's row owns the single switcher anchor so the dropdown opens
             // against the correct row.
             const projectBranch = worktreeBranchForProject(project.path);
+            // Age hint only for projects that actually have sessions (an empty
+            // managed project has nothing to be recent about).
+            const projectSessions = sessionsByProject.get(project.path);
+            const lastActiveLabel = projectSessions && projectSessions.length > 0
+              ? projectLastActiveLabels.get(comparableProjectPath(project.path))
+              : undefined;
             return (
               <ProjectRow
                 key={project.path}
@@ -1486,6 +1565,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
                 onSplitSession={handleSplitSession}
                 activeWorktreeSwitcher={isActive ? activeProjectSwitcher : null}
                 worktreeBranch={projectBranch}
+                lastActiveLabel={lastActiveLabel}
                 worktreeToggleRef={isActive && projectBranch ? wtToggleRef : undefined}
                 worktreeOpen={isActive ? wtDropdownOpen : false}
                 onToggleWorktrees={isActive ? toggleWorktrees : undefined}

@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 99 API routes, 90 components, 22 hooks, 137 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 99 API routes, 91 components, 22 hooks, 138 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -1893,6 +1893,61 @@ palette (`components/CommandPalette.tsx`, ⌘K/Ctrl+K) is built on `cmdk`.
   findings; 9 sanctioned allowlist entries each with a written reason
   (native config.yml editor, live signaling route, bin launcher guidance
   wording). Self-verifying via bypass-mode detector tests.
+
+### Sidebar recency ordering + Recent rail (W3-P23)
+- Blaze's report: "the workspaces list is really unorganised … i can never find
+  the convo i want". Root cause: projects sorted by REGISTRATION order
+  (`addedAt`), deliberately activity-independent, and the only cross-project
+  view was the ⌘K palette — nothing on the sidebar itself surfaced recent work.
+- `sortManagedProjects(projects, activityByProject?)` gained an OPTIONAL
+  second arg (omitting it reproduces the old order byte-for-byte, so every
+  existing caller/test is untouched). Precedence: manual `sortOrder` →
+  [with the map] projects WITH activity above those without, newest first →
+  `addedAt` desc → path. Keys are `comparableProjectPath(project.path)`.
+  A `Clock` toggle in the Workspaces header flips recent ⇄ added, persisted at
+  `omp-web:sidebar-project-sort` (default "recent", corrupt → recent).
+  ⚠️ Any manual reorder persists `sortOrder` for every project, which pins the
+  list — the toggle then auto-switches to "added" so it never lies about the
+  live order. A "reset workspace order" action (PATCH `sortOrder: null`) is the
+  real fix if that pinning becomes annoying.
+- `components/SessionSidebar-recent.tsx` — the flat cross-project rail at the
+  top of the sidebar scroller: newest sessions across ALL projects (title,
+  project label, relative time, running/unread marks), 8 rows at rest, 30 while
+  a filter is active, where it relabels to "Matches" and doubles as the
+  cross-project result set for the existing search box. Collapsible, persisted
+  at `omp-web:recent-collapsed` (default EXPANDED), hidden when empty.
+  Selection reuses the sidebar's `onSelectSession`; rows are memoized on
+  primitives. Ordering/selection are pure (`projectRecency`, `recentSessions`
+  in lib/project-ordering.ts, 18 new test cases).
+- `ProjectRow` gained an optional `lastActiveLabel` ("Last active 2h") so the
+  new ordering is legible instead of mysterious.
+- Placement note: the rail is the first child of the scroll container (so it
+  scrolls), which puts it BELOW the pinned "WORKSPACES" heading — making it a
+  pinned sibling would cost ~270px of permanent phone height.
+
+### Runs board sees omp sessions it did not spawn (W3-P24)
+- Blaze's report: "the runs tab always says no active runs even though omp has
+  multiple running". Root cause: the board's running set came ONLY from
+  ompweb's own RPC registry (`getRunningRpcSessions()`), so TUI-started
+  sessions were invisible.
+- `lib/omp/native-clients.ts` reads omp's OWN live-client registry —
+  `~/.omp/run/daemons/<projectHash>/clients/<pid>-<uuid>.json`
+  (`{pid,id,projectDir}`, plus `scope.json` per hash; `global/` scope exists).
+  Liveness is probed with `process.kill(pid, 0)` (stale files linger after a
+  process dies); Tier B — a missing dir degrades to `supported:false`, never an
+  error; READ-ONLY (nothing under `~/.omp/run` is ever written); 5 s cache so
+  the 2 s board poll does not hammer the FS.
+- These entries carry NO session id, so they are presented honestly as
+  **external omp clients** (project + pid + age), never mapped to a fabricated
+  session. ompweb's own children are deduped out via a new `get pid()`
+  accessor on `RpcProcess` (+ wrapper passthrough) — `filterOwnedClients`.
+- The board snapshot carries `externalClients` (additive; revision bumps when
+  the signature changes) and RunsBoard renders a collapsed-by-default
+  "External omp sessions" section — observation only, no process control.
+- Also fixed on this pass: the Runs board could trap an iPhone user (no way
+  back without force-closing). The close control is now guaranteed reachable at
+  phone widths with a ≥44px touch target; the board is a state overlay, not a
+  route, so there was no back-gesture escape.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

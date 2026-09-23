@@ -20,8 +20,9 @@ const HEARTBEAT_MS = 30_000;
 // `?watch=1` opens a watch: the server-side 2 s aggregator poll runs ONLY
 // while at least one watch connection is open (refcount — load-bearing, see
 // lib/runs-board.ts). Frames:
-//   { type: "snapshot", revision, runs, watchers }   on connect
-//   { type: "runs", revision, runs }                 changed rows, ≥1 s/run
+//   { type: "snapshot", revision, runs, watchers, externalClients }   on connect
+//   { type: "runs", revision, runs, externalClients }                 changed
+//   rows (≥1 s/row) — also emitted when only the external client set moved.
 // Heartbeat comments keep proxies from idling the connection out; abort +
 // cancel both release the watch exactly once.
 export async function GET(req: Request) {
@@ -42,6 +43,8 @@ export async function GET(req: Request) {
       const dirty = new Set<string>();
       const lastSentAt = new Map<string, number>();
       let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+      // External omp clients changed since the last frame (no session row).
+      let externalDirty = false;
 
       const cleanup = () => {
         if (cleaned) return;
@@ -92,17 +95,25 @@ export async function GET(req: Request) {
       // Subscribe BEFORE the snapshot so no change can slip through the gap
       // (a change racing the snapshot re-sends the row — harmless, the
       // client's revision guard drops anything older than its baseline).
-      unsubscribeBoard = subscribeBoardChanges((changedSessionIds) => {
+      unsubscribeBoard = subscribeBoardChanges((changedSessionIds, info) => {
         for (const id of changedSessionIds) dirty.add(id);
+        if (info?.externalClientsChanged) externalDirty = true;
         scheduleFlush();
       });
 
       const initial = getBoardSnapshot();
-      encode({ type: "snapshot", revision: initial.revision, runs: initial.runs, watchers: initial.watchers });
+      encode({
+        type: "snapshot",
+        revision: initial.revision,
+        runs: initial.runs,
+        watchers: initial.watchers,
+        externalClients: initial.externalClients,
+      });
 
       const flush = () => {
         trailingTimer = null;
-        if (closed || dirty.size === 0) return;
+        if (closed) return;
+        if (dirty.size === 0 && !externalDirty) return;
         const now = Date.now();
         const due: string[] = [];
         let earliestPending = Number.POSITIVE_INFINITY;
@@ -116,15 +127,22 @@ export async function GET(req: Request) {
             earliestPending = Math.min(earliestPending, sentAt + PER_RUN_COALESCE_MS);
           }
         }
-        if (due.length > 0) {
+        if (due.length > 0 || externalDirty) {
           const snapshot = getBoardSnapshot();
           const byId = new Map(snapshot.runs.map((run: BoardRun) => [run.sessionId, run] as const));
           const runs = due.map((id) => byId.get(id)).filter((run): run is BoardRun => run !== undefined);
           // A row pruned between dirtying and flushing is simply absent —
           // terminal rows linger 15 min, so this only fires on resets.
-          if (runs.length > 0) {
-            encode({ type: "runs", revision: snapshot.revision, runs });
+          // externalClients rides every frame so the client's merge is total.
+          if (runs.length > 0 || externalDirty) {
+            encode({
+              type: "runs",
+              revision: snapshot.revision,
+              runs,
+              externalClients: snapshot.externalClients,
+            });
           }
+          externalDirty = false;
         }
         if (dirty.size > 0 && Number.isFinite(earliestPending)) {
           trailingTimer = setTimeout(flush, Math.max(0, earliestPending - Date.now()));
@@ -132,7 +150,8 @@ export async function GET(req: Request) {
       };
 
       function scheduleFlush() {
-        if (closed || dirty.size === 0) return;
+        if (closed) return;
+        if (dirty.size === 0 && !externalDirty) return;
         if (trailingTimer !== null) return;
         trailingTimer = setTimeout(flush, PER_RUN_COALESCE_MS);
       }

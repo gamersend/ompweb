@@ -20,20 +20,23 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { comparableProjectPath } from "@/lib/comparable-path";
-import type { BoardRun } from "@/lib/runs-board";
+import type { BoardRun, ExternalOmpClient } from "@/lib/runs-board";
 
-export type { BoardRun };
+export type { BoardRun, ExternalOmpClient };
 
 export interface BoardSnapshot {
   revision: number;
   runs: BoardRun[];
   watchers?: number;
+  /** Live omp clients started OUTSIDE this web app (pid + project), already
+   * deduped against the board's own children. Absent/empty → no section. */
+  externalClients?: ExternalOmpClient[];
 }
 
 /** SSE frames from /api/runs/events. */
 export type BoardFrame =
-  | { type: "snapshot"; revision: number; runs: BoardRun[]; watchers?: number }
-  | { type: "runs"; revision: number; runs: BoardRun[] };
+  | { type: "snapshot"; revision: number; runs: BoardRun[]; watchers?: number; externalClients?: ExternalOmpClient[] }
+  | { type: "runs"; revision: number; runs: BoardRun[]; externalClients?: ExternalOmpClient[] };
 
 /** Sort: waiting → error → running (longest first) → finished (newest first). */
 export const BOARD_STATE_RANK: Record<BoardRun["state"], number> = {
@@ -83,16 +86,25 @@ export function formatBoardElapsed(startedAt: string, nowMs: number): string {
 /** Merge an incremental frame into the current board state. Returns null when
  * the frame is STALE: its revision predates the newest snapshot already
  * applied, so its rows could resurrect state the snapshot dropped (a session
- * that left the running set). Snapshot frames replace wholesale. */
+ * that left the running set). Snapshot frames replace wholesale. External
+ * clients travel on every frame; a frame without them keeps the applied set. */
 export function mergeBoardFrame(
   snapshot: BoardSnapshot,
   frame: BoardFrame,
 ): BoardSnapshot | null {
   if (frame.revision < snapshot.revision) return null;
-  if (frame.type === "snapshot") return frame;
+  const externalClients = frame.externalClients ?? snapshot.externalClients ?? [];
+  if (frame.type === "snapshot") {
+    return { revision: frame.revision, runs: frame.runs, watchers: frame.watchers, externalClients };
+  }
   const byId = new Map(snapshot.runs.map((run) => [run.sessionId, run] as const));
   for (const run of frame.runs) byId.set(run.sessionId, run);
-  return { revision: Math.max(snapshot.revision, frame.revision), runs: [...byId.values()] };
+  return {
+    revision: Math.max(snapshot.revision, frame.revision),
+    runs: [...byId.values()],
+    watchers: snapshot.watchers,
+    externalClients,
+  };
 }
 
 // ─── hook ────────────────────────────────────────────────────────────────────
@@ -165,6 +177,7 @@ export function useRunsBoard() {
   }, [reconcile]);
 
   const runs = sortBoardRuns(snapshot.runs);
+  const externalClients = snapshot.externalClients ?? [];
 
-  return { runs, revision: snapshot.revision, connected, lastError, refresh: reconcile };
+  return { runs, revision: snapshot.revision, connected, lastError, refresh: reconcile, externalClients };
 }

@@ -18,6 +18,8 @@ import {
   Bot,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   CircleStop,
   Folder,
   Layers,
@@ -25,6 +27,7 @@ import {
   Play,
   Send,
   SquareKanban,
+  Terminal,
   Timer,
   Wrench,
   X,
@@ -54,7 +57,7 @@ import {
   formatBoardElapsed,
   useRunsBoard,
 } from "@/hooks/useRunsBoard";
-import type { BoardRun } from "@/lib/runs-board";
+import type { BoardRun, ExternalOmpClient } from "@/lib/runs-board";
 import type { HandoffRecord } from "@/lib/handoffs";
 import { projectLabel } from "./AppShell-layout";
 import type { ManagedProject, SessionInfo } from "@/lib/types";
@@ -76,7 +79,7 @@ function isActiveState(run: BoardRun): boolean {
 
 export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, activeCwd }: RunsBoardProps) {
   const { t } = useI18n();
-  const { runs, connected, lastError, refresh } = useRunsBoard();
+  const { runs, connected, lastError, refresh, externalClients } = useRunsBoard();
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [interruptTarget, setInterruptTarget] = useState<BoardRun | null>(null);
@@ -91,6 +94,10 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
   const [delegateSource, setDelegateSource] = useState<BoardRun | null>(null);
   // Handoff manifest (wave 3 P6): durable delegation settle states.
   const [handoffs, setHandoffs] = useState<HandoffRecord[]>([]);
+  // External-clients section is controlled so the empty state can open it
+  // directly — "0 runs" while omp has sessions running is the confusion this
+  // whole section exists to answer.
+  const [externalOpen, setExternalOpen] = useState(false);
   // Native task-batch launch (wave 3 P11): dialog entry point.
   const [batchOpen, setBatchOpen] = useState(false);
 
@@ -236,103 +243,130 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
         @media (prefers-reduced-motion: reduce) {
           .runs-board-dot-waiting { animation: none; }
         }
+        /* Phone widths (bug 2 — the board trapped an iPhone user): the close
+           affordance is promoted AHEAD of the filter/actions group (order 1 vs
+           2) so it always lands on the first wrapped line, inside the header's
+           56px right reserve — clear of the fixed file-panel toggle — and gets
+           the 44px minimum touch target the rest of the app uses on mobile.
+           The header's flexWrap is what makes this a guarantee: a wrapping flex
+           line can never push an item past the padding box, so the X is
+           reachable at any width, with any project name length, in every
+           filter/kanban/delegation state. Nothing here is hover- or
+           pointer-gated. */
+        @media (max-width: 640px) {
+          .runs-board-close { order: 1; margin-left: auto; }
+          .runs-board-actions { order: 2; }
+          .runs-board-icon-btn { min-width: 44px; min-height: 44px; }
+        }
       `}</style>
 
-      {/* Header */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
+      {/* Header. WRAPS deliberately: with a single non-wrapping row the fixed
+          controls (filter select + Tasks/Batch/refresh) overflowed the content
+          box and clipped the trailing Close button off-screen on phones — the
+          only exit from the board, hence the trap. */}
+      <div className="runs-board-header" style={{
+        display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, flexShrink: 0,
         // The board replaces the topbar, so its header row owns the shell's
-        // top-right corner — where the fixed show-file-panel toggle sits.
-        // Reserve that corner: without the extra right padding the Close
-        // button's clickable area slid under the toggle (browser audit Job 7).
+        // top-right corner — where the fixed show-file-panel toggle sits
+        // (44x44 on mobile). Reserve that corner: without the extra right
+        // padding a control can slide under the toggle (browser audit Job 7,
+        // and the reason the 56px reserve is kept at every width).
         padding: "10px 56px 10px 16px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)",
       }}>
-        <h1 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "var(--text)", display: "inline-flex", alignItems: "center", gap: 8 }}>
+        <h1 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "var(--text)", display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <Layers size={16} strokeWidth={1.8} aria-hidden="true" />
           {t("runsBoard.title")}
         </h1>
-        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        <span style={{ fontSize: 12, color: "var(--text-muted)", minWidth: 0 }}>
           {t("runsBoard.summary", { running: activeCount - waitingCount, waiting: waitingCount })}
         </span>
         {/* Status-only live region (a11y): count changes, never stream output. */}
         <div role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>
           {t("runsBoard.summary", { running: activeCount - waitingCount, waiting: waitingCount })}
         </div>
-        <div style={{ flex: 1 }} />
+        <div style={{ flex: 1, minWidth: 0 }} />
         {!connected && (
           <span aria-hidden="true" style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("runsBoard.reconnecting")}</span>
         )}
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
-          <Folder size={13} strokeWidth={1.8} aria-hidden="true" />
-          <select
-            value={projectFilter ?? ""}
-            onChange={(event) => { setProjectFilter(event.target.value || null); setFocusedIndex(0); }}
-            aria-label={t("runsBoard.filter")}
+        {/* Filter + view actions. Their own flex item (and their own wrapping
+            row) so they can never shove the close affordance sideways. */}
+        <div className="runs-board-actions" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, minWidth: 0 }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", minWidth: 0, maxWidth: "100%" }}>
+            <Folder size={13} strokeWidth={1.8} aria-hidden="true" />
+            <select
+              value={projectFilter ?? ""}
+              onChange={(event) => { setProjectFilter(event.target.value || null); setFocusedIndex(0); }}
+              aria-label={t("runsBoard.filter")}
+              className="ui-focus-ring"
+              style={{
+                padding: "4px 8px", borderRadius: "var(--radius-control)", border: "1px solid var(--border)",
+                background: "var(--bg)", color: "var(--text)", fontSize: 12, maxWidth: 220, minWidth: 0,
+              }}
+            >
+              <option value="">{t("runsBoard.filterAll")}</option>
+              {projectOptions.map((option) => (
+                <option key={option.path} value={option.path}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => { setTasksMode((mode) => !mode); setFocusedIndex(0); }}
+            aria-pressed={tasksMode}
             className="ui-focus-ring"
+            aria-label={t("board.tasksAria")}
+            title={t("board.tasksAria")}
             style={{
-              padding: "4px 8px", borderRadius: "var(--radius-control)", border: "1px solid var(--border)",
-              background: "var(--bg)", color: "var(--text)", fontSize: 12, maxWidth: 220,
+              display: "inline-flex", alignItems: "center", gap: 5, height: 28,
+              padding: "0 10px", flexShrink: 0,
+              border: `1px solid ${tasksMode ? "var(--accent)" : "var(--border)"}`,
+              borderRadius: "var(--radius-control)",
+              background: tasksMode ? "var(--bg-selected)" : "transparent",
+              color: tasksMode ? "var(--text)" : "var(--text-muted)", cursor: "pointer", fontSize: 12,
             }}
           >
-            <option value="">{t("runsBoard.filterAll")}</option>
-            {projectOptions.map((option) => (
-              <option key={option.path} value={option.path}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          onClick={() => { setTasksMode((mode) => !mode); setFocusedIndex(0); }}
-          aria-pressed={tasksMode}
-          className="ui-focus-ring"
-          aria-label={t("board.tasksAria")}
-          title={t("board.tasksAria")}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 5, height: 28,
-            padding: "0 10px", flexShrink: 0,
-            border: `1px solid ${tasksMode ? "var(--accent)" : "var(--border)"}`,
-            borderRadius: "var(--radius-control)",
-            background: tasksMode ? "var(--bg-selected)" : "transparent",
-            color: tasksMode ? "var(--text)" : "var(--text-muted)", cursor: "pointer", fontSize: 12,
-          }}
-        >
-          <SquareKanban size={14} strokeWidth={1.8} aria-hidden="true" />
-          {t("board.tasks")}
-        </button>
-        <button
-          type="button"
-          onClick={() => setBatchOpen(true)}
-          className="ui-focus-ring"
-          aria-label={t("taskBatch.openBoard")}
-          title={t("taskBatch.openBoard")}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 5, height: 28,
-            padding: "0 10px", flexShrink: 0,
-            border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
-            background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 12,
-          }}
-        >
-          <ListChecks size={14} strokeWidth={1.8} aria-hidden="true" />
-          {t("taskBatch.openBoardShort")}
-        </button>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="ui-focus-ring"
-          aria-label={t("runsBoard.refresh")}
-          title={t("runsBoard.refresh")}
-          style={{
-            display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28,
-            border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
-            background: "transparent", color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
-          }}
-        >
-          <Timer size={14} strokeWidth={1.8} aria-hidden="true" />
-        </button>
+            <SquareKanban size={14} strokeWidth={1.8} aria-hidden="true" />
+            {t("board.tasks")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setBatchOpen(true)}
+            className="ui-focus-ring"
+            aria-label={t("taskBatch.openBoard")}
+            title={t("taskBatch.openBoard")}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5, height: 28,
+              padding: "0 10px", flexShrink: 0,
+              border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+              background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 12,
+            }}
+          >
+            <ListChecks size={14} strokeWidth={1.8} aria-hidden="true" />
+            {t("taskBatch.openBoardShort")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="ui-focus-ring runs-board-icon-btn"
+            aria-label={t("runsBoard.refresh")}
+            title={t("runsBoard.refresh")}
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28,
+              border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+              background: "transparent", color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
+            }}
+          >
+            <Timer size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </div>
+        {/* The one guaranteed way out. Real button, labelled, focus-ringed;
+            ordered onto the first header line at phone widths (see the style
+            block) so it can never be pushed off-screen. Escape still closes
+            the board too — that path is document-level and not hover-gated. */}
         <button
           type="button"
           onClick={onClose}
-          className="ui-focus-ring"
+          className="ui-focus-ring runs-board-icon-btn runs-board-close"
           aria-label={t("runsBoard.close")}
           title={t("runsBoard.close")}
           style={{
@@ -357,6 +391,21 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
           <Layers size={28} strokeWidth={1.4} aria-hidden="true" style={{ color: "var(--text-dim)" }} />
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{t("runsBoard.empty")}</div>
           <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", maxWidth: 420 }}>{t("runsBoard.emptyHint")}</div>
+          {externalClients.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setExternalOpen(true)}
+              className="ui-focus-ring"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6, marginTop: 2,
+                padding: "6px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-control)",
+                background: "var(--bg-subtle)", color: "var(--text)", fontSize: 12, cursor: "pointer",
+              }}
+            >
+              <Terminal size={13} strokeWidth={1.8} aria-hidden="true" />
+              {t("runsBoard.external.emptyCta", { count: String(externalClients.length) })}
+            </button>
+          )}
           {activeCwd && (
             <button
               type="button"
@@ -454,6 +503,22 @@ export function RunsBoard({ onClose, onOpenSession, onNewSession, projects, acti
       <div style={{ borderTop: "1px solid var(--border)", flexShrink: 0 }}>
         <LineagePanel onOpenSession={onOpenSession} />
       </div>
+
+      {/* External omp clients (bug 1): sessions started in the omp TUI/terminal
+          never enter ompweb's RPC registry, so the board used to read "no
+          active runs" while a dozen clients were live. They are shown honestly
+          as clients (pid + project + registered-at) — never mapped to a
+          session that was not parsed. Read-only, collapsed by default, and the
+          WHOLE section is absent when the registry is missing or empty: no
+          error box, no placeholder. */}
+      {externalClients.length > 0 && (
+        <ExternalClientsSection
+          clients={externalClients}
+          nowMs={nowMs}
+          open={externalOpen}
+          onOpenChange={setExternalOpen}
+        />
+      )}
 
       {/* Handoff manifest (wave 3 P6): settled delegation states, newest
           first. Hidden entirely when no handoff has ever been recorded. */}
@@ -841,6 +906,109 @@ function KanbanCard({ card, column, onOpen }: { card: SubagentInfo; column: Kanb
         </span>
       </span>
     </button>
+  );
+}
+
+// ─── External omp clients (bug 1) ────────────────────────────────────────────
+
+/** Compact age of a client registration: 42s / 12m / 5h / 3d. Pure. */
+function formatClientAge(startedAt: string, nowMs: number): string {
+  const started = Date.parse(startedAt);
+  if (!Number.isFinite(started)) return "—";
+  const seconds = Math.max(0, Math.floor((nowMs - started) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/** Read-only roster of omp clients running OUTSIDE this web app (pid +
+ * project + age). Collapsed by default; no controls, no kill, no session
+ * mapping — the registry carries no session id, so none is invented. */
+function ExternalClientsSection({ clients, nowMs, open, onOpenChange }: {
+  clients: ExternalOmpClient[];
+  nowMs: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <section
+      aria-label={t("runsBoard.external.title")}
+      style={{ borderTop: "1px solid var(--border)", flexShrink: 0 }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 16px", flexWrap: "wrap", minWidth: 0 }}>
+        <button
+          type="button"
+          onClick={() => onOpenChange(!open)}
+          aria-expanded={open}
+          className="ui-focus-ring"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            border: "none", background: "none", padding: 0, cursor: "pointer",
+            fontSize: 12, fontWeight: 600, color: "var(--text-muted)", minWidth: 0,
+          }}
+        >
+          {open
+            ? <ChevronDown size={14} strokeWidth={2} aria-hidden="true" style={{ flexShrink: 0 }} />
+            : <ChevronRight size={14} strokeWidth={2} aria-hidden="true" style={{ flexShrink: 0 }} />}
+          <Terminal size={13} strokeWidth={1.8} aria-hidden="true" style={{ flexShrink: 0 }} />
+          <span>{t("runsBoard.external.title")}</span>
+          <span
+            style={{
+              fontSize: 10, padding: "1px 7px", borderRadius: 999, flexShrink: 0,
+              border: "1px solid var(--border)", background: "var(--bg-selected)",
+              color: "var(--text-muted)",
+            }}
+          >
+            {clients.length}
+          </span>
+        </button>
+      </div>
+
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 16px 10px" }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 2 }}>
+            {t("runsBoard.external.hint")}
+          </div>
+          <div
+            role="list"
+            aria-label={t("runsBoard.external.listAria", { count: String(clients.length) })}
+            style={{ display: "flex", flexDirection: "column", gap: 4 }}
+          >
+            {clients.map((client) => (
+              <div
+                key={client.clientId}
+                role="listitem"
+                style={{
+                  display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, flexWrap: "wrap",
+                  padding: "4px 8px", borderRadius: "var(--radius-control)", background: "var(--bg-subtle)",
+                }}
+              >
+                <span
+                  title={client.projectDir}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0, color: "var(--text)" }}
+                >
+                  <Folder size={11} strokeWidth={1.8} aria-hidden="true" style={{ flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {projectLabel(client.projectDir)}
+                  </span>
+                </span>
+                <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", flexShrink: 0 }}>
+                  {t("runsBoard.external.pid", { pid: String(client.pid) })}
+                </span>
+                <span style={{ color: "var(--text-dim)", marginLeft: "auto", flexShrink: 0 }}>
+                  {t("runsBoard.external.age", { age: formatClientAge(client.startedAt, nowMs) })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

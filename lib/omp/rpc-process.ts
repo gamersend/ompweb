@@ -210,6 +210,14 @@ export class RpcProcess {
     return !this.exited;
   }
 
+  /** OS pid of the spawned child; undefined before the spawn reports one (or
+   * after a failed spawn). Read-only identity — callers must never signal it
+   * directly, use dispose(). Used by the runs board to recognize this web
+   * app's own children in omp's shared client registry. */
+  get pid(): number | undefined {
+    return this.child.pid;
+  }
+
   get exitDetails(): { code: number | null; signal: NodeJS.Signals | null; stderrTail: string } | null {
     return this.exitInfo ? { ...this.exitInfo, stderrTail: this.stderrTail } : null;
   }

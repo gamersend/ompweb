@@ -370,6 +370,13 @@ export class AgentSessionWrapper {
     return this.runStartedAtMs;
   }
 
+  /** Runs board: the spawned omp child's OS pid (undefined when it never
+   * started). Lets the board drop its OWN children from omp's shared client
+   * registry instead of listing them twice. */
+  get childPid(): number | undefined {
+    return this.proc.pid;
+  }
+
   /** Runs board (P3): extension UI requests (approve-tool confirms, selects,
    * inputs) parked until the user answers — the waiting-for-input signal. */
   pendingUiRequestCount(): number {
@@ -1657,6 +1664,18 @@ export function getRunningRpcSessions(): RunningRpcSession[] {
 
 export function getRunningRpcSessionIds(): string[] {
   return getRunningRpcSessions().map((s) => s.id);
+}
+
+/** Runs board (bug 1): OS pids of the omp children THIS web app owns. Every
+ * child registers in omp's shared client registry, so the board uses these to
+ * drop its own clients and only surface genuinely external ones. */
+export function getOwnedRpcProcessPids(): number[] {
+  const pids = new Set<number>();
+  for (const session of getRegistry().values()) {
+    const pid = session.childPid;
+    if (typeof pid === "number" && Number.isFinite(pid)) pids.add(pid);
+  }
+  return [...pids];
 }
 
 /** Stop all live omp children after an explicit runtime update. The browser will

@@ -89,6 +89,7 @@ export function validateBatchSpecs(raw: unknown): BatchSpecsResult {
  *  already validated by the caller and ride the payload, not the decision.) */
 export function decideBatchLaunch(
   commands: string[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- pinned signature: specs are validated by the caller and ride the payload
   _specs: BatchSpec[],
 ): { launch: true; commandName: string } | { launch: false; code: "task_batch_unsupported" } {
   for (const command of commands) {

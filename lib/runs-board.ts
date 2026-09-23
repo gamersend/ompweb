@@ -25,12 +25,19 @@
 // ============================================================================
 
 import {
+  getOwnedRpcProcessPids,
   getRpcSession,
   getRunningRpcSessions,
   subscribeRpcRunFailures,
   subscribeRunningSessions,
   type AgentSessionWrapper,
 } from "./rpc-manager";
+import {
+  filterOwnedClients,
+  getExternalOmpClients,
+  type ExternalOmpClient,
+  type ExternalOmpClientsResult,
+} from "./omp/native-clients";
 import { parseSessionUsage } from "./usage-service";
 import { resolveProject } from "./worktree";
 import { parseSubagentSnapshot, type SubagentInfo } from "./subagent-types";
@@ -75,7 +82,35 @@ export const BOARD_MAX_SUBAGENT_CARDS = 24;
 export const BOARD_POLL_MS = 2_000;
 export const BOARD_LINGER_MS = 15 * 60 * 1000;
 
-type BoardChangeListener = (changedSessionIds: string[]) => void;
+/** External clients were not in the original contract — re-exported so the
+ * route, the hook and the board share one type. */
+export type { ExternalOmpClient };
+
+/** Extra information about a change broadcast — today just whether the
+ * external client set moved (which can change with zero session rows). */
+export interface BoardChangeInfo {
+  externalClientsChanged: boolean;
+}
+
+type BoardChangeListener = (changedSessionIds: string[], info?: BoardChangeInfo) => void;
+
+/** Test seam: swap the external-client source (null restores the real reader).
+ * Lives on globalThis like every other board singleton so a hot-reloaded or
+ * separately-imported copy of this module shares one override — and so every
+ * board test can stub the test machine's real clients out of the way. */
+declare global {
+  var __ompExternalClientsReader: (() => ExternalOmpClientsResult) | undefined;
+}
+
+export function setExternalClientsReaderForTests(reader: (() => ExternalOmpClientsResult) | null): void {
+  globalThis.__ompExternalClientsReader = reader ?? undefined;
+}
+
+/** The external-client source: the test override when installed, else the
+ * real (5 s-cached) registry reader. */
+function readExternalClients(): ExternalOmpClientsResult {
+  return globalThis.__ompExternalClientsReader?.() ?? getExternalOmpClients();
+}
 
 interface BoardRow {
   run: BoardRun;
@@ -104,6 +139,12 @@ interface RunsBoardState {
   wiredEpoch: number;
   unsubscribeRunning: (() => void) | null;
   unsubscribeFailures: (() => void) | null;
+  /** External omp clients (started outside this web app) minus our own
+   * children, newest first. Empty when the registry is missing/unsupported. */
+  externalClients: ExternalOmpClient[];
+  /** Serialized external set — the change-detection signature, same role as
+   * BoardRow.signature for rows. */
+  externalClientsSignature: string;
 }
 
 declare global {
@@ -128,6 +169,8 @@ function boardState(): RunsBoardState {
       wiredEpoch: -1,
       unsubscribeRunning: null,
       unsubscribeFailures: null,
+      externalClients: [],
+      externalClientsSignature: "",
     };
   }
   const state = globalThis.__ompWebRunsBoard;
@@ -240,8 +283,36 @@ function recordRunFailure(sessionId: string, detail: string): void {
   row.failureDetail = detail;
 }
 
+/**
+ * Refresh the external-client view (omp clients started outside this web app).
+ * The reader is cached for 5 s, so a 2 s poll costs one registry walk per
+ * window. Our OWN children are dropped (they register in the same registry)
+ * and the machine's stale entries are already liveness-filtered upstream.
+ * Returns true when the set changed; never throws (an unreadable registry
+ * keeps the previous view rather than flapping the section away).
+ */
+function refreshExternalClients(state: RunsBoardState): boolean {
+  let next: ExternalOmpClient[];
+  try {
+    const result = readExternalClients();
+    next = result.supported ? filterOwnedClients(result.clients, getOwnedRpcProcessPids()) : [];
+  } catch {
+    return false;
+  }
+  const signature = JSON.stringify(next);
+  if (signature === state.externalClientsSignature) return false;
+  state.externalClients = next;
+  state.externalClientsSignature = signature;
+  return true;
+}
+
 /** Prune expired terminal rows and notify listeners when anything changed. */
-function commitChanges(state: RunsBoardState, changed: string[], now: number): string[] {
+function commitChanges(
+  state: RunsBoardState,
+  changed: string[],
+  now: number,
+  externalClientsChanged = false,
+): string[] {
   const pruned: string[] = [];
   for (const [id, row] of state.rows) {
     if (row.pruneAt !== null && now >= row.pruneAt) {
@@ -250,10 +321,12 @@ function commitChanges(state: RunsBoardState, changed: string[], now: number): s
     }
   }
   const effective = [...changed, ...pruned];
-  if (effective.length === 0) return [];
+  if (effective.length === 0 && !externalClientsChanged) return [];
   state.revision += 1;
   for (const listener of state.listeners) {
-    try { listener(effective); } catch { /* a broken SSE bridge must not starve others */ }
+    try {
+      listener(effective, { externalClientsChanged });
+    } catch { /* a broken SSE bridge must not starve others */ }
   }
   return effective;
 }
@@ -419,7 +492,10 @@ export async function pollBoardOnce(): Promise<string[]> {
         if (row.signature !== before) changed.push(sessionId);
       }
     }
-    return commitChanges(state, changed, Date.now());
+    // External clients refresh LAST but must be read BEFORE the commit — the
+    // flag decides whether an unchanged row set still notifies.
+    const externalChanged = refreshExternalClients(state);
+    return commitChanges(state, changed, Date.now(), externalChanged);
   } finally {
     state.pollInFlight = false;
   }
@@ -459,8 +535,16 @@ export function releaseBoardWatch(): void {
 
 /** Full snapshot for /api/runs and each SSE connect. Terminal rows whose
  * 15-min linger elapsed are pruned here too (a snapshot read after a quiet
- * period must not serve rows the next tick was going to delete). */
-export function getBoardSnapshot(): { runs: BoardRun[]; revision: number; watchers: number } {
+ * period must not serve rows the next tick was going to delete), and the
+ * external-client set is re-read (5 s-cached) so the section is current even
+ * between polls. Both can bump the revision — the same change-detection
+ * discipline rows use. */
+export function getBoardSnapshot(): {
+  runs: BoardRun[];
+  revision: number;
+  watchers: number;
+  externalClients: ExternalOmpClient[];
+} {
   const state = boardState();
   const now = Date.now();
   const expired: string[] = [];
@@ -471,10 +555,12 @@ export function getBoardSnapshot(): { runs: BoardRun[]; revision: number; watche
     for (const id of expired) state.rows.delete(id);
     state.revision += 1;
   }
+  if (refreshExternalClients(state)) state.revision += 1;
   return {
     runs: [...state.rows.values()].map((row) => ({ ...row.run })),
     revision: state.revision,
     watchers: state.watchers,
+    externalClients: state.externalClients.map((client) => ({ ...client })),
   };
 }
 
@@ -495,4 +581,6 @@ export function resetRunsBoardForTests(): void {
   state.pollTimer = null;
   state.pollInFlight = false;
   state.listeners.clear();
+  state.externalClients = [];
+  state.externalClientsSignature = "";
 }

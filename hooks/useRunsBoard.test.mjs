@@ -105,6 +105,28 @@ test("mergeBoardFrame: snapshot frames replace wholesale", () => {
   assert.deepEqual(replaced.runs.map((r) => r.sessionId), ["fresh"]);
 });
 
+test("mergeBoardFrame: external clients travel with frames and survive row merges", () => {
+  const external = [{ pid: 7, clientId: "7-uuid", projectDir: "C:/repo", startedAt: "2026-09-23T00:00:00.000Z" }];
+  const snapshot = { revision: 10, runs: [run({ sessionId: "keep" })] };
+
+  const withClients = mergeBoardFrame(snapshot, {
+    type: "snapshot",
+    revision: 11,
+    runs: [run({ sessionId: "keep" })],
+    externalClients: external,
+  });
+  assert.deepEqual(withClients.externalClients, external);
+
+  // A rows-only frame (older build / no external change) keeps the applied set.
+  const rowsOnly = mergeBoardFrame(withClients, { type: "runs", revision: 12, runs: [run({ sessionId: "next" })] });
+  assert.deepEqual(rowsOnly.externalClients, external);
+  assert.equal(rowsOnly.runs.length, 2);
+
+  // An empty external set is honest — the section disappears.
+  const cleared = mergeBoardFrame(rowsOnly, { type: "runs", revision: 13, runs: [], externalClients: [] });
+  assert.deepEqual(cleared.externalClients, []);
+});
+
 // ─── hook wiring ─────────────────────────────────────────────────────────────
 
 const sources = [];
