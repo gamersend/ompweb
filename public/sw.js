@@ -16,10 +16,10 @@
  */
 
 // Bump on any change to the precache list or shell assets; old buckets are
-// deleted on activate. (Static file — no build-time templating.) Bumped to v2
-// for the Web Push handlers below (wave 2 P2); the cache-rule code is
-// untouched.
-const CACHE_VERSION = "ompweb-shell-v2";
+// deleted on activate. (Static file — no build-time templating.) v2: Web
+// Push handlers (wave 2 P2). v3: state-outbox `sync` listener (P20.5/P20.6);
+// the cache-rule code is untouched.
+const CACHE_VERSION = "ompweb-shell-v3";
 const NAVIGATION_FALLBACK = "/";
 
 const PRECACHE_URLS = [
@@ -172,4 +172,25 @@ self.addEventListener("notificationclick", (event) => {
     }
     await self.clients.openWindow(target);
   })());
+});
+
+// ─── Offline state outbox (P20.5/P20.6, R3-35) ───────────────────────────────
+// The browser fires `sync` (tag "omp-state-outbox", registered by
+// lib/offline-outbox.ts) when connectivity returns. A service worker cannot
+// touch the page's localStorage, so the worker only pings the open clients —
+// lib/offline-outbox.ts owns the queue and replays on this message. The
+// queue is STATE-ONLY (goal writes, dismissals, labels); replay never sends
+// an agent prompt and no cache logic lives in this handler.
+self.addEventListener("sync", (event) => {
+  if (event.tag !== "omp-state-outbox") return;
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((windowClients) => {
+        for (const client of windowClients) {
+          client.postMessage({ type: "omp-outbox-replay" });
+        }
+      })
+      .catch(() => {}),
+  );
 });

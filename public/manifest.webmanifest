@@ -5,6 +5,14 @@
   "id": "/",
   "start_url": "/",
   "scope": "/",
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "text": "share-text",
+      "url": "share-url"
+    }
+  },
   "display": "standalone",
   "orientation": "any",
   "theme_color": "#FAF9F6",

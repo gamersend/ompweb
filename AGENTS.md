@@ -59,7 +59,7 @@ Colocated `*.test.mjs` files are omitted below (every module listed has one
 unless noted).
 
 <!-- BEGIN GENERATED FILE-MAP COUNTS -->
-Counts: 99 API routes, 90 components, 22 hooks, 135 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
+Counts: 99 API routes, 90 components, 22 hooks, 137 lib modules plus `lib/omp/` + `lib/i18n/` + `lib/search/` + `lib/notify/` + `lib/push/` + `lib/checkpoints/` + `lib/snippets/` + `lib/insights/` + `lib/scheduler/` + `lib/terminal/` + `lib/live/` + `lib/memory/`, 13 `bin/` scripts.
 <!-- END GENERATED FILE-MAP COUNTS -->
 
 ### File Map counts gate (`scripts/gen-file-map.mjs`)
@@ -304,6 +304,8 @@ lib/
   native-memory.ts        read-only omp memory stats/diagnostics + TTSR adapters (W3-P17)
   web-share.ts            Web Share capability + invocation helpers for exports (W3-P18)
   live/voice-progress.ts  pure voice-safe status summary selector (W3-P19)
+  device-capabilities.ts  pure PWA capability detector (badging/share/sync/fs) (W3-P20)
+  offline-outbox.ts       state-only offline outbox with Background Sync replay (W3-P20)
   session-activity.ts     bounded redacted per-session lifecycle ring (W3-P7)
   browser-notifications.ts  completion notifications with permission handling
   notify/feed.ts          server-side notify feed: 500-row ring + atomic tail at ~/.omp/agent/web-notify.json
@@ -1841,6 +1843,56 @@ palette (`components/CommandPalette.tsx`, ⌘K/Ctrl+K) is built on `cmdk`.
   commentary frames + closed local user line). PRIVACY GATE HELD: no new
   transport, no server calls, nothing persisted; progress.ts/engine.ts
   untouched.
+
+### PWA badging + share target (W3-P20.2–P20.4)
+- `lib/device-capabilities.ts` (pure, injectable env): appBadging
+  (setAppBadge + clearAppBadge both required), shareTarget (standalone
+  display-mode is the only checkable proxy — real arrival is via URL
+  params), backgroundSync, fileSystemAccess. `applyAppBadge(count)` is a
+  silent badge writer (sync throws + promise rejections both swallowed).
+- Badging: NotificationsBell's existing unread count → setAppBadge(n) /
+  clearAppBadge() — actionable notification count ONLY, never usage/cost;
+  no new polling.
+- Share target: manifest gains `share_target` (GET → "/" with share-text /
+  share-url params). `lib/initial-navigation.ts` parses the params once at
+  mount, builds a draft prefixed with the pinned provenance header
+  `[Shared from another app — review before sending]`, writes it through the
+  EXISTING draft-store seam + composer-insert bus, then strips the params via
+  history.replaceState. NEVER auto-sends. No sw.js change (GET share target
+  needs no service worker; CACHE_VERSION untouched here).
+- DEFERRED from P20 (need physical devices / later slices): P20.1 device
+  capability matrix execution, P20.7 File System Access folder attach
+  (capability detected in lib/device-capabilities.ts; UI mounting deferred),
+  P20.8 Capacitor handoff, P20.10 mobile acceptance matrix.
+
+### State-only offline outbox (W3-P20.5–P20.6)
+- `lib/offline-outbox.ts`: FIFO cap 50, payload ≤4096 UTF-8 bytes, entries
+  {id, kind, payload, ts, attempts}, persisted at `omp-web:state-outbox`;
+  the kind union ("goal"|"dismissal"|"label") is the only gate — prompts/
+  media/commands are structurally impossible (TS + runtime-rejected, tested).
+- Replay: sequential drain; success removes, failure increments attempts,
+  drop at 5 (one-line console.info); offline (`navigator.onLine`) skips
+  without spending attempts; single in-flight drain per tab; mid-drain
+  queueing survives.
+- Wiring: `lib/goals-client.ts` queues a goal write ONLY when the fetch
+  THROWS (offline); HTTP failures stay today's behavior. pagehide flush +
+  replay, online replay, and Background Sync: sw.js `sync` listener (tag
+  `omp-state-outbox`) postMessages clients → client replays. CACHE_VERSION
+  bumped v2→v3 (handler change); fetch rules untouched (drift guard green).
+
+### Wave-close audit + integration fixtures (W3-P22.1/P22.3)
+- `tests/fixtures/integration/wave3-cross-phase.json`: ONE sanitized story
+  linking delegation → handoff → goal → restore ledger → activity ring →
+  tombstone → ResultRecord → NotifyRow → task batch; `lib/
+  integration-fixtures.test.mjs` asserts cross-domain id linkage, state
+  coherence, timestamp window, and feeds EVERY section through its REAL
+  store migrator — the fixture matches production contracts, not just itself.
+- `scripts/check-privacy.mjs`: six-category static audit (Bun-only imports,
+  omp-owned writes, secrets-in-logs, live-media server paths, budget
+  enforcement, npm publish) over lib/app/components/hooks/bin. ZERO real
+  findings; 9 sanctioned allowlist entries each with a written reason
+  (native config.yml editor, live signaling route, bin launcher guidance
+  wording). Self-verifying via bypass-mode detector tests.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

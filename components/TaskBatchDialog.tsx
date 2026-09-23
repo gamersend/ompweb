@@ -19,8 +19,8 @@ import { Dialog, DialogContent, DialogTitle } from "./ui/primitives";
 import { toast } from "./ui/toast";
 import { useI18n } from "@/lib/i18n";
 import { formatApiError } from "@/lib/i18n/api-error";
-import { MAX_BATCH_SPECS, parseBatchLines } from "@/lib/task-batch";
-import type { BatchRecord } from "@/lib/task-batch";
+import { MAX_BATCH_SPECS, parseBatchLines } from "@/lib/task-batch-shared";
+import type { BatchRecord } from "@/lib/task-batch-shared";
 import type { BoardRun } from "@/lib/runs-board";
 
 type LaunchOutcome =

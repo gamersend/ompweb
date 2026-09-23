@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "story": "P22 cross-phase integration story [fixture]: direct session sess-alpha (ran model m1) finished and delegated its output to sess-beta. The delegated run on sess-beta completed, leaving a handoff record (completed), a durable goal with 3 steps (2 done), a checkpoint-restore ledger entry (in-place, success, device device-a), an activity ring (run_started -> run_finished), a tombstone for a deleted bookmark, a subagent ResultRecord from its roster, a checkpoint NotifyRow, and a 2-task batch launch. Every identifier is a fabricated placeholder - no real session, path, or secret.",
+  "origin": {
+    "sessionId": "sess-beta",
+    "kind": "delegated",
+    "label": "sess-alpha"
+  },
+  "delegation": {
+    "toSession": "sess-beta",
+    "fromSession": "sess-alpha",
+    "tsMs": 1790157720000,
+    "mode": "spawned"
+  },
+  "handoff": {
+    "id": "del-sess-beta-1790157720000",
+    "fromSession": "sess-alpha",
+    "toSession": "sess-beta",
+    "tsMs": 1790157720000,
+    "mode": "spawned",
+    "state": "completed",
+    "settledMs": 1790157960000
+  },
+  "goal": {
+    "sessionId": "sess-beta",
+    "title": "Integrate delegated output [fixture placeholder]",
+    "steps": [
+      { "id": "step-1", "text": "Read the delegated summary [fixture placeholder]", "done": true },
+      { "id": "step-2", "text": "Apply the changes [fixture placeholder]", "done": true },
+      { "id": "step-3", "text": "Run the checks [fixture placeholder]", "done": false }
+    ],
+    "ts": 1790157780000,
+    "device": "device-a"
+  },
+  "restoreLedger": {
+    "id": "restore-sess-beta-0003",
+    "sessionId": "sess-beta",
+    "seq": 3,
+    "mode": "in-place",
+    "outcome": "success",
+    "ts": "2026-09-23T10:07:00.000Z",
+    "cwd": "C:/fixture/project-alpha",
+    "device": "device-a"
+  },
+  "activity": {
+    "sessionId": "sess-beta",
+    "events": [
+      { "ts": 1790157720000, "kind": "run_started" },
+      { "ts": 1790157960000, "kind": "run_finished", "text": "finished [fixture placeholder]" }
+    ]
+  },
+  "tombstone": {
+    "serverKey": "bookmarks/sess-beta",
+    "itemId": "entry-fixture-0001",
+    "rev": 41,
+    "deletedAt": 1790157900000,
+    "deviceId": "device-a"
+  },
+  "resultRecord": {
+    "id": "task-sess-beta-1",
+    "agent": "fixture-reviewer",
+    "status": "completed",
+    "task": "Review the delegated plan [fixture placeholder]",
+    "tokens": 12000,
+    "cost": 0.05,
+    "durationMs": 95000,
+    "resolvedModel": "m1",
+    "origin": "delegated"
+  },
+  "notifyRow": {
+    "id": "checkpoint:sess-beta:1790157990000",
+    "ts": "2026-09-23T10:06:30.000Z",
+    "kind": "checkpoint",
+    "sessionId": "sess-beta",
+    "sessionTitle": "Beta integration run [fixture]",
+    "projectRoot": "C:/fixture/project-alpha",
+    "title": "Checkpoint restored [fixture]",
+    "body": "In-place restore of checkpoint seq 3 completed [fixture placeholder]",
+    "delivered": true
+  },
+  "taskBatch": {
+    "id": "batch-1790157840000",
+    "sessionId": "sess-beta",
+    "specs": [
+      { "id": "task-1", "prompt": "Check lint output [fixture placeholder]" },
+      { "id": "task-2", "prompt": "Summarize failing tests [fixture placeholder]" }
+    ],
+    "state": "launched",
+    "resultIds": ["task-sess-beta-1", "task-sess-beta-2"],
+    "tsMs": 1790157840000
+  }
+}

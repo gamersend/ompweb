@@ -1,4 +1,11 @@
 import { getDeviceId } from "./device-id";
+import {
+  queueStateWrite,
+  registerReplay,
+  replayPending,
+  setupBackgroundSync,
+  type OutboxEntry,
+} from "./offline-outbox";
 import { goalTimestamp, type ActiveGoal, type GoalStep } from "./web-mode-state";
 
 // ============================================================================
@@ -34,12 +41,14 @@ export async function getGoalForSession(sessionId: string): Promise<GoalWire | n
   }
 }
 
-/** Fire-and-forget PUT (server stamps its own ts — receipt order is the LWW order). */
-export async function putGoalForSession(
+/** The raw PUT; resolves true when the request completed, false when it
+ *  threw (the offline path). Never queues and never throws — the replay
+ *  path (replayGoalEntry) reuses this and must not double-queue. */
+async function putGoalRequest(
   sessionId: string,
   goal: { title: string; steps?: GoalStep[] },
   deviceId?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await fetch("/api/goals", {
       method: "PUT",
@@ -51,8 +60,29 @@ export async function putGoalForSession(
         deviceId: deviceId ?? getDeviceId(),
       }),
     });
+    return true;
   } catch {
-    // offline = today's behavior
+    return false;
+  }
+}
+
+/** Fire-and-forget PUT (server stamps its own ts — receipt order is the LWW
+ *  order). A thrown (offline) fetch is persisted in the state-only outbox
+ *  (P20.5, R3-35: goals are safe operator intents) and replayed on
+ *  reconnect instead of being lost. HTTP failures stay today's behavior. */
+export async function putGoalForSession(
+  sessionId: string,
+  goal: { title: string; steps?: GoalStep[] },
+  deviceId?: string,
+): Promise<void> {
+  const ok = await putGoalRequest(sessionId, goal, deviceId);
+  if (!ok) {
+    queueStateWrite("goal", {
+      sessionId,
+      title: goal.title,
+      ...(goal.steps?.length ? { steps: goal.steps } : {}),
+      deviceId: deviceId ?? getDeviceId(),
+    });
   }
 }
 
@@ -111,13 +141,47 @@ export function cancelGoalSync(sessionId: string): void {
   }
 }
 
+/** Outbox replay for queued goal writes (P20.6): one entry → one PUT.
+ *  Entries of other kinds (or malformed payloads) return false so they
+ *  spend their own attempt budget and are eventually dropped by the
+ *  outbox — this replayer only ever replays goals. */
+async function replayGoalEntry(entry: OutboxEntry): Promise<boolean> {
+  if (entry.kind !== "goal") return false;
+  const payload = entry.payload as {
+    sessionId?: unknown;
+    title?: unknown;
+    steps?: unknown;
+    deviceId?: unknown;
+  };
+  if (typeof payload.sessionId !== "string" || payload.sessionId === "" || typeof payload.title !== "string") {
+    return false;
+  }
+  const steps = Array.isArray(payload.steps) && payload.steps.length > 0
+    ? (payload.steps as GoalStep[])
+    : undefined;
+  const deviceId = typeof payload.deviceId === "string" && payload.deviceId !== ""
+    ? payload.deviceId
+    : undefined;
+  return putGoalRequest(payload.sessionId, { title: payload.title, ...(steps ? { steps } : {}) }, deviceId);
+}
+
+function replayGoalOutbox(): void {
+  void replayPending(replayGoalEntry);
+}
+
 /** Queue a debounced PUT for the active session's goal. Also flushes on
- *  pagehide so a quick tab close never loses the write. */
+ *  pagehide so a quick tab close never loses the write, replays the state
+ *  outbox on pagehide/online (P20.6 foreground fallback), and registers the
+ *  Background Sync replayer — all behind the one-shot browser hook. */
 export function queueGoalSync(sessionId: string, goal: ActiveGoal): void {
   goalSync.pending = { sessionId, goal };
   if (!goalSync.flushWired && typeof window !== "undefined") {
     goalSync.flushWired = true;
     window.addEventListener("pagehide", flushGoalSync);
+    window.addEventListener("pagehide", replayGoalOutbox);
+    window.addEventListener("online", replayGoalOutbox);
+    registerReplay(replayGoalEntry);
+    setupBackgroundSync();
   }
   if (goalSync.timer !== null) return;
   goalSync.timer = setTimeout(() => {

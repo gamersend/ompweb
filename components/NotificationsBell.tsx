@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, CheckCheck, FlaskConical, Settings2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { applyAppBadge } from "@/lib/device-capabilities";
 import { useNotifyFeed, type NotifyFeedConfigView } from "@/hooks/useNotifyFeed";
 import type { NotifyRow } from "@/lib/notify/notify-shared";
 import { projectLabel } from "./AppShell-layout";
@@ -80,6 +81,15 @@ export function NotificationsBell({ onOpenSession, onOpenSettings }: {
 
   const unread = feed.unreadCount;
   const badge = unread > 99 ? "99+" : unread > 0 ? String(unread) : null;
+
+  // P20.2 app badging: mirror the actionable unread count onto the OS app
+  // icon (installed PWA; badge = actionable notification count, never
+  // usage/cost). Unsupported browsers are a silent no-op and there is no new
+  // polling — this rides the unread state the feed hook already maintains.
+  // mark-all-read lands here too: unread drops to 0 → clearAppBadge().
+  useEffect(() => {
+    applyAppBadge(unread);
+  }, [unread]);
 
   return (
     <div style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>

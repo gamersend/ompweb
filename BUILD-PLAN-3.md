@@ -1,9 +1,10 @@
 # ompweb Wave 3 Build Plan
 
-Status: **phases P0–P5 executed 2026-09-21** (see `docs/agent-notes-w3-P2-P5.md`
-and the W3 sections in AGENTS.md). P6+ remains planning-only until Blaze
-approves the next batch. Do not treat the phase text below as already-built
-beyond P0–P5.
+Status: **phases P0–P22 EXECUTED 2026-09-21/23** (AGENTS.md W3 sections +
+docs/agent-notes-w3-P2-P5.md are authoritative). All code phases landed;
+P20.1/P20.10 physical-device checks and P21 remain OPEN (physical devices
+required — documented defer); P22 closed at local verification per plan.
+No publish.
 
 This plan fully decomposes every candidate in ROADMAP-3.md into buildable work.
 It is intentionally ordered around the existing ompweb architecture and the

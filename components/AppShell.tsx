@@ -28,10 +28,18 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { copyText } from "@/lib/clipboard";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
-import { getInitialNavigation, type InitialAnchor } from "@/lib/initial-navigation";
+import {
+  buildShareDraftMessage,
+  getInitialNavigation,
+  parseShareTarget,
+  stripShareTargetParams,
+  type InitialAnchor,
+  type SharedTargetPayload,
+} from "@/lib/initial-navigation";
 import { launchCommandFields } from "@/lib/launch-profile";
 import { comparableProjectPath } from "@/lib/comparable-path";
-import { clearDraft } from "@/lib/draft-store";
+import { clearDraft, getDraft, setDraft } from "@/lib/draft-store";
+import { insertIntoComposer } from "@/lib/composer-insert";
 import { initClientStateSync } from "@/lib/client-state-sync";
 import { showCompletionNotification } from "@/lib/browser-notifications";
 import { openPalette } from "@/lib/palette-bus";
@@ -110,6 +118,10 @@ export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
+  // P20.3: a share-target launch arrives on "/" with ?share-text/share-url
+  // (manifest share_target). Parsed once, consumed as a composer draft —
+  // never auto-sent. `getInitialNavigation` keeps its original shape.
+  const [initialShare] = useState(() => parseShareTarget(searchParams));
   const { t, locale } = useI18n();
   const isMobile = useIsMobile();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
@@ -1667,6 +1679,36 @@ export function AppShell() {
     () => selectedSession?.id ?? (effectiveNewSessionCwd ? `new:${effectiveNewSessionCwd}` : null),
     [selectedSession?.id, effectiveNewSessionCwd],
   );
+  // P20.3 share-target intake: as soon as the active composer's draft key is
+  // known, the shared payload becomes a COMPOSER DRAFT via the draft-store
+  // seam — never auto-sent — prefixed with the P20.4 provenance header so the
+  // user reviews and sends manually. The insert bus gives the already-mounted
+  // composer a live pickup (its persistence effect re-writes the same draft);
+  // share params are stripped with history.replaceState, never router
+  // navigation. Known edge: if the sidebar switches the active composer right
+  // after this lands, the draft stays under the key it was written to.
+  const [pendingShare, setPendingShare] = useState<SharedTargetPayload | null>(initialShare);
+  useEffect(() => {
+    if (!pendingShare || !composerDraftKey) return;
+    const message = buildShareDraftMessage(pendingShare);
+    if (message) {
+      const existing = getDraft(composerDraftKey);
+      setDraft(composerDraftKey, {
+        value: existing?.value ? `${message}\n\n${existing.value}` : message,
+        images: existing?.images ?? [],
+        files: existing?.files ?? [],
+      });
+      insertIntoComposer({ text: message, draftKey: composerDraftKey, source: "share-target" });
+    }
+    setPendingShare(null);
+    stripShareTargetParams(
+      searchParams.toString(),
+      window.location.pathname + window.location.hash,
+      (url) => {
+        window.history.replaceState(window.history.state, "", url);
+      },
+    );
+  }, [pendingShare, composerDraftKey, searchParams]);
   const newSessionProject = (workspaceOptions.cwd === effectiveNewSessionCwd ? workspaceOptions.selectedProject : null) ?? effectiveNewSessionCwd ?? "";
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
   const currentRate = generationSpeed?.current;

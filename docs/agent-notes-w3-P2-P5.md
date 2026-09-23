@@ -1,4 +1,4 @@
-# Wave 3 — P2–P19 implementation notes
+# Wave 3 — P2–P22 implementation notes
 
 Per-phase knowledge lives in the W3 sections of AGENTS.md (authoritative).
 This file is the delivery record: what shipped, what was verified, and what
@@ -179,13 +179,61 @@ applied the 67 reported i18n keys ×3, ran all gates, and committed.
 - check:parity green (2336 keys × 3; envelope ratchet 0 new / 99 routes)
 - file-map green (99 routes / 90 components / 22 hooks / 135 lib)
 
-## Remaining wave-3 phases (not started)
+## P20 (code surfaces) + P21 (defer) + P22 — final batch
 
-- **P20**: mobile/PWA surfaces (device capability matrix, badging, share
-  target, state-only offline outbox, folder attach, mobile acceptance
-  matrix) — requires PHYSICAL devices; browser proof is not device proof.
-- **P21**: direct voice-call handoff — only after P19's privacy proof (held)
-  and P20's transport evidence; deferred if it cannot stay browser-direct.
-- **P22**: integration fixtures, browser acceptance pass, architecture/
-  privacy audit, local origin verification — ends at local verification,
-  NO publish (standing rule).
+- **P20.2–P20.4**: lib/device-capabilities.ts (pure capability detector) +
+  NotificationsBell badge wiring (actionable unread count only) + manifest
+  share_target (GET → /) + share-intake → provenance-prefixed DRAFT via the
+  existing draft-store seam (never auto-sends; params stripped via
+  history.replaceState). Built by a background agent.
+- **P20.5–P20.6**: lib/offline-outbox.ts (state-only FIFO cap 50, ≤4 KB
+  payloads, drop-at-5, offline skips don't burn attempts; prompts/media
+  structurally impossible) + goals-client offline fallback + sw.js sync tag
+  "omp-state-outbox" postMessage replay (CACHE_VERSION v2→v3). Built by a
+  background agent.
+- **P20 DEFERS**: P20.1 capability-matrix EXECUTION, P20.7 folder-attach UI
+  mounting (capability detected only), P20.8 Capacitor handoff, P20.10 mobile
+  acceptance matrix — all require PHYSICAL devices (Lenovo tablet, iPhone 17
+  Pro Max, iPad Pro M5); browser proof is not device proof per the plan.
+- **P21 DEFERRED** per the plan's clean-defer gate: direct voice handoff
+  could keep browser-direct media in design, but P21.4's paired-device proof
+  is a physical-device task; deferring beats shipping an unprovable privacy
+  boundary. Revisit with P20.10.
+- **P22.1**: tests/fixtures/integration/wave3-cross-phase.json + lib/
+  integration-fixtures.test.mjs — one sanitized story (delegation → handoff
+  → goal → restore ledger → activity → tombstone → result → notify → batch)
+  validated through EVERY real store migrator + origin resolver + result
+  normalizer. Built by a background agent.
+- **P22.3**: scripts/check-privacy.mjs — six-category static audit (Bun-only
+  imports, omp-owned writes, secrets-in-logs, live-media server paths, budget
+  enforcement, npm publish) with self-verifying detectors and 9 reasoned
+  allowlist entries (native config.yml editor, live signaling route, bin
+  launcher wording). ZERO real findings. Built by a background agent.
+- **P22.2 browser acceptance**: production build (next build --webpack +
+  next start) probed at 127.0.0.1:31000 — root + all wave-3 routes (command-
+  browser, lineage, jobs, recovery, handoffs, store-diagnostics, native-
+  memory, goals, client-state, push/status, model-report, usage) 200; runs
+  board shows Batch dialog + Recovery (badge) + Lineage (expanded, real
+  nodes) at desktop + phone; slash palette → Command browser renders 60 live
+  commands from omp 18.2.11 with MUTATING chips + view-only hint. Screenshots
+  in docs/verify-w3/.
+- **P22.4 local origin**: production build serves 200 on localhost; Capacitor
+  shells are remote-URL wrappers (no rebuild needed); NO publish — standing
+  rule held (privacy audit npm-publish category: 0 hits).
+
+⚠️ ENVIRONMENT NOTES: (1) WinNAT now reserves port range 30178–30277 — dev
+server must use e.g. 31000 (production 30177 still fine). (2) Plain
+`next dev` (turbopack) fails on next/font/google module resolution — run
+`next dev --webpack` if dev is needed; production verification used
+next build --webpack + next start. (3) Production build caught a real bug
+dev never surfaced: TaskBatchDialog imported the fs-backed store — split
+into lib/task-batch-shared.ts (client-safe contracts) + lib/task-batch.ts
+(store + re-exports).
+
+## FINAL gates — wave 3 close (2026-09-23)
+
+- tsc 0 · eslint 0/0 · npm test 1869 tests / 1867 pass / 0 fail / 2 skips
+- check:parity green (2336 keys × 3; envelope ratchet 0 new / 99 routes)
+- file-map green (99 routes / 90 components / 22 hooks / 137 lib)
+- privacy audit: 0 real findings across 6 categories
+- 345 new tests since wave-3 start (1524 → 1869 total)
