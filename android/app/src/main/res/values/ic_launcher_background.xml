@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- Brand tile from components/OmpWebLogo.tsx (#0f0a14); asserted by
+         scripts/gen-app-icons.mjs so a default white can never come back. -->
+    <color name="ic_launcher_background">#0F0A14</color>
 </resources>
