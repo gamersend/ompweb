@@ -1,0 +1,34 @@
+{
+  "note": "Evidence for the first ompweb TestFlight build, captured from iosbuild's ship report (secrets removed). Screenshots of the same build running: ios-icon-home.png (simulator springboard with the new icon) and the sidebar/runs shots alongside it.",
+  "date": "2026-09-24",
+  "app": {
+    "name": "omp web",
+    "appStoreConnectId": "6815551273",
+    "bundleId": "com.gamersend.ompweb",
+    "bundleResourceId": "4HY89KBGGB",
+    "teamId": "7ZTUT5XRQP",
+    "sku": "ompweb-1"
+  },
+  "build": {
+    "version": "20260924171103",
+    "deliveryUuid": "cb378df0-e63c-4cb1-b0fa-fab80e08addd",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "READY_FOR_BETA_SUBMISSION",
+    "buildUploadState": "COMPLETE",
+    "uploadedAt": "2026-09-24T00:15:12-07:00",
+    "expires": "2026-12-22T23:15:12-08:00",
+    "minOsVersion": "15.0",
+    "usesNonExemptEncryption": false
+  },
+  "testFlight": {
+    "group": { "name": "Internal", "id": "94accb97-7952-41c5-b7fd-b217e911f3fa", "internal": true, "linked": true },
+    "testers": ["m@9.new"],
+    "betaAppReview": "not required (internal testing; m@9.new is account holder)"
+  },
+  "gates": {
+    "testGate": "skipped — the Capacitor scheme has no test action configured",
+    "smokeGate": "skipped by the pipeline path assumption; equivalent evidence captured manually in the simulator (see the screenshots in this folder)"
+  },
+  "howToShipAgain": "ssh inferno 'IOSBUILD_NODE=local iosbuild ship ~/fire/repos/ompweb/ios/App --bundle-id com.gamersend.ompweb --app-name \"omp web\" --scheme App --group Internal --tester m@9.new --artifact-name OmpWeb --skip-tests' (ALWAYS pass --artifact-name: the default 'App' artifact slot belongs to Hotline ULTRA)"
+}
